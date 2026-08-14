@@ -38,6 +38,14 @@ migrate-up:
 		echo "Running core migrations..."; \
 		migrate -path $(MIGRATIONS_PATH)/core -database "$(DB_URL)&x-migrations-table=schema_migrations_core" up; \
 	fi
+	@if [ -d "$(MIGRATIONS_PATH)/quotation" ]; then \
+		echo "Running quotation migrations..."; \
+		migrate -path $(MIGRATIONS_PATH)/quotation -database "$(DB_URL)&x-migrations-table=schema_migrations_quotation" up; \
+	fi
+	@if [ -d "$(MIGRATIONS_PATH)/contract" ]; then \
+		echo "Running contract migrations..."; \
+		migrate -path $(MIGRATIONS_PATH)/contract -database "$(DB_URL)&x-migrations-table=schema_migrations_contract" up; \
+	fi
 
 migrate-down:
 	@if [ -z "$(MODULE)" ]; then echo "Error: MODULE is required. Usage: make migrate-down MODULE=core"; exit 1; fi
@@ -46,18 +54,26 @@ migrate-down:
 
 migrate-create:
 	@if [ -z "$(NAME)" ]; then echo "Error: NAME is required. Usage: make migrate-create NAME=your_migration_name MODULE=core"; exit 1; fi
-	@if [ -z "$(MODULE)" ]; then echo "Error: MODULE is required. Available: core"; exit 1; fi
+	@if [ -z "$(MODULE)" ]; then echo "Error: MODULE is required. Available: core, quotation, contract"; exit 1; fi
 	@echo "Creating migration: $(NAME) in module $(MODULE)"
 	migrate create -ext sql -dir $(MIGRATIONS_PATH)/$(MODULE) -seq $(NAME)
 
 migrate-force:
 	@if [ -z "$(V)" ]; then echo "Error: V is required. Usage: make migrate-force V=1 MODULE=core"; exit 1; fi
-	@if [ -z "$(MODULE)" ]; then echo "Error: MODULE is required. Available: core"; exit 1; fi
+	@if [ -z "$(MODULE)" ]; then echo "Error: MODULE is required. Available: core, quotation, contract"; exit 1; fi
 	migrate -path $(MIGRATIONS_PATH)/$(MODULE) -database "$(DB_URL)&x-migrations-table=schema_migrations_$(MODULE)" force $(V)
 
 migrate-version:
 	@echo "Core module version:"
 	@migrate -path $(MIGRATIONS_PATH)/core -database "$(DB_URL)&x-migrations-table=schema_migrations_core" version
+	@if [ -d "$(MIGRATIONS_PATH)/quotation" ]; then \
+		echo "Quotation module version:"; \
+		migrate -path $(MIGRATIONS_PATH)/quotation -database "$(DB_URL)&x-migrations-table=schema_migrations_quotation" version; \
+	fi
+	@if [ -d "$(MIGRATIONS_PATH)/contract" ]; then \
+		echo "Contract module version:"; \
+		migrate -path $(MIGRATIONS_PATH)/contract -database "$(DB_URL)&x-migrations-table=schema_migrations_contract" version; \
+	fi
 
 # Database seeders
 seed-core:
@@ -102,4 +118,4 @@ run:
 
 dev:
 	@echo "🔥 Starting development server with hot reload..."
-	@~/go/bin/air
+	@air

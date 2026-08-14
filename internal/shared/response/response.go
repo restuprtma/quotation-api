@@ -17,10 +17,10 @@ type Meta struct {
 
 // Response represents standard API response structure
 type Response struct {
-	Data    interface{}            `json:"data"`
-	Message string                 `json:"message"`
-	Meta    *Meta                  `json:"meta,omitempty"`
-	Errors  map[string][]string    `json:"errors,omitempty"`
+	Data    interface{}         `json:"data"`
+	Message string              `json:"message"`
+	Meta    *Meta               `json:"meta,omitempty"`
+	Errors  map[string][]string `json:"errors,omitempty"`
 }
 
 // Success sends a success response without pagination

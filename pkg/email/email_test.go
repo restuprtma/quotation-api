@@ -127,9 +127,9 @@ func TestSMTPEmailService_VerifyConfiguration(t *testing.T) {
 		{
 			name: "custom support email",
 			envVars: map[string]string{
-				"SMTP_USER":      "user",
-				"SMTP_PASSWORD":  "pass",
-				"SUPPORT_EMAIL":  "help@custom.com",
+				"SMTP_USER":     "user",
+				"SMTP_PASSWORD": "pass",
+				"SUPPORT_EMAIL": "help@custom.com",
 			},
 			checkKey: "SupportEmail",
 			expected: "help@custom.com",

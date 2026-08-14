@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Product Documentation
+
+Before coding, read [AGENTS.md](AGENTS.md), the short [PRD.md](PRD.md), and the active phase file linked by `D:\venturo\Quotation-generator\todo.md`. Read only the relevant `docs/product/` file named by that phase. Do not read the full roadmap or every product document.
+
 ## Project Overview
 
-Tuai Backend is a multi-tenant business management platform built with Go 1.25, Gin web framework, and PostgreSQL. It features a modular monolithic architecture with role-based access control (RBAC).
+Quotation & Contract Generator backend is a multi-tenant modular monolith built with Go 1.25, Gin, PostgreSQL, and pgxpool. Core auth/client modules are platform dependencies; quotation and contract are the product domains.
 
 ## Development Commands
 
@@ -73,7 +77,9 @@ Each `main.{module}.go` exports:
 
 Routes are organized by domain and version:
 
-- **Core**: `/core/v1/...` (auth, users, companies, roles, branches, approvals, translation overrides, API keys)
+- **Core:** `/core/v1/...` for auth and client/tenant platform dependencies.
+- **Quotation:** `/quotation/v1/...` for quotation, pricing, AI, revisions, and artifacts.
+- **Public:** `/p/q/...`, `/p/b/...`, and `/p/d/...` for unauthenticated artifacts.
 
 All modules are initialized in [internal/router/router.go](internal/router/router.go).
 
@@ -82,23 +88,17 @@ All modules are initialized in [internal/router/router.go](internal/router/route
 Company-based data isolation:
 
 1. **JWT Claims** include `company_id` after user switches company
-2. **Middleware Chain**: `JWTAuth()` → `CompanyContext()` → `RequirePermission()`
+2. **Middleware Chain**: internal quotation routes use `JWTAuth()` → `CompanyContext()`; public artifact routes do not use either guard and rely on UUID artifact tokens.
 3. **Repository Pattern**: Always filter by `company_id` in WHERE clauses
 4. **Company Switching**: `POST /core/v1/auth/switch-company`
 
-### RBAC Middleware
+### Middleware
 
-Located in [internal/middleware/](internal/middleware/):
+Tenant-protected routes use [internal/middleware/](internal/middleware/):
 
 ```go
-// Role-based
-middleware.RequireRole("admin", "manager")       // Has any role
-middleware.RequireAllRoles("admin", "manager")   // Has all roles
-
-// Permission-based
-middleware.RequirePermission("users:create")           // Has specific permission
-middleware.RequireAnyPermission("users:create", "users:update")  // Has any
-middleware.RequireAllPermissions("users:read", "users:write")    // Has all
+middleware.JWTAuth()
+middleware.CompanyContext()
 ```
 
 ### Authentication Flow

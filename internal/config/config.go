@@ -13,7 +13,7 @@ type Config struct {
 	Security SecurityConfig
 	Auth     AuthConfig
 	WAHA     WAHAConfig
-	OpenAI   OpenAIConfig
+	AI       AIConfig
 	Redis    RedisConfig
 	GCS      GCSConfig
 	Firebase FirebaseConfig
@@ -73,10 +73,13 @@ type WAHAConfig struct {
 	HTTPTimeout   int // HTTP timeout in seconds
 }
 
-type OpenAIConfig struct {
-	APIKey  string
-	Model   string
-	Timeout int // API timeout in seconds
+type AIConfig struct {
+	Provider      string
+	OllamaBaseURL string
+	OllamaModel   string
+	GeminiAPIKey  string
+	GeminiModel   string
+	Timeout       time.Duration
 }
 
 type RedisConfig struct {
@@ -119,10 +122,13 @@ func Load() *Config {
 			WebhookSecret: getEnv("WAHA_WEBHOOK_SECRET", ""),
 			HTTPTimeout:   getEnvInt("WAHA_HTTP_TIMEOUT", 30),
 		},
-		OpenAI: OpenAIConfig{
-			APIKey:  getEnv("OPENAI_API_KEY", ""),
-			Model:   getEnv("OPENAI_MODEL", "gpt-4o-mini"),
-			Timeout: getEnvInt("OPENAI_TIMEOUT", 120),
+		AI: AIConfig{
+			Provider:      getEnv("AI_PROVIDER", "mock"),
+			OllamaBaseURL: getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+			OllamaModel:   getEnv("OLLAMA_MODEL", "llama3"),
+			GeminiAPIKey:  getEnv("GEMINI_API_KEY", ""),
+			GeminiModel:   getEnv("GEMINI_MODEL", "gemini-1.5-flash"),
+			Timeout:       getEnvDuration("AI_TIMEOUT", 120*time.Second),
 		},
 		Redis: RedisConfig{
 			Host:          getEnv("REDIS_HOST", "localhost"),

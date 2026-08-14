@@ -308,9 +308,9 @@ func TestSMTPEmailService_EmailComposition(t *testing.T) {
 // TestSMTPEmailService_URLConfiguration tests URL configuration
 func TestSMTPEmailService_URLConfiguration(t *testing.T) {
 	tests := []struct {
-		name     string
-		env      map[string]string
-		checkFn  func(*SMTPEmailService) error
+		name    string
+		env     map[string]string
+		checkFn func(*SMTPEmailService) error
 	}{
 		{
 			name: "custom verification URL",
@@ -329,8 +329,8 @@ func TestSMTPEmailService_URLConfiguration(t *testing.T) {
 		{
 			name: "custom reset URL",
 			env: map[string]string{
-				"SMTP_USER":         "user",
-				"SMTP_PASSWORD":     "pass",
+				"SMTP_USER":          "user",
+				"SMTP_PASSWORD":      "pass",
 				"RESET_PASSWORD_URL": "https://custom.com/reset",
 			},
 			checkFn: func(s *SMTPEmailService) error {

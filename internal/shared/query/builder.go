@@ -7,13 +7,13 @@ import (
 
 // QueryBuilder helps build SQL queries with common filters
 type QueryBuilder struct {
-	baseQuery      string
+	baseQuery       string
 	whereConditions []string
-	orderByClauses []string
-	limitClause    string
-	offsetClause   string
-	args           []interface{}
-	argPos         int
+	orderByClauses  []string
+	limitClause     string
+	offsetClause    string
+	args            []interface{}
+	argPos          int
 }
 
 // NewQueryBuilder creates a new query builder instance

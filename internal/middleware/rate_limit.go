@@ -24,8 +24,8 @@ type RateLimiter struct {
 
 // Visitor tracks request attempts for a specific identifier (IP or user)
 type Visitor struct {
-	lastSeen  time.Time
-	attempts  int
+	lastSeen    time.Time
+	attempts    int
 	lockedUntil time.Time
 }
 
@@ -69,8 +69,8 @@ func (rl *RateLimiter) getVisitor(identifier string) *Visitor {
 	visitor, exists := rl.visitors[identifier]
 	if !exists {
 		visitor = &Visitor{
-			lastSeen:  time.Now(),
-			attempts:  0,
+			lastSeen:    time.Now(),
+			attempts:    0,
 			lockedUntil: time.Time{},
 		}
 		rl.visitors[identifier] = visitor
@@ -87,8 +87,8 @@ func (rl *RateLimiter) Allow(identifier string, lockoutDuration time.Duration) (
 	visitor := rl.visitors[identifier]
 	if visitor == nil {
 		visitor = &Visitor{
-			lastSeen:  time.Now(),
-			attempts:  0,
+			lastSeen:    time.Now(),
+			attempts:    0,
 			lockedUntil: time.Time{},
 		}
 		rl.visitors[identifier] = visitor

@@ -18,6 +18,9 @@ import (
 	"venturo-skeleton-go/internal/modules/core/user"
 	userRepo "venturo-skeleton-go/internal/modules/core/user/repository"
 
+	"venturo-skeleton-go/internal/modules/contract"
+	"venturo-skeleton-go/internal/modules/quotation"
+
 	"venturo-skeleton-go/internal/shared/audit"
 	"venturo-skeleton-go/internal/shared/authz"
 	sharedRedis "venturo-skeleton-go/internal/shared/redis"
@@ -206,6 +209,18 @@ func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) {
 	// mount under /core/v1.
 	auditModule := audit.Initialize(db)
 	auditModule.SetupRoutes(coreV1)
+
+	// Initialize and setup quotation module
+	quotationV1 := router.Group("/quotation/v1")
+	quotationModule := quotation.Initialize(db, cfg)
+	quotationModule.SetupRoutes(quotationV1)
+	
+	publicGroup := router.Group("/p")
+	quotationModule.SetupPublicRoutes(publicGroup)
+
+	// Initialize and setup contract module
+	contractModule := contract.Initialize(db)
+	contractModule.SetupRoutes(router)
 
 	log.Info("Routes setup completed", zap.Int("routes", len(router.Routes())))
 }

@@ -32,16 +32,16 @@ type ClientLookup interface {
 }
 
 var (
-	ErrCompanyNotFound    = errors.New("company not found")
-	ErrParentNotFound     = errors.New("parent company not found")
-	ErrUserAlreadyMember  = errors.New("user is already a member")
-	ErrMembershipNotFound = errors.New("membership not found")
-	ErrCannotRemoveOwner  = errors.New("cannot remove company owner")
-	ErrNotAuthorized      = errors.New("not authorized")
-	ErrOwnerTransferOnly  = errors.New("only super_admin can transfer ownership")
-	ErrOwnerAssignOnly        = errors.New("only super_admin can assign a different owner")
-	ErrCannotDeactivateOwner  = errors.New("cannot deactivate company owner")
-	ErrClientUnresolved        = errors.New("could not resolve client for new company")
+	ErrCompanyNotFound       = errors.New("company not found")
+	ErrParentNotFound        = errors.New("parent company not found")
+	ErrUserAlreadyMember     = errors.New("user is already a member")
+	ErrMembershipNotFound    = errors.New("membership not found")
+	ErrCannotRemoveOwner     = errors.New("cannot remove company owner")
+	ErrNotAuthorized         = errors.New("not authorized")
+	ErrOwnerTransferOnly     = errors.New("only super_admin can transfer ownership")
+	ErrOwnerAssignOnly       = errors.New("only super_admin can assign a different owner")
+	ErrCannotDeactivateOwner = errors.New("cannot deactivate company owner")
+	ErrClientUnresolved      = errors.New("could not resolve client for new company")
 )
 
 type CompanyService struct {

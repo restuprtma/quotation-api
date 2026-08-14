@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	branchService "venturo-skeleton-go/internal/modules/core/branch/service"
 	"venturo-skeleton-go/internal/middleware"
+	branchService "venturo-skeleton-go/internal/modules/core/branch/service"
 	"venturo-skeleton-go/internal/modules/core/user/dto"
 	"venturo-skeleton-go/internal/modules/core/user/service"
 	"venturo-skeleton-go/internal/shared/response"

@@ -88,8 +88,8 @@ type BranchRepository interface {
 // ClientService is the slice of the client service that auth needs:
 //   - CreateForUser: SignUp provisions a new client for a registrant.
 //   - GetByID:       SignIn / SwitchCompany resolve client_id + slug
-//                    from the caller's company so both show up in the
-//                    JWT and the response payload.
+//     from the caller's company so both show up in the
+//     JWT and the response payload.
 type ClientService interface {
 	CreateForUser(ctx context.Context, userID, username, displayName string) (*clientDomain.Client, error)
 	GetByID(ctx context.Context, id string) (*clientDomain.Client, error)
@@ -841,14 +841,14 @@ func containsRole(roles []string, target string) bool {
 //     - Found → refresh the identity snapshot, sign that user in.
 //  3. Not found → look up core.users by email.
 //     - Found → link the Google identity to the existing account,
-//       then sign that user in. The pre-existing user keeps their
-//       company/role/branch setup — no auto-provisioning here.
+//     then sign that user in. The pre-existing user keeps their
+//     company/role/branch setup — no auto-provisioning here.
 //  4. Not found at all → first-time Google user:
-//       a) create a new core.users row (no password)
-//       b) provision a client, company (named after the Google
-//          profile), default branch — same flow as SignUp
-//       c) link the Google identity
-//       d) sign the new user in
+//     a) create a new core.users row (no password)
+//     b) provision a client, company (named after the Google
+//     profile), default branch — same flow as SignUp
+//     c) link the Google identity
+//     d) sign the new user in
 //
 // All four branches return a *dto.GoogleSignInResponse with
 // `is_new_user` distinguishing case (4) from the rest. Token issuance
@@ -992,12 +992,12 @@ func (s *AuthService) provisionGoogleUser(
 
 	full := displayName
 	user := &userDomain.User{
-		ID:              uuid.New().String(),
-		Email:           email,
-		Username:        username,
-		FullName:        &full,
-		AvatarURL:       avatarURL,
-		IsActive:        true,
+		ID:        uuid.New().String(),
+		Email:     email,
+		Username:  username,
+		FullName:  &full,
+		AvatarURL: avatarURL,
+		IsActive:  true,
 		// Google verifies emails itself before issuing an ID token —
 		// trust the claim and mark the local row verified so the user
 		// can use the app immediately even if EMAIL_VERIFICATION_REQUIRED
@@ -1345,7 +1345,6 @@ func hashToken(tokenStr string) string {
 	h.Write([]byte(tokenStr))
 	return hex.EncodeToString(h.Sum(nil))
 }
-
 
 // GetDeviceInfoFromUserAgent extracts device info from user agent string
 func GetDeviceInfoFromUserAgent(userAgent string) domain.DeviceInfo {
