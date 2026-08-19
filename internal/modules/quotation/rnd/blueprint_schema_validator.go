@@ -662,14 +662,12 @@ func detectWBSCycle(modules []WBSModule) (bool, []string) {
 	// 0: unvisited, 1: visiting (in stack), 2: visited
 	color := make(map[string]int)
 	var cyclePath []string
-	var hasCycle bool
 
 	var dfs func(u string, path []string) bool
 	dfs = func(u string, path []string) bool {
 		color[u] = 1
 		for _, v := range adj[u] {
 			if color[v] == 1 {
-				hasCycle = true
 				cyclePath = append(path, u, v)
 				return true
 			}

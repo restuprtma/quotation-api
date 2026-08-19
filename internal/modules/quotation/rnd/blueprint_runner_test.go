@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -184,7 +185,7 @@ func TestBlueprintRunner_ConfigValidation(t *testing.T) {
 			}
 			if !errors.Is(err, errors.New(tt.wantErr)) && err.Error() != tt.wantErr {
 				// Also allow substring match
-				if len(tt.wantErr) > 0 && !containsString(err.Error(), tt.wantErr) {
+				if len(tt.wantErr) > 0 && !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("expected error message %q, got %q", tt.wantErr, err.Error())
 				}
 			}
@@ -588,17 +589,4 @@ func TestBlueprintRunner_ContextCancellation(t *testing.T) {
 	if report != nil && report.Status != "fail" {
 		t.Errorf("expected report status 'fail', got %s", report.Status)
 	}
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || filepath.Base(s) == substr || stringContains(s, substr))
-}
-
-func stringContains(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

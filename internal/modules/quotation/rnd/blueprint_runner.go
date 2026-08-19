@@ -177,28 +177,24 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 		var stageIssues []ValidationIssue
 		var genErr error
 
-		if r.config.Provider.Name() == "mock" {
-			genErr = r.synthesizeMockStage(stage, &input, report.Bundle)
-		} else {
-			resp, pErr := r.config.Provider.Generate(ctx, ProviderRequest{
-				Stage: Stage(stage),
-				Model: r.config.Model,
-				Payload: map[string]interface{}{
-					"stage":  stage,
-					"input":  input,
-					"bundle": report.Bundle,
-				},
-			})
+		resp, pErr := r.config.Provider.Generate(ctx, ProviderRequest{
+			Stage: Stage(stage),
+			Model: r.config.Model,
+			Payload: map[string]interface{}{
+				"stage":  stage,
+				"input":  input,
+				"bundle": report.Bundle,
+			},
+		})
 
-			if pErr != nil {
-				genErr = pErr
+		if pErr != nil {
+			genErr = pErr
+		} else {
+			if resp.Raw != "" {
+				_ = r.writeRaw(safeFixture, stage, resp.Raw)
+				genErr = r.applyStagePayload(stage, resp.Raw, report.Bundle)
 			} else {
-				if resp.Raw != "" {
-					_ = r.writeRaw(safeFixture, stage, resp.Raw)
-					genErr = r.applyStagePayload(stage, resp.Raw, report.Bundle)
-				} else {
-					genErr = r.synthesizeMockStage(stage, &input, report.Bundle)
-				}
+				genErr = r.synthesizeMockStage(stage, &input, report.Bundle)
 			}
 		}
 
