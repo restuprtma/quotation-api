@@ -106,23 +106,6 @@ func (h *Handler) Update(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Quotation updated successfully", result)
 }
 
-// GenerateAI returns a mock AI draft (description, scope of work, blueprint)
-// for the given project context so the frontend can render/iterate on it.
-func (h *Handler) GenerateAI(c *gin.Context) {
-	var req dto.AIGenerateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
-		return
-	}
-
-	result, err := h.svc.GenerateAIDraft(c.Request.Context(), &req)
-	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "AI generation failed", err.Error())
-		return
-	}
-	response.Success(c, http.StatusOK, "AI draft generated successfully", result)
-}
-
 func (h *Handler) CreateRevision(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
 	if companyID == "" {
@@ -191,67 +174,6 @@ func (h *Handler) ShareQuotation(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Quotation shared successfully", result)
 }
 
-func (h *Handler) GetArtifacts(c *gin.Context) {
-	companyID := middleware.GetCompanyID(c)
-	if companyID == "" {
-		response.Error(c, http.StatusForbidden, "Company context is required", "")
-		return
-	}
-
-	artifacts, err := h.svc.GetArtifacts(c.Request.Context(), companyID, c.Param("id"))
-	if err != nil {
-		h.handleError(c, err)
-		return
-	}
-	response.Success(c, http.StatusOK, "Artifacts retrieved successfully", artifacts)
-}
-
-// GetPublicQuotation returns a quotation revision addressed by its public token.
-func (h *Handler) GetPublicQuotation(c *gin.Context) {
-	result, err := h.svc.GetPublicQuotation(c.Request.Context(), c.Param("artifact_token"))
-	if err != nil {
-		h.handlePublicError(c, err)
-		return
-	}
-	response.Success(c, http.StatusOK, "Public quotation retrieved successfully", result)
-}
-
-// SignPublicQuotation stores a client's drawn signature and marks the quotation signed.
-func (h *Handler) SignPublicQuotation(c *gin.Context) {
-	var req dto.SignPublicQuotationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "Invalid signature payload", err.Error())
-		return
-	}
-
-	result, err := h.svc.SignPublic(c.Request.Context(), c.Param("artifact_token"), req.SignatureImage, c.ClientIP())
-	if err != nil {
-		h.handlePublicError(c, err)
-		return
-	}
-	response.Success(c, http.StatusOK, "Quotation signed successfully", result)
-}
-
-// GetPublicBlueprint returns a blueprint artifact addressed by its public token.
-func (h *Handler) GetPublicBlueprint(c *gin.Context) {
-	result, err := h.svc.GetPublicBlueprint(c.Request.Context(), c.Param("artifact_token"))
-	if err != nil {
-		h.handlePublicError(c, err)
-		return
-	}
-	response.Success(c, http.StatusOK, "Public blueprint retrieved successfully", result)
-}
-
-// GetPublicDetail returns a detail artifact addressed by its public token.
-func (h *Handler) GetPublicDetail(c *gin.Context) {
-	result, err := h.svc.GetPublicDetail(c.Request.Context(), c.Param("artifact_token"))
-	if err != nil {
-		h.handlePublicError(c, err)
-		return
-	}
-	response.Success(c, http.StatusOK, "Public detail retrieved successfully", result)
-}
-
 func (h *Handler) handleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrNotFound):
@@ -264,19 +186,6 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Error(c, http.StatusConflict, "Cannot mutate signed quotation", err.Error())
 	default:
 		response.Error(c, http.StatusInternalServerError, "Internal server error", err.Error())
-	}
-}
-
-func (h *Handler) handlePublicError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, service.ErrPublicNotFound):
-		response.Error(c, http.StatusNotFound, "Public quotation not found", "")
-	case errors.Is(err, service.ErrInvalidSignature):
-		response.Error(c, http.StatusBadRequest, "Invalid signature image", "")
-	case errors.Is(err, service.ErrAlreadySigned):
-		response.Error(c, http.StatusConflict, "Quotation is already signed", "")
-	default:
-		response.Error(c, http.StatusInternalServerError, "Failed to process public quotation", "")
 	}
 }
 

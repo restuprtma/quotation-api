@@ -38,10 +38,7 @@ type QuotationRevision struct {
 	MaintenanceInfo    *string                `json:"maintenance_info" db:"maintenance_info"`
 	HostingInfo        *string                `json:"hosting_info" db:"hosting_info"`
 	Notes              *string                `json:"notes" db:"notes"`
-	BlueprintData      map[string]interface{} `json:"blueprint_data" db:"blueprint_data"`
 	AiRawResponse      map[string]interface{} `json:"ai_raw_response" db:"ai_raw_response"`
-	NarrativeData      map[string]interface{} `json:"narrative_data" db:"narrative_data"`
-	ProductDetailData  map[string]interface{} `json:"product_detail_data" db:"product_detail_data"`
 	SignatureImageURL  *string                `json:"signature_image_url" db:"signature_image_url"`
 	SignedAt           *time.Time             `json:"signed_at" db:"signed_at"`
 	SignedIP           *string                `json:"signed_ip" db:"signed_ip"`
@@ -50,32 +47,4 @@ type QuotationRevision struct {
 	UpdatedAt          time.Time              `json:"updated_at" db:"updated_at"`
 }
 
-type QuotationItem struct {
-	ID          uuid.UUID `json:"id" db:"id"`
-	CompanyID   uuid.UUID `json:"company_id" db:"company_id"`
-	RevisionID  uuid.UUID `json:"revision_id" db:"revision_id"`
-	ItemName    string    `json:"item_name" db:"item_name"`
-	Description *string   `json:"description" db:"description"`
-	Amount      int64     `json:"amount" db:"amount"`
-	SortOrder   int       `json:"sort_order" db:"sort_order"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
-}
 
-type Contract struct {
-	ID                uuid.UUID  `json:"id" db:"id"`
-	CompanyID         uuid.UUID  `json:"company_id" db:"company_id"`
-	QuotationID       uuid.UUID  `json:"quotation_id" db:"quotation_id"`
-	RevisionID        uuid.UUID  `json:"revision_id" db:"revision_id"`
-	ContractNumber    string     `json:"contract_number" db:"contract_number"`
-	PublicToken       uuid.UUID  `json:"public_token" db:"public_token"`
-	Status            string     `json:"status" db:"status"`
-	AdditionalTerms   *string    `json:"additional_terms" db:"additional_terms"`
-	SignatureImageURL *string    `json:"signature_image_url" db:"signature_image_url"`
-	SignedAt          *time.Time `json:"signed_at" db:"signed_at"`
-	SignedIP          *string    `json:"signed_ip" db:"signed_ip"`
-	CreatedBy         *uuid.UUID `json:"created_by" db:"created_by"`
-	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at" db:"updated_at"`
-	DeletedAt         *time.Time `json:"deleted_at" db:"deleted_at"`
-}

@@ -74,12 +74,15 @@ type WAHAConfig struct {
 }
 
 type AIConfig struct {
-	Provider      string
-	OllamaBaseURL string
-	OllamaModel   string
-	GeminiAPIKey  string
-	GeminiModel   string
-	Timeout       time.Duration
+	Provider           string
+	OllamaBaseURL      string
+	OllamaModel        string
+	GeminiAPIKey       string
+	GeminiModel        string
+	AgentRouterAPIKey  string
+	AgentRouterBaseURL string
+	AgentRouterModel   string
+	Timeout            time.Duration
 }
 
 type RedisConfig struct {
@@ -123,12 +126,15 @@ func Load() *Config {
 			HTTPTimeout:   getEnvInt("WAHA_HTTP_TIMEOUT", 30),
 		},
 		AI: AIConfig{
-			Provider:      getEnv("AI_PROVIDER", "mock"),
-			OllamaBaseURL: getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-			OllamaModel:   getEnv("OLLAMA_MODEL", "llama3"),
-			GeminiAPIKey:  getEnv("GEMINI_API_KEY", ""),
-			GeminiModel:   getEnv("GEMINI_MODEL", "gemini-1.5-flash"),
-			Timeout:       getEnvDuration("AI_TIMEOUT", 120*time.Second),
+			Provider:           getEnv("AI_PROVIDER", "mock"),
+			OllamaBaseURL:      getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+			OllamaModel:        getEnv("OLLAMA_MODEL", "llama3"),
+			GeminiAPIKey:       getEnv("GEMINI_API_KEY", ""),
+			GeminiModel:        getEnv("GEMINI_MODEL", "gemini-1.5-flash"),
+			AgentRouterAPIKey:  getEnv("AGENTROUTER_API_KEY", ""),
+			AgentRouterBaseURL: getEnv("AGENTROUTER_BASE_URL", "https://agentrouter.org/v1"),
+			AgentRouterModel:   getEnv("AGENTROUTER_MODEL", "gpt-5.6-sol"),
+			Timeout:            getEnvDuration("AI_TIMEOUT", 120*time.Second),
 		},
 		Redis: RedisConfig{
 			Host:          getEnv("REDIS_HOST", "localhost"),

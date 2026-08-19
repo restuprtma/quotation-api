@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -127,6 +128,7 @@ func (h *ContractHandler) GetPublic(c *gin.Context) {
 
 	contract, err := h.service.GetPublicContract(c.Request.Context(), token)
 	if err != nil {
+		fmt.Printf("GetPublicContract error: %v\n", err)
 		response.Error(c, http.StatusNotFound, "Contract not found", "")
 		return
 	}

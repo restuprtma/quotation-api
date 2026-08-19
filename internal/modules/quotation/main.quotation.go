@@ -20,8 +20,7 @@ type Module struct {
 // the factory based on the active configuration.
 func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	repo := repository.NewRepository(db)
-	aiProvider := service.NewAIProvider(cfg.AI)
-	svc := service.NewService(repo, aiProvider)
+	svc := service.NewService(repo)
 	hdlr := handler.NewHandler(svc)
 
 	return &Module{
@@ -47,20 +46,11 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.GET("/:id/revisions", m.Handler.ListRevisions)
 		quotations.GET("/:id/revisions/:revision_id", m.Handler.GetRevisionDetail)
 		quotations.POST("/:id/share", m.Handler.ShareQuotation)
-		quotations.GET("/:id/artifacts", m.Handler.GetArtifacts)
-	}
-
-	ai := router.Group("/ai")
-	ai.Use(middleware.JWTAuth())
-	{
-		ai.POST("/generate", m.Handler.GenerateAI)
 	}
 }
 
 // SetupPublicRoutes registers token-based quotation endpoints without auth.
 func (m *Module) SetupPublicRoutes(router *gin.RouterGroup) {
-	router.GET("/q/:artifact_token", m.Handler.GetPublicQuotation)
-	router.POST("/q/:artifact_token/sign", m.Handler.SignPublicQuotation)
-	router.GET("/b/:artifact_token", m.Handler.GetPublicBlueprint)
-	router.GET("/d/:artifact_token", m.Handler.GetPublicDetail)
+	// Fase 1: All public endpoints that depend on legacy artifacts have been removed.
+	// We will introduce the new allowlist-based endpoints in Fase 11.
 }

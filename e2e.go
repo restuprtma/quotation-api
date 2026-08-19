@@ -22,37 +22,15 @@ func main() {
 	// 2. Create Quotation
 	qID := createQuotation()
 	if qID == "" { return }
-
-	// 3. Generate Mock AI
-	if !generateMockAI(qID) { return }
-
-	// 4. Share Quotation
-	token := shareQuotation(qID)
-	if token == "" { return }
 	
-	// 5. Test Revision
+	// 3. Test Revision
 	newQID := createRevision(qID)
 	if newQID == "" { return }
 
-	// 6. Share Revision
-	token2 := shareQuotation(newQID)
-	if token2 == "" { return }
+	// Legacy steps 3 (AI), 4 (Share/Artifacts), 7 (Public Sign) were removed in Phase 1.
+	// We'll bring them back using the new domain architecture in Phase 11.
 
-	// 7. Sign Quotation
-	if !signQuotation(token2) { return }
-
-	// 8. Create Contract
-	cID := createContract(qID) // From signed original quotation
-	if cID == "" { return }
-
-	// 8. Share Contract
-	cToken := shareContract(cID)
-	if cToken == "" { return }
-
-	// 9. Sign Contract
-	if !signContract(cToken) { return }
-
-	fmt.Println("\n✅ E2E Phase 11 Test Completed Successfully!")
+	fmt.Println("\n✅ E2E Phase 1 Test Completed Successfully!")
 }
 
 func doReq(method, path string, payload interface{}, includeAuth bool) ([]byte, error) {
@@ -116,16 +94,8 @@ func createQuotation() string {
 	payload := map[string]interface{}{
 		"client_id": clientID,
 		"project_type": "product_based",
+		"subject": "Test Phase 1 Subject",
 		"budget": 100000,
-		"sections": []map[string]interface{}{
-			{
-				"section_name": "Phase 1",
-				"section_type": "package",
-				"items": []map[string]interface{}{
-					{"item_name": "Item 1", "pricing_mode": "unit", "billing_period": "one_time", "unit_price": 4000, "quantity": 1},
-				},
-			},
-		},
 	}
 	body, err := doReq("POST", "/quotation/v1/quotations", payload, true)
 	if err != nil {
@@ -139,68 +109,8 @@ func createQuotation() string {
 	return id
 }
 
-func generateMockAI(id string) bool {
-	fmt.Println("\n[3] Generating Mock AI Bundle...")
-	_, err := doReq("POST", "/quotation/v1/ai/generate", map[string]interface{}{
-		"project_type": "product_based",
-		"client_name": "Test Client",
-		"client_industry": "Tech",
-		"subject": "Test subject",
-		"client_requirements": []string{"fast", "reliable"},
-	}, true)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return false
-	}
-	fmt.Println("✔ AI Mock Generated")
-	return true
-}
-
-func shareQuotation(id string) string {
-	fmt.Println("\n[4] Sharing Quotation...")
-	_, err := doReq("POST", "/quotation/v1/quotations/"+id+"/share", map[string]interface{}{}, true)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return ""
-	}
-	
-	// Fetch artifacts
-	body, err := doReq("GET", "/quotation/v1/quotations/"+id+"/artifacts", nil, true)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return ""
-	}
-	var res map[string]interface{}
-	json.Unmarshal(body, &res)
-	
-	data := res["data"].([]interface{})
-	var qToken string
-	for _, item := range data {
-		art := item.(map[string]interface{})
-		if art["artifact_type"].(string) == "quotation" {
-			qToken = art["public_token"].(string)
-		}
-	}
-	
-	fmt.Println("✔ Shared, Public Token:", qToken)
-	return qToken
-}
-
-func signQuotation(qToken string) bool {
-	fmt.Println("\n[5] Signing Quotation (Public)...")
-	_, err := doReq("POST", "/p/q/"+qToken+"/sign", map[string]interface{}{
-		"signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==",
-	}, false)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return false
-	}
-	fmt.Println("✔ Quotation Signed!")
-	return true
-}
-
 func createRevision(id string) string {
-	fmt.Println("\n[6] Creating Revision...")
+	fmt.Println("\n[3] Creating Revision...")
 	body, err := doReq("POST", "/quotation/v1/quotations/"+id+"/revisions", map[string]interface{}{}, true)
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -213,45 +123,3 @@ func createRevision(id string) string {
 	return newId
 }
 
-func createContract(qId string) string {
-	fmt.Println("\n[7] Creating Contract...")
-	body, err := doReq("POST", "/contract/v1/contracts", map[string]interface{}{
-		"quotation_id": qId,
-	}, true)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return ""
-	}
-	var res map[string]interface{}
-	json.Unmarshal(body, &res)
-	cId := res["data"].(map[string]interface{})["id"].(string)
-	fmt.Println("✔ Contract Created, ID:", cId)
-	return cId
-}
-
-func shareContract(cId string) string {
-	fmt.Println("\n[8] Sharing Contract...")
-	body, err := doReq("POST", "/contract/v1/contracts/"+cId+"/share", map[string]interface{}{}, true)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return ""
-	}
-	var res map[string]interface{}
-	json.Unmarshal(body, &res)
-	token := res["data"].(map[string]interface{})["public_token"].(string)
-	fmt.Println("✔ Shared Contract, Token:", token)
-	return token
-}
-
-func signContract(token string) bool {
-	fmt.Println("\n[9] Signing Contract (Public)...")
-	_, err := doReq("POST", "/p/c/"+token+"/sign", map[string]interface{}{
-		"signature_data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==",
-	}, false)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return false
-	}
-	fmt.Println("✔ Contract Signed!")
-	return true
-}
