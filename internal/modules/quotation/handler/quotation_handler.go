@@ -180,7 +180,7 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Error(c, http.StatusNotFound, "Quotation not found", "")
 	case errors.Is(err, service.ErrInvalidClient):
 		response.Error(c, http.StatusBadRequest, "Client not found or not active", err.Error())
-	case errors.Is(err, service.ErrNoCompanyConte):
+	case errors.Is(err, service.ErrNoCompanyContext):
 		response.Error(c, http.StatusForbidden, "Company context is required", "")
 	case errors.Is(err, service.ErrConflict), errors.Is(err, service.ErrAlreadySigned):
 		response.Error(c, http.StatusConflict, "Cannot mutate signed quotation", err.Error())

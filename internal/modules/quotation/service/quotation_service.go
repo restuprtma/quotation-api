@@ -17,7 +17,7 @@ import (
 var (
 	ErrNotFound         = errors.New("quotation not found")
 	ErrInvalidClient    = errors.New("client not found or not active")
-	ErrNoCompanyConte   = errors.New("company context is required")
+	ErrNoCompanyContext = errors.New("company context is required")
 	ErrPublicNotFound   = errors.New("public quotation not found")
 	ErrAlreadySigned    = errors.New("quotation is already signed")
 	ErrInvalidSignature = errors.New("invalid signature image")
@@ -144,7 +144,11 @@ func toRevisionResponse(rev *domain.QuotationRevision) *dto.QuotationRevisionRes
 
 func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.CredentialResponse, error) {
 	if companyID == "" {
-		return nil, ErrNoCompanyConte
+		return nil, ErrNoCompanyContext
+	}
+
+	if _, err := uuid.Parse(companyID); err != nil {
+		return nil, errors.New("invalid company id")
 	}
 
 	cred, err := s.credentialRepo.GetActiveCredential(ctx, companyID)
@@ -159,16 +163,17 @@ func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.Crede
 		ID:           cred.ID,
 		CompanyID:    cred.CompanyID,
 		ProviderType: cred.Provider,
-		KeyHint:      cred.KeyHint,
-		IsActive:     cred.IsActive,
-		CreatedAt:    cred.CreatedAt,
-		UpdatedAt:    cred.UpdatedAt,
+		KeyHint:              cred.KeyHint,
+		IsActive:             cred.IsActive,
+		CredentialConfigured: true,
+		CreatedAt:            cred.CreatedAt,
+		UpdatedAt:            cred.UpdatedAt,
 	}, nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto.CredentialRequest) (*dto.CredentialResponse, error) {
 	if companyID == "" {
-		return nil, ErrNoCompanyConte
+		return nil, ErrNoCompanyContext
 	}
 
 	compUUID, err := uuid.Parse(companyID)
@@ -222,10 +227,11 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 		ID:           cred.ID,
 		CompanyID:    cred.CompanyID,
 		ProviderType: cred.Provider,
-		KeyHint:      cred.KeyHint,
-		IsActive:     cred.IsActive,
-		CreatedAt:    cred.CreatedAt,
-		UpdatedAt:    cred.UpdatedAt,
+		KeyHint:              cred.KeyHint,
+		IsActive:             cred.IsActive,
+		CredentialConfigured: true,
+		CreatedAt:            cred.CreatedAt,
+		UpdatedAt:            cred.UpdatedAt,
 	}, nil
 }
 func (s *Service) TestSettingsConnection(ctx context.Context, req *dto.CredentialRequest) error {

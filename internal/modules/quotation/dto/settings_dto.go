@@ -18,6 +18,7 @@ type CredentialResponse struct {
 	ProviderType string    `json:"provider_type"`
 	KeyHint      string    `json:"key_hint"`
 	IsActive     bool      `json:"is_active"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	CredentialConfigured bool      `json:"credential_configured"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
