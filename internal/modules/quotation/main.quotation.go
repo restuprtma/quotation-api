@@ -20,7 +20,17 @@ type Module struct {
 // the factory based on the active configuration.
 func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	repo := repository.NewRepository(db)
-	svc := service.NewService(repo)
+	credentialRepo := repository.NewCredentialRepository(db)
+	skillRepo := repository.NewSkillRepository(db)
+	
+	cipher, err := service.NewCredentialCipher(cfg.AI.CredentialEncryptionKey)
+	if err != nil {
+		panic("failed to initialize credential cipher: " + err.Error())
+	}
+	
+	aiFactory := service.NewProviderFactory()
+
+	svc := service.NewService(repo, credentialRepo, skillRepo, cipher, aiFactory)
 	hdlr := handler.NewHandler(svc)
 
 	return &Module{

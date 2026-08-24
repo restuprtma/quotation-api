@@ -25,11 +25,27 @@ var (
 )
 
 type Service struct {
-	repo *repository.Repository
+	repo             *repository.Repository
+	credentialRepo   *repository.CredentialRepository
+	skillRepo        *repository.SkillRepository
+	credentialCipher *CredentialCipher
+	aiFactory        *ProviderFactory
 }
 
-func NewService(repo *repository.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(
+	repo *repository.Repository,
+	credentialRepo *repository.CredentialRepository,
+	skillRepo *repository.SkillRepository,
+	credentialCipher *CredentialCipher,
+	aiFactory *ProviderFactory,
+) *Service {
+	return &Service{
+		repo:             repo,
+		credentialRepo:   credentialRepo,
+		skillRepo:        skillRepo,
+		credentialCipher: credentialCipher,
+		aiFactory:        aiFactory,
+	}
 }
 
 // Create creates a new quotation
