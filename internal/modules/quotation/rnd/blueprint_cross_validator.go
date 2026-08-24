@@ -195,6 +195,11 @@ func (v *BlueprintCrossValidator) CrossValidate(bundle *BlueprintBundle, input *
 
 	// State machine symbols
 	entity := strings.TrimSpace(bundle.StateMachine.Entity)
+	if entity != "" {
+		rawIDs[entity] = "state.entity"
+		symbolTable["state_machine.entity"] = true
+		symbolTable["state.entity"] = true
+	}
 	for _, s := range bundle.StateMachine.States {
 		if strings.TrimSpace(s.ID) != "" {
 			rawIDs[s.ID] = "state"

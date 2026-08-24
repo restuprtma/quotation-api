@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -12,22 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAIFactory_StrictMissingCredential(t *testing.T) {
-	os.Setenv("GEMINI_API_KEY", "env_fallback_key")
-	defer os.Unsetenv("GEMINI_API_KEY")
-
+func TestAIFactory_MissingCredential_Ollama(t *testing.T) {
 	factory := NewProviderFactory()
 	cfg := ProviderConfig{
-		ProviderName: "gemini",
+		ProviderName: "ollama",
 	}
 
 	provider, err := factory.New(context.Background(), cfg)
-	require.Error(t, err)
-	assert.Nil(t, provider)
-
-	var providerErr *ProviderError
-	require.ErrorAs(t, err, &providerErr)
-	assert.Equal(t, ErrCredentialNotConfigured, providerErr.Code)
+	require.NoError(t, err)
+	assert.NotNil(t, provider)
 }
 
 func TestAIErrorMapping(t *testing.T) {

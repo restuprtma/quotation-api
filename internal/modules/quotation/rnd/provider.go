@@ -101,36 +101,95 @@ func (p *httpProvider) Generate(ctx context.Context, request ProviderRequest) (P
 	if err != nil {
 		return ProviderResponse{}, errors.New("provider request serialization failed")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return ProviderResponse{}, errors.New("provider request creation failed")
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if p.name == "gemini" {
-		req.Header.Set("x-goog-api-key", p.config.GeminiAPIKey)
-	} else if p.name == "agentrouter" {
-		req.Header.Set("Authorization", "Bearer "+p.config.AgentRouterAPIKey)
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return ProviderResponse{}, fmt.Errorf("%s provider request: %w", p.name, err)
+	var resp *http.Response
+	var lastErr error
+	var data []byte
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return ProviderResponse{}, err
 		}
-		return ProviderResponse{}, fmt.Errorf("%s provider request failed", p.name)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return ProviderResponse{}, errors.New("provider request creation failed")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if p.name == "gemini" {
+			req.Header.Set("x-goog-api-key", p.config.GeminiAPIKey)
+		} else if p.name == "agentrouter" {
+			req.Header.Set("Authorization", "Bearer "+p.config.AgentRouterAPIKey)
+		}
+
+		resp, err = p.client.Do(req)
+		if err != nil {
+			lastErr = err
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return ProviderResponse{}, fmt.Errorf("%s provider request: %w", p.name, err)
+			}
+			if attempt < 3 {
+				select {
+				case <-ctx.Done():
+					return ProviderResponse{}, ctx.Err()
+				case <-time.After(time.Duration(attempt*2) * time.Second):
+					continue
+				}
+			}
+			return ProviderResponse{}, fmt.Errorf("%s provider request failed", p.name)
+		}
+
+		var readErr error
+		data, readErr = io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt*2) * time.Second)
+				continue
+			}
+			return ProviderResponse{}, fmt.Errorf("%s provider response read failed", p.name)
+		}
+
+		if resp.StatusCode == 503 || resp.StatusCode == 500 || resp.StatusCode == 502 {
+			lastErr = fmt.Errorf("%s provider returned HTTP %d", p.name, resp.StatusCode)
+			if attempt < 3 {
+				select {
+				case <-ctx.Done():
+					return ProviderResponse{}, ctx.Err()
+				case <-time.After(time.Duration(attempt*3) * time.Second):
+					continue
+				}
+			}
+			return ProviderResponse{}, lastErr
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return ProviderResponse{}, fmt.Errorf("%s provider returned HTTP %d", p.name, resp.StatusCode)
+		}
+
+		break
 	}
-	defer resp.Body.Close()
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if readErr != nil {
-		return ProviderResponse{}, fmt.Errorf("%s provider response read failed", p.name)
+
+	if resp == nil {
+		return ProviderResponse{}, fmt.Errorf("%s provider request failed: %v", p.name, lastErr)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ProviderResponse{}, fmt.Errorf("%s provider returned HTTP %d", p.name, resp.StatusCode)
-	}
-	raw, err := extractProviderText(p.name, data)
+
+	raw, tokens, err := extractProviderResponse(p.name, data)
 	if err != nil {
 		return ProviderResponse{}, fmt.Errorf("%s provider response invalid", p.name)
 	}
-	return ProviderResponse{Raw: raw, Latency: time.Since(started)}, nil
+	return ProviderResponse{
+		Raw:             raw,
+		Latency:         time.Since(started),
+		PromptTokens:    tokens.PromptTokens,
+		CandidateTokens: tokens.CandidateTokens,
+		TotalTokens:     tokens.TotalTokens,
+	}, nil
+}
+
+type providerTokens struct {
+	PromptTokens    int
+	CandidateTokens int
+	TotalTokens     int
 }
 
 func composePrompt(request ProviderRequest) (string, error) {
@@ -142,15 +201,22 @@ func composePrompt(request ProviderRequest) (string, error) {
 		"\n\nSTAGE:\n" + string(request.Stage) + "\n\nPAYLOAD_JSON:\n" + string(payload), nil
 }
 
-func extractProviderText(name string, data []byte) (string, error) {
+func extractProviderResponse(name string, data []byte) (string, providerTokens, error) {
 	if name == "ollama" {
 		var response struct {
-			Response string `json:"response"`
+			Response        string `json:"response"`
+			PromptEvalCount int    `json:"prompt_eval_count"`
+			EvalCount       int    `json:"eval_count"`
 		}
 		if err := json.Unmarshal(data, &response); err != nil || strings.TrimSpace(response.Response) == "" {
-			return "", errors.New("empty ollama response")
+			return "", providerTokens{}, errors.New("empty ollama response")
 		}
-		return response.Response, nil
+		total := response.PromptEvalCount + response.EvalCount
+		return response.Response, providerTokens{
+			PromptTokens:    response.PromptEvalCount,
+			CandidateTokens: response.EvalCount,
+			TotalTokens:     total,
+		}, nil
 	}
 	if name == "agentrouter" {
 		var response struct {
@@ -159,11 +225,24 @@ func extractProviderText(name string, data []byte) (string, error) {
 					Content string `json:"content"`
 				} `json:"message"`
 			} `json:"choices"`
+			Usage struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+			} `json:"usage"`
 		}
 		if err := json.Unmarshal(data, &response); err != nil || len(response.Choices) == 0 || strings.TrimSpace(response.Choices[0].Message.Content) == "" {
-			return "", errors.New("empty agent router response")
+			return "", providerTokens{}, errors.New("empty agent router response")
 		}
-		return response.Choices[0].Message.Content, nil
+		total := response.Usage.TotalTokens
+		if total == 0 && (response.Usage.PromptTokens > 0 || response.Usage.CompletionTokens > 0) {
+			total = response.Usage.PromptTokens + response.Usage.CompletionTokens
+		}
+		return response.Choices[0].Message.Content, providerTokens{
+			PromptTokens:    response.Usage.PromptTokens,
+			CandidateTokens: response.Usage.CompletionTokens,
+			TotalTokens:     total,
+		}, nil
 	}
 	var response struct {
 		Candidates []struct {
@@ -173,11 +252,29 @@ func extractProviderText(name string, data []byte) (string, error) {
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil || len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 || strings.TrimSpace(response.Candidates[0].Content.Parts[0].Text) == "" {
-		return "", errors.New("empty gemini response")
+		return "", providerTokens{}, errors.New("empty gemini response")
 	}
-	return response.Candidates[0].Content.Parts[0].Text, nil
+	total := response.UsageMetadata.TotalTokenCount
+	if total == 0 && (response.UsageMetadata.PromptTokenCount > 0 || response.UsageMetadata.CandidatesTokenCount > 0) {
+		total = response.UsageMetadata.PromptTokenCount + response.UsageMetadata.CandidatesTokenCount
+	}
+	return response.Candidates[0].Content.Parts[0].Text, providerTokens{
+		PromptTokens:    response.UsageMetadata.PromptTokenCount,
+		CandidateTokens: response.UsageMetadata.CandidatesTokenCount,
+		TotalTokens:     total,
+	}, nil
+}
+
+func extractProviderText(name string, data []byte) (string, error) {
+	text, _, err := extractProviderResponse(name, data)
+	return text, err
 }
 
 type mockProvider struct{}

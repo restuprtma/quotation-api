@@ -27,14 +27,16 @@ type ContractService interface {
 }
 
 type contractService struct {
-	repo         repository.ContractRepository
+	repo          repository.ContractRepository
 	quotationRepo *quotation_repo.Repository
+	revisionRepo  *quotation_repo.RevisionRepository
 }
 
-func NewContractService(repo repository.ContractRepository, qRepo *quotation_repo.Repository) ContractService {
+func NewContractService(repo repository.ContractRepository, qRepo *quotation_repo.Repository, rRepo *quotation_repo.RevisionRepository) ContractService {
 	return &contractService{
-		repo:         repo,
+		repo:          repo,
 		quotationRepo: qRepo,
+		revisionRepo:  rRepo,
 	}
 }
 
@@ -45,8 +47,16 @@ func (s *contractService) CreateContract(ctx context.Context, companyID, quotati
 		return nil, err
 	}
 
-	// 2. Check if quotation is signed
-	if q.Status != "signed" {
+	// 2. Fetch signed revision
+	rev, err := s.revisionRepo.GetSignedRevision(ctx, quotationID, companyID)
+	if err != nil {
+		if errors.Is(err, quotation_repo.ErrRevisionNotFound) {
+			return nil, ErrQuotationNotSigned
+		}
+		return nil, err
+	}
+
+	if rev.SignedAt == nil || rev.SignatureData == nil {
 		return nil, ErrQuotationNotSigned
 	}
 
@@ -56,18 +66,12 @@ func (s *contractService) CreateContract(ctx context.Context, companyID, quotati
 		return nil, ErrContractExists
 	}
 
-	// 4. Fetch signed revision for snapshot
-	rev, err := s.quotationRepo.GetActiveRevision(ctx, quotationID, companyID, q.CurrentRevision)
-	if err != nil {
-		return nil, err
-	}
-
 	param := domain.CreateContractParam{
 		CompanyID:      companyID,
 		QuotationID:    quotationID,
 		RevisionID:     rev.ID.String(),
 		ContractNumber: "C-" + q.QuotationNumber,
-		ClientSnapshot: rev.ClientSnapshot,
+		ClientSnapshot: nil, // will be handled if needed
 		CreatedBy:      &createdBy,
 	}
 

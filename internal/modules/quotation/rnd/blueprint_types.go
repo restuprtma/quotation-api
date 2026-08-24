@@ -83,13 +83,13 @@ const (
 type BlueprintStage string
 
 const (
-	StageContextAnalysis  BlueprintStage = "context_analysis"
-	StageJourney          BlueprintStage = "journey"
-	StageArchitecture     BlueprintStage = "architecture"
-	StageStateMachine     BlueprintStage = "state_machine"
-	StageWorkflow         BlueprintStage = "workflow"
-	StageWBS              BlueprintStage = "wbs"
-	StageCrossValidation  BlueprintStage = "cross_validation"
+	StageContextAnalysis BlueprintStage = "context_analysis"
+	StageJourney         BlueprintStage = "journey"
+	StageArchitecture    BlueprintStage = "architecture"
+	StageStateMachine    BlueprintStage = "state_machine"
+	StageWorkflow        BlueprintStage = "workflow"
+	StageWBS             BlueprintStage = "wbs"
+	StageCrossValidation BlueprintStage = "cross_validation"
 )
 
 // BlueprintSourceContext captures the high-level context extracted from the source quotation revision.
@@ -330,14 +330,17 @@ type ValidationIssue struct {
 
 // BlueprintStageResult records the execution outcome of a single pipeline stage.
 type BlueprintStageResult struct {
-	Stage      BlueprintStage    `json:"stage"`
-	Status     SectionStatus     `json:"status"`
-	StartedAt  time.Time         `json:"started_at"`
-	DurationMS int64             `json:"duration_ms"`
-	RetryCount int               `json:"retry_count"`
-	Issues     []ValidationIssue `json:"issues,omitempty"`
-	Error      string            `json:"error,omitempty"`
-	Payload    interface{}       `json:"payload,omitempty"`
+	Stage           BlueprintStage    `json:"stage"`
+	Status          SectionStatus     `json:"status"`
+	StartedAt       time.Time         `json:"started_at"`
+	DurationMS      int64             `json:"duration_ms"`
+	PromptTokens    int               `json:"prompt_tokens,omitempty"`
+	CandidateTokens int               `json:"candidate_tokens,omitempty"`
+	TotalTokens     int               `json:"total_tokens,omitempty"`
+	RetryCount      int               `json:"retry_count"`
+	Issues          []ValidationIssue `json:"issues,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	Payload         interface{}       `json:"payload,omitempty"`
 }
 
 // BlueprintReportSummary aggregates stage metrics and overall status.
@@ -354,17 +357,21 @@ type BlueprintReportSummary struct {
 
 // BlueprintBatchReport represents the full execution report of a blueprint pipeline run.
 type BlueprintBatchReport struct {
-	SchemaVersion  string                 `json:"schema_version"`
-	Fixture        string                 `json:"fixture"`
-	Provider       string                 `json:"provider"`
-	Model          string                 `json:"model"`
-	PromptVersion  string                 `json:"prompt_version"`
-	Status         string                 `json:"status"`
-	Stages         []BlueprintStageResult `json:"stages"`
-	Issues         []ValidationIssue      `json:"issues,omitempty"`
-	Summary        BlueprintReportSummary `json:"summary"`
-	Bundle         *BlueprintBundle       `json:"bundle,omitempty"`
-	StartedAt      time.Time              `json:"started_at,omitempty"`
-	CompletedAt    time.Time              `json:"completed_at,omitempty"`
-	TotalLatencyMS int64                  `json:"total_latency_ms,omitempty"`
+	SchemaVersion        string                 `json:"schema_version"`
+	Fixture              string                 `json:"fixture"`
+	Provider             string                 `json:"provider"`
+	Model                string                 `json:"model"`
+	PromptVersion        string                 `json:"prompt_version"`
+	Status               string                 `json:"status"`
+	Stages               []BlueprintStageResult `json:"stages"`
+	Issues               []ValidationIssue      `json:"issues,omitempty"`
+	Summary              BlueprintReportSummary `json:"summary"`
+	Bundle               *BlueprintBundle       `json:"bundle,omitempty"`
+	StartedAt            time.Time              `json:"started_at,omitempty"`
+	CompletedAt          time.Time              `json:"completed_at,omitempty"`
+	TotalLatencyMS       int64                  `json:"total_latency_ms,omitempty"`
+	TotalPromptTokens    int                    `json:"total_prompt_tokens,omitempty"`
+	TotalCandidateTokens int                    `json:"total_candidate_tokens,omitempty"`
+	TotalTokens          int                    `json:"total_tokens,omitempty"`
+	EstimatedCostUSD     float64                `json:"estimated_cost_usd,omitempty"`
 }

@@ -47,6 +47,32 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.GET("/:id/revisions/:revision_id", m.Handler.GetRevisionDetail)
 		quotations.POST("/:id/share", m.Handler.ShareQuotation)
 	}
+
+	ai := router.Group("/ai")
+	ai.Use(middleware.JWTAuth(), middleware.CompanyContext())
+	{
+		ai.GET("/settings", m.Handler.GetSettings)
+		ai.PUT("/settings", m.Handler.UpdateSettings)
+		ai.POST("/settings/test", m.Handler.TestSettingsConnection)
+
+		ai.GET("/skills", m.Handler.ListSkills)
+		ai.GET("/skills/:id", m.Handler.GetSkill)
+		ai.PUT("/skills/:id", m.Handler.UpdateSkill)
+		ai.POST("/skills/:id/reset", m.Handler.ResetSkillDefault)
+	}
+
+	rateCards := router.Group("/rate-cards")
+	rateCards.Use(middleware.JWTAuth(), middleware.CompanyContext())
+	{
+		rateCards.GET("", m.Handler.ListRateCards)
+		rateCards.GET("/:id", m.Handler.GetRateCard)
+	}
+
+	legalTemplates := router.Group("/legal-templates")
+	legalTemplates.Use(middleware.JWTAuth(), middleware.CompanyContext())
+	{
+		legalTemplates.GET("/active/:code", m.Handler.GetActiveLegalTemplate)
+	}
 }
 
 // SetupPublicRoutes registers token-based quotation endpoints without auth.

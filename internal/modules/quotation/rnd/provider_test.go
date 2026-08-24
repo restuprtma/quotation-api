@@ -153,6 +153,45 @@ func TestProviderMalformedEmptyAndCancellation(t *testing.T) {
 	}
 }
 
+func TestProviderTokenUsageExtraction(t *testing.T) {
+	const key = "test-key"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"candidates": [{"content": {"parts": [{"text": "response text"}]}}],
+			"usageMetadata": {
+				"promptTokenCount": 150,
+				"candidatesTokenCount": 420,
+				"totalTokenCount": 570
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	client.Transport = rewriteTransport{base: mustParseURL(t, server.URL), next: client.Transport}
+	provider, err := NewProvider("gemini", ProviderConfig{GeminiAPIKey: key}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := provider.Generate(context.Background(), ProviderRequest{Stage: StageHTML, Model: "gemini-3.5-flash-lite", Payload: map[string]bool{"ok": true}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Raw != "response text" {
+		t.Errorf("expected Raw='response text', got %q", resp.Raw)
+	}
+	if resp.PromptTokens != 150 {
+		t.Errorf("expected PromptTokens=150, got %d", resp.PromptTokens)
+	}
+	if resp.CandidateTokens != 420 {
+		t.Errorf("expected CandidateTokens=420, got %d", resp.CandidateTokens)
+	}
+	if resp.TotalTokens != 570 {
+		t.Errorf("expected TotalTokens=570, got %d", resp.TotalTokens)
+	}
+}
+
 func TestProviderFactoryValidation(t *testing.T) {
 	for _, name := range []string{"unknown", "ollama", "gemini", "agentrouter"} {
 		if _, err := NewProvider(name, ProviderConfig{}, nil); err == nil {

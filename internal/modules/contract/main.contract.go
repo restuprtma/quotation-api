@@ -18,7 +18,8 @@ type Module struct {
 func Initialize(db *pgxpool.Pool) *Module {
 	contractRepo := repository.NewContractRepository(db)
 	quotationRepo := quotation_repo.NewRepository(db)
-	contractSvc := service.NewContractService(contractRepo, quotationRepo)
+	revisionRepo := quotation_repo.NewRevisionRepository(db)
+	contractSvc := service.NewContractService(contractRepo, quotationRepo, revisionRepo)
 	contractHandler := handler.NewContractHandler(contractSvc)
 
 	return &Module{

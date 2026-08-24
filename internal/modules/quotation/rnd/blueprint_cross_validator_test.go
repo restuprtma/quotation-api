@@ -1,6 +1,9 @@
 package rnd
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -660,4 +663,99 @@ func TestBlueprintCrossValidator_EmptySection(t *testing.T) {
 			t.Fatalf("expected 5 empty section warnings for nil bundle, got %d: %+v", len(warnings), warnings)
 		}
 	})
+}
+
+func getResultsDirectory(t *testing.T) string {
+	t.Helper()
+	candidates := []string{
+		"../../../../../docs/roadmap/rnd/blueprint-skill/results",
+		"../../../../docs/roadmap/rnd/blueprint-skill/results",
+		"../../docs/roadmap/rnd/blueprint-skill/results",
+		"../docs/roadmap/rnd/blueprint-skill/results",
+		"docs/roadmap/rnd/blueprint-skill/results",
+	}
+
+	for _, c := range candidates {
+		abs, err := filepath.Abs(c)
+		if err == nil {
+			if info, err := os.Stat(abs); err == nil && info.IsDir() {
+				return abs
+			}
+		}
+	}
+
+	t.Fatalf("results directory not found among candidates: %v", candidates)
+	return ""
+}
+
+func TestBlueprintCrossValidator_RealRepresentativeOutputs(t *testing.T) {
+	resultsDir := getResultsDirectory(t)
+	fixturesDir := getFixturesDirectory(t)
+	schemaValidator := NewBlueprintSchemaValidator()
+	crossValidator := NewBlueprintCrossValidator()
+
+	testCases := []struct {
+		name        string
+		bundleFile  string
+		fixtureFile string
+	}{
+		{
+			name:        "RepresentativeComplex_01",
+			bundleFile:  "representative-complex-01.json",
+			fixtureFile: "01-public-service-queue.json",
+		},
+		{
+			name:        "RepresentativeSimple_10",
+			bundleFile:  "representative-simple-10.json",
+			fixtureFile: "10-small-simple-system.json",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			bundlePath := filepath.Join(resultsDir, tc.bundleFile)
+			bundleData, err := os.ReadFile(bundlePath)
+			if err != nil {
+				t.Fatalf("failed to read bundle file %s: %v", tc.bundleFile, err)
+			}
+
+			var bundle BlueprintBundle
+			if err := json.Unmarshal(bundleData, &bundle); err != nil {
+				t.Fatalf("failed to unmarshal bundle %s: %v", tc.bundleFile, err)
+			}
+
+			fixturePath := filepath.Join(fixturesDir, tc.fixtureFile)
+			fixtureData, err := os.ReadFile(fixturePath)
+			if err != nil {
+				t.Fatalf("failed to read fixture file %s: %v", tc.fixtureFile, err)
+			}
+
+			var input BlueprintInput
+			if err := json.Unmarshal(fixtureData, &input); err != nil {
+				t.Fatalf("failed to unmarshal fixture %s: %v", tc.fixtureFile, err)
+			}
+
+			// 1. Schema Validation
+			schemaIssues := schemaValidator.ValidateBundle(&bundle)
+			for _, iss := range schemaIssues {
+				if iss.Blocking || iss.Severity == SeverityBlockingError {
+					t.Errorf("unexpected schema blocking error in %s: code=%s, path=%s, msg=%s", tc.bundleFile, iss.Code, iss.Path, iss.Message)
+				}
+			}
+
+			// 2. Cross Validation
+			crossIssues := crossValidator.CrossValidate(&bundle, &input)
+			for _, iss := range crossIssues {
+				if iss.Blocking || iss.Severity == SeverityBlockingError {
+					t.Errorf("unexpected cross-validation blocking error in %s: code=%s, path=%s, msg=%s", tc.bundleFile, iss.Code, iss.Path, iss.Message)
+				}
+				if iss.Remediation == "" {
+					t.Errorf("warning issue missing remediation guide in %s: code=%s, target=%s", tc.bundleFile, iss.Code, iss.TargetID)
+				}
+			}
+
+			t.Logf("[%s] Schema Issues: %d, Cross-Validation Warnings: %d (Zero Blocking Errors)", tc.name, len(schemaIssues), len(crossIssues))
+		})
+	}
 }

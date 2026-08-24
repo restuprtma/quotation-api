@@ -166,7 +166,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "error=failed to protect storage")
 		return 1
 	}
-	provider, err := providerFactory(value.Provider, rnd.ProviderConfig{OllamaBaseURL: configuration.AI.OllamaBaseURL, GeminiAPIKey: configuration.AI.GeminiAPIKey, AgentRouterBaseURL: configuration.AI.AgentRouterBaseURL, AgentRouterAPIKey: configuration.AI.AgentRouterAPIKey, Timeout: configuration.AI.Timeout})
+	provider, err := providerFactory(value.Provider, rnd.ProviderConfig{OllamaBaseURL: configuration.AI.OllamaBaseURL, GeminiAPIKey: os.Getenv("GEMINI_API_KEY"), AgentRouterBaseURL: configuration.AI.AgentRouterBaseURL, AgentRouterAPIKey: configuration.AI.AgentRouterAPIKey, Timeout: configuration.AI.Timeout})
 	if err != nil {
 		fmt.Fprintln(stderr, "error=provider configuration failed")
 		return 1
@@ -187,6 +187,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "status="+report.Status)
 		fmt.Fprintln(stdout, "output="+output)
 		fmt.Fprintln(stdout, "report="+reportPath)
+		fmt.Fprintf(stdout, "tokens=input:%d candidate:%d total:%d cost_usd:%.6f\n",
+			report.TotalPromptTokens, report.TotalCandidateTokens, report.TotalTokens, report.EstimatedCostUSD)
 		if report.Status != "pass" {
 			return 1
 		}

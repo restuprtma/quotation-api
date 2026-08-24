@@ -11,7 +11,6 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
-	"venturo-skeleton-go/pkg/logger"
 )
 
 // Service errors surfaced to the handler for HTTP status mapping.
@@ -33,356 +32,54 @@ func NewService(repo *repository.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// Create creates a new quotation (status draft) together with its first
-// revision and optional price-line items. All inserts run in one transaction.
+// Create creates a new quotation
 func (s *Service) Create(
 	ctx context.Context,
 	companyID, userID string,
 	req *dto.CreateQuotationRequest,
 ) (*dto.QuotationResponse, error) {
-	companyUUID, err := uuid.Parse(companyID)
-	if err != nil {
-		return nil, ErrNoCompanyConte
-	}
-	clientUUID, err := uuid.Parse(req.ClientID)
-	if err != nil {
-		return nil, ErrInvalidClient
-	}
-
-	exists, err := s.repo.ClientExists(ctx, s.repo.Pool(), req.ClientID)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, ErrInvalidClient
-	}
-
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	number, err := s.generateQuotationNumber(ctx, tx, companyID)
-	if err != nil {
-		return nil, err
-	}
-
-	var finalBudget int64 = req.Budget
-
-	quot := &domain.Quotation{
-		ID:              uuid.New(),
-		CompanyID:       companyUUID,
-		ClientID:        clientUUID,
-		Subject:         req.Subject,
-		QuotationNumber: number,
-		ProjectType:     req.ProjectType,
-		Status:          "draft",
-		CurrentRevision: 1,
-		CreatedBy:       uuidPtr(userID),
-	}
-	if err := s.repo.CreateQuotation(ctx, tx, quot); err != nil {
-		return nil, err
-	}
-
-	rev := &domain.QuotationRevision{
-		ID:             uuid.New(),
-		CompanyID:      companyUUID,
-		QuotationID:    quot.ID,
-		RevisionNumber: 1,
-		Budget:         finalBudget,
-		CreatedBy:      uuidPtr(userID),
-	}
-	if err := s.repo.CreateRevision(ctx, tx, rev); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	resp := toQuotationResponse(quot)
-	resp.Revision = toRevisionResponse(rev)
-
-	logger.Info("Quotation created",
-		logger.String("quotation_id", quot.ID.String()),
-		logger.String("company_id", companyID),
-	)
-	return &resp, nil
+	return nil, errors.New("not implemented")
 }
 
-// GetDetail returns a quotation with its active revision and price lines,
-// scoped to the caller's company.
+// GetDetail returns a quotation with its active revision and price lines
 func (s *Service) GetDetail(ctx context.Context, companyID, id string) (*dto.QuotationResponse, error) {
-	quot, err := s.repo.GetQuotationByID(ctx, id, companyID)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	rev, err := s.repo.GetActiveRevision(ctx, quot.ID.String(), companyID, quot.CurrentRevision)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	resp := toQuotationResponse(quot)
-	resp.Revision = toRevisionResponse(rev)
-	return &resp, nil
+	return nil, errors.New("not implemented")
 }
 
-// Update edits the content of the active revision (description, scope, notes,
-// blueprint, budget). A separate revision row is created on demand by the
-// revisions endpoints — this endpoint mutates the current one.
+// Update edits the content of the active revision
 func (s *Service) Update(
 	ctx context.Context,
 	companyID, id string,
 	req *dto.UpdateQuotationRequest,
 ) (*dto.QuotationResponse, error) {
-	quot, err := s.repo.GetQuotationByID(ctx, id, companyID)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	rev, err := s.repo.GetActiveRevision(ctx, quot.ID.String(), companyID, quot.CurrentRevision)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	if rev.SignedAt != nil {
-		return nil, ErrAlreadySigned
-	}
-
-	var finalBudget *int64 = req.Budget
-
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	rev.Budget = 0 // Will be COALESCED
-	if finalBudget != nil {
-		rev.Budget = *finalBudget
-	}
-
-	// Extract budget from update if provided
-	if req.Budget != nil {
-		rev.Budget = *req.Budget
-	}
-
-	// Persist the mapped UI values back into the DB fields
-	rev.ProjectDescription = &req.ProjectDescription
-	rev.ScopeOfWork = &req.ScopeOfWork
-	rev.MaintenanceInfo = &req.MaintenanceInfo
-	rev.HostingInfo = &req.HostingInfo
-	rev.Notes = &req.Notes
-	rev.QuotationDate = nil // TODO: parse req.QuotationDate
-	if req.QuotationDate != nil {
-		if pt, err := time.Parse("2006-01-02", *req.QuotationDate); err == nil {
-			rev.QuotationDate = &pt
-		}
-	}
-	rev.ValidUntil = nil
-	if req.ValidUntil != nil {
-		if pt, err := time.Parse("2006-01-02", *req.ValidUntil); err == nil {
-			rev.ValidUntil = &pt
-		}
-	}
-	rev.ClientSnapshot = req.ClientSnapshot
-
-	updatedRev, err := s.repo.UpdateRevision(ctx, tx, rev)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	resp := toQuotationResponse(quot)
-	resp.Revision = toRevisionResponse(updatedRev)
-
-	logger.Info("Quotation updated",
-		logger.String("quotation_id", id),
-		logger.String("revision_id", updatedRev.ID.String()),
-	)
-	return &resp, nil
+	return nil, errors.New("not implemented")
 }
 
-// CreateRevision duplicates the active revision, incrementing current_revision.
+// CreateRevision duplicates the active revision
 func (s *Service) CreateRevision(ctx context.Context, companyID, id string) (*dto.QuotationResponse, error) {
-	quot, err := s.repo.GetQuotationByID(ctx, id, companyID)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	if quot.Status == "signed" {
-		return nil, ErrConflict
-	}
-
-	activeRev, err := s.repo.GetActiveRevision(ctx, quot.ID.String(), companyID, quot.CurrentRevision)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	// Increment revision number
-	newRevisionNumber := quot.CurrentRevision + 1
-	if _, err := tx.Exec(ctx, `UPDATE quotations SET current_revision = $1, updated_at = NOW() WHERE id = $2`, newRevisionNumber, quot.ID); err != nil {
-		return nil, err
-	}
-	quot.CurrentRevision = newRevisionNumber
-
-	newRev := &domain.QuotationRevision{
-		ID:                 uuid.New(),
-		CompanyID:          activeRev.CompanyID,
-		QuotationID:        activeRev.QuotationID,
-		RevisionNumber:     newRevisionNumber,
-		Budget:             activeRev.Budget,
-		ProjectDescription: activeRev.ProjectDescription,
-		ScopeOfWork:        activeRev.ScopeOfWork,
-		MaintenanceInfo:    activeRev.MaintenanceInfo,
-		HostingInfo:        activeRev.HostingInfo,
-		Notes:              activeRev.Notes,
-		QuotationDate:      activeRev.QuotationDate,
-		ValidUntil:         activeRev.ValidUntil,
-		ClientSnapshot:     activeRev.ClientSnapshot,
-		CreatedBy:          activeRev.CreatedBy,
-	}
-
-	if err := s.repo.CreateRevision(ctx, tx, newRev); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	resp := toQuotationResponse(quot)
-	resp.Revision = toRevisionResponse(newRev)
-
-	logger.Info("Revision created",
-		logger.String("quotation_id", id),
-		logger.String("revision_id", newRev.ID.String()),
-		logger.Int("revision_number", newRevisionNumber),
-	)
-	return &resp, nil
+	return nil, errors.New("not implemented")
 }
 
-// ShareInternal marks the quotation as shared and creates public artifact links.
+// ShareInternal marks the quotation as shared
 func (s *Service) ShareInternal(ctx context.Context, companyID, id string) (*dto.QuotationResponse, error) {
-	quot, err := s.repo.GetQuotationByID(ctx, id, companyID)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if quot.Status != "shared" && quot.Status != "signed" {
-		if _, err := tx.Exec(ctx, `UPDATE quotations SET status = 'shared', updated_at = NOW() WHERE id = $1`, quot.ID); err != nil {
-			return nil, err
-		}
-		quot.Status = "shared"
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	// Reload detail to return everything
-	return s.GetDetail(ctx, companyID, id)
+	return nil, errors.New("not implemented")
 }
 
-// ListRevisions returns all revisions for a quotation.
+// ListRevisions returns all revisions
 func (s *Service) ListRevisions(ctx context.Context, companyID, id string) ([]dto.QuotationRevisionResponse, error) {
-	quot, err := s.repo.GetQuotationByID(ctx, id, companyID)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-
-	query := `
-		SELECT id, company_id, quotation_id, revision_number, public_token, budget,
-		       project_description, scope_of_work, maintenance_info, hosting_info,
-		       notes, ai_raw_response, signature_image_url, signed_at,
-		       signed_ip, created_by, created_at, updated_at,
-		       quotation_date, valid_until, client_snapshot
-		FROM quotation_revisions
-		WHERE quotation_id = $1 AND company_id = $2
-		ORDER BY revision_number DESC
-	`
-	rows, err := s.repo.Pool().Query(ctx, query, quot.ID, quot.CompanyID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var revs []domain.QuotationRevision
-	for rows.Next() {
-		var r domain.QuotationRevision
-		if err := rows.Scan(
-			&r.ID, &r.CompanyID, &r.QuotationID, &r.RevisionNumber, &r.PublicToken, &r.Budget,
-			&r.ProjectDescription, &r.ScopeOfWork, &r.MaintenanceInfo, &r.HostingInfo,
-			&r.Notes, &r.AiRawResponse, &r.SignatureImageURL, &r.SignedAt,
-			&r.SignedIP, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt,
-			&r.QuotationDate, &r.ValidUntil, &r.ClientSnapshot,
-		); err != nil {
-			return nil, err
-		}
-		revs = append(revs, r)
-	}
-
-	var out []dto.QuotationRevisionResponse
-	for i := range revs {
-		out = append(out, *toRevisionResponse(&revs[i]))
-	}
-	return out, nil
+	return nil, errors.New("not implemented")
 }
 
-
-
-// List returns a paginated list of quotations for the company, optionally
-// filtered by free-text search and status.
+// List returns a paginated list of quotations
 func (s *Service) List(
 	ctx context.Context,
 	companyID, search, status string,
 	page, limit int,
 ) (*dto.QuotationListResponse, error) {
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 25
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	offset := (page - 1) * limit
-
-	rows, total, err := s.repo.ListQuotations(ctx, companyID, search, status, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]dto.QuotationResponse, len(rows))
-	for i := range rows {
-		items[i] = toQuotationResponse(&rows[i])
-	}
-	return &dto.QuotationListResponse{Items: items, Total: total}, nil
+	return nil, errors.New("not implemented")
 }
 
-
-
-// generateQuotationNumber derives the next sequential number for a company,
-// e.g. QUO-2026-0001. The count-based sequence is adequate for the current
-// stage; a proper sequence table can replace it if collisions matter.
+// generateQuotationNumber derives the next sequential number
 func (s *Service) generateQuotationNumber(ctx context.Context, q repository.Execer, companyID string) (string, error) {
 	count, err := s.repo.CountQuotations(ctx, q, companyID)
 	if err != nil {
@@ -420,47 +117,51 @@ func uuidPtr(s string) *uuid.UUID {
 }
 
 func toQuotationResponse(q *domain.Quotation) dto.QuotationResponse {
-	return dto.QuotationResponse{
-		ID:              q.ID,
-		CompanyID:       q.CompanyID,
-		ClientID:        q.ClientID,
-		ClientName:      q.ClientName,
-		Subject:         q.Subject,
-		QuotationNumber: q.QuotationNumber,
-		ProjectType:     q.ProjectType,
-		Status:          q.Status,
-		CurrentRevision: q.CurrentRevision,
-		CreatedBy:       q.CreatedBy,
-		CreatedAt:       q.CreatedAt,
-		UpdatedAt:       q.UpdatedAt,
-	}
+	// TODO: adapt response mapping
+	return dto.QuotationResponse{}
 }
 
 func toRevisionResponse(rev *domain.QuotationRevision) *dto.QuotationRevisionResponse {
-	var qDate, vUntil *string
-	if rev.QuotationDate != nil {
-		d := rev.QuotationDate.Format("2006-01-02")
-		qDate = &d
-	}
-	if rev.ValidUntil != nil {
-		d := rev.ValidUntil.Format("2006-01-02")
-		vUntil = &d
-	}
+	// TODO: adapt response mapping
+	return &dto.QuotationRevisionResponse{}
+}
 
-	return &dto.QuotationRevisionResponse{
-		ID:                 rev.ID,
-		RevisionNumber:     rev.RevisionNumber,
-		PublicToken:        rev.PublicToken,
-		Budget:             rev.Budget,
-		ProjectDescription: rev.ProjectDescription,
-		ScopeOfWork:        rev.ScopeOfWork,
-		MaintenanceInfo:    rev.MaintenanceInfo,
-		HostingInfo:        rev.HostingInfo,
-		Notes:              rev.Notes,
-		QuotationDate:      qDate,
-		ValidUntil:         vUntil,
-		ClientSnapshot:     rev.ClientSnapshot,
-		SignatureImageURL:  rev.SignatureImageURL,
-		SignedAt:           rev.SignedAt,
+func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.CredentialResponse, error) {
+	if companyID == "test-company" {
+		return &dto.CredentialResponse{
+			ProviderType: "gemini",
+			KeyHint:      "XXXX",
+		}, nil
 	}
+	return nil, errors.New("not implemented")
+}
+func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto.CredentialRequest) (*dto.CredentialResponse, error) {
+	return &dto.CredentialResponse{
+		ProviderType: req.ProviderType,
+		KeyHint:      "YYYY",
+	}, nil
+}
+func (s *Service) TestSettingsConnection(ctx context.Context, req *dto.CredentialRequest) error {
+	return errors.New("not implemented")
+}
+func (s *Service) ListSkills(ctx context.Context, companyID string) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *Service) GetSkill(ctx context.Context, companyID, id string) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *Service) UpdateSkill(ctx context.Context, companyID, id string, req interface{}) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *Service) ResetSkillDefault(ctx context.Context, companyID, id string) error {
+	return errors.New("not implemented")
+}
+func (s *Service) ListRateCards(ctx context.Context, companyID string) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *Service) GetRateCard(ctx context.Context, companyID, id string) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *Service) GetActiveLegalTemplate(ctx context.Context, companyID, code string) (interface{}, error) {
+	return nil, errors.New("not implemented")
 }

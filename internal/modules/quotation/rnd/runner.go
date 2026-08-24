@@ -32,8 +32,11 @@ type ProviderRequest struct {
 }
 
 type ProviderResponse struct {
-	Raw     string
-	Latency time.Duration
+	Raw             string
+	Latency         time.Duration
+	PromptTokens    int
+	CandidateTokens int
+	TotalTokens     int
 }
 
 type Provider interface {

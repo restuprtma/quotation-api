@@ -6,44 +6,41 @@ import (
 	"github.com/google/uuid"
 )
 
-
-
 // QuotationRevisionResponse is the API view of one revision of a quotation.
-// blueprint_data and ai_raw_response are stored as JSONB and returned as-is.
+// ai_raw_response and generated_content are stored as JSONB and returned as-is.
 type QuotationRevisionResponse struct {
-	ID                 uuid.UUID                `json:"id"`
-	RevisionNumber     int                      `json:"revision_number"`
-	PublicToken        uuid.UUID                `json:"public_token"`
-	Budget             int64                    `json:"budget"`
-	ProjectDescription *string                  `json:"project_description"`
-	ScopeOfWork        *string                  `json:"scope_of_work"`
-	MaintenanceInfo    *string                  `json:"maintenance_info"`
-	HostingInfo        *string                  `json:"hosting_info"`
-	Notes              *string                  `json:"notes"`
-	QuotationDate      *string                  `json:"quotation_date,omitempty"`
-	ValidUntil         *string                  `json:"valid_until,omitempty"`
-	ClientSnapshot     map[string]interface{}   `json:"client_snapshot,omitempty"`
-	SignatureImageURL  *string                  `json:"signature_image_url"`
-	SignedAt           *time.Time               `json:"signed_at"`
+	ID                uuid.UUID              `json:"id"`
+	VersionNumber     int                    `json:"version_number"`
+	Status            string                 `json:"status"`
+	AIRawResponse     map[string]interface{} `json:"ai_raw_response,omitempty"`
+	GeneratedContent  map[string]interface{} `json:"generated_content,omitempty"`
+	ClientSnapshot    map[string]interface{} `json:"client_snapshot,omitempty"`
+	ContractTerms     *string                `json:"contract_terms,omitempty"`
+	SignatureImageURL *string                `json:"signature_image_url,omitempty"`
+	SignedAt          *time.Time             `json:"signed_at,omitempty"`
+	SignedBy          *string                `json:"signed_by,omitempty"`
+	SignedIP          *string                `json:"signed_ip,omitempty"`
 }
 
 // QuotationResponse is the API view of a quotation, optionally including
 // its active revision (detail endpoint) or the client display name.
 type QuotationResponse struct {
-	ID              uuid.UUID  `json:"id"`
-	CompanyID       uuid.UUID  `json:"company_id"`
-	ClientID        uuid.UUID  `json:"client_id"`
-	ClientName      *string    `json:"client_name,omitempty"`
-	Subject         *string    `json:"subject,omitempty"`
-	QuotationNumber string     `json:"quotation_number"`
-	ProjectType     string     `json:"project_type"`
-	Status          string     `json:"status"`
-	CurrentRevision int        `json:"current_revision"`
-	CreatedBy       *uuid.UUID `json:"created_by,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                        uuid.UUID  `json:"id"`
+	CompanyID                 uuid.UUID  `json:"company_id"`
+	ClientID                  uuid.UUID  `json:"client_id"`
+	ClientName                *string    `json:"client_name,omitempty"`
+	Subject                   *string    `json:"subject,omitempty"`
+	QuotationNumber           string     `json:"quotation_number"`
+	SolutionType              string     `json:"solution_type"`
+	CommercialScheme          string     `json:"commercial_scheme"`
+	BudgetMaximum             *int64     `json:"budget_maximum,omitempty"`
+	Status                    string     `json:"status"`
+	ActivePublishedRevisionID *uuid.UUID `json:"active_published_revision_id,omitempty"`
+	CreatedBy                 *uuid.UUID `json:"created_by,omitempty"`
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
 
-	// Revision is the active revision (current_revision). Populated on the
+	// Revision is the active revision. Populated on the
 	// detail endpoint and on create/update responses.
 	Revision *QuotationRevisionResponse `json:"revision,omitempty"`
 }

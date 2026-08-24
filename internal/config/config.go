@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -74,15 +75,15 @@ type WAHAConfig struct {
 }
 
 type AIConfig struct {
-	Provider           string
-	OllamaBaseURL      string
-	OllamaModel        string
-	GeminiAPIKey       string
-	GeminiModel        string
-	AgentRouterAPIKey  string
-	AgentRouterBaseURL string
-	AgentRouterModel   string
-	Timeout            time.Duration
+	Provider                string
+	OllamaBaseURL           string
+	OllamaModel             string
+	GeminiModel             string
+	AgentRouterAPIKey       string
+	AgentRouterBaseURL      string
+	AgentRouterModel        string
+	Timeout                 time.Duration
+	CredentialEncryptionKey string
 }
 
 type RedisConfig struct {
@@ -96,8 +97,37 @@ type RedisConfig struct {
 	PermissionTTL time.Duration
 }
 
+func loadEnvFile() {
+	candidates := []string{".env", "../.env", "../../.env", "quotation-api/.env"}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			val = strings.Trim(val, "\"'")
+			if os.Getenv(key) == "" {
+				_ = os.Setenv(key, val)
+			}
+		}
+		break
+	}
+}
+
 func Load() *Config {
-	return &Config{
+	loadEnvFile()
+	cfg := &Config{
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnv("DB_PORT", "5432"),
@@ -126,15 +156,15 @@ func Load() *Config {
 			HTTPTimeout:   getEnvInt("WAHA_HTTP_TIMEOUT", 30),
 		},
 		AI: AIConfig{
-			Provider:           getEnv("AI_PROVIDER", "mock"),
-			OllamaBaseURL:      getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-			OllamaModel:        getEnv("OLLAMA_MODEL", "llama3"),
-			GeminiAPIKey:       getEnv("GEMINI_API_KEY", ""),
-			GeminiModel:        getEnv("GEMINI_MODEL", "gemini-1.5-flash"),
-			AgentRouterAPIKey:  getEnv("AGENTROUTER_API_KEY", ""),
-			AgentRouterBaseURL: getEnv("AGENTROUTER_BASE_URL", "https://agentrouter.org/v1"),
-			AgentRouterModel:   getEnv("AGENTROUTER_MODEL", "gpt-5.6-sol"),
-			Timeout:            getEnvDuration("AI_TIMEOUT", 120*time.Second),
+			Provider:                getEnv("AI_PROVIDER", "mock"),
+			OllamaBaseURL:           getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+			OllamaModel:             getEnv("OLLAMA_MODEL", "llama3"),
+			GeminiModel:             getEnv("GEMINI_MODEL", "gemini-3.6-flash"),
+			AgentRouterAPIKey:       getEnv("AGENTROUTER_API_KEY", ""),
+			AgentRouterBaseURL:      getEnv("AGENTROUTER_BASE_URL", "https://agentrouter.org/v1"),
+			AgentRouterModel:        getEnv("AGENTROUTER_MODEL", "gpt-5.6-sol"),
+			Timeout:                 getEnvDuration("AI_TIMEOUT", 120*time.Second),
+			CredentialEncryptionKey: getEnv("AI_CREDENTIAL_ENCRYPTION_KEY", ""),
 		},
 		Redis: RedisConfig{
 			Host:          getEnv("REDIS_HOST", "localhost"),
@@ -153,6 +183,12 @@ func Load() *Config {
 			CredentialsJSON: getEnv("FIREBASE_CREDENTIALS_JSON", ""),
 		},
 	}
+
+	if len(cfg.AI.CredentialEncryptionKey) != 32 {
+		panic("FATAL: AI_CREDENTIAL_ENCRYPTION_KEY is missing or invalid. It must be exactly 32 bytes for AES-256.")
+	}
+
+	return cfg
 }
 
 func (c *DatabaseConfig) GetDSN() string {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -100,8 +101,39 @@ func (r *BlueprintRunner) writeRaw(safeFixture string, stage BlueprintStage, raw
 
 // Run executes the 7-stage pipeline with failure isolation against the specified fixture.
 func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*BlueprintBatchReport, error) {
+	safeFixture := sanitizeFixtureName(fixturePath)
+	report := &BlueprintBatchReport{
+		SchemaVersion: BlueprintSchemaVersion,
+		Fixture:       safeFixture,
+		Provider:      r.config.Provider.Name(),
+		Model:         r.config.Model,
+		PromptVersion: "1.0",
+		Status:        "pending",
+		StartedAt:     r.config.Clock(),
+		Stages: []BlueprintStageResult{
+			{Stage: StageContextAnalysis, Status: StatusPending},
+			{Stage: StageJourney, Status: StatusPending},
+			{Stage: StageArchitecture, Status: StatusPending},
+			{Stage: StageStateMachine, Status: StatusPending},
+			{Stage: StageWorkflow, Status: StatusPending},
+			{Stage: StageWBS, Status: StatusPending},
+			{Stage: StageCrossValidation, Status: StatusPending},
+		},
+		Bundle: &BlueprintBundle{
+			SchemaVersion: BlueprintSchemaVersion,
+		},
+	}
+	return r.Resume(ctx, fixturePath, report)
+}
+
+// Resume continues or retries a pipeline execution against an existing report and bundle state.
+// It skips stages already completed or validated, and executes any failed, pending, or manual stages.
+func (r *BlueprintRunner) Resume(ctx context.Context, fixturePath string, report *BlueprintBatchReport) (*BlueprintBatchReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if report == nil {
+		return nil, errors.New("report is required for resume")
 	}
 
 	startedAt := r.config.Clock()
@@ -123,26 +155,8 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 		return nil, fmt.Errorf("create raw directory: %w", err)
 	}
 
-	report := &BlueprintBatchReport{
-		SchemaVersion: BlueprintSchemaVersion,
-		Fixture:       safeFixture,
-		Provider:      r.config.Provider.Name(),
-		Model:         r.config.Model,
-		PromptVersion: "1.0",
-		Status:        "pending",
-		StartedAt:     startedAt,
-		Stages: []BlueprintStageResult{
-			{Stage: StageContextAnalysis, Status: StatusPending},
-			{Stage: StageJourney, Status: StatusPending},
-			{Stage: StageArchitecture, Status: StatusPending},
-			{Stage: StageStateMachine, Status: StatusPending},
-			{Stage: StageWorkflow, Status: StatusPending},
-			{Stage: StageWBS, Status: StatusPending},
-			{Stage: StageCrossValidation, Status: StatusPending},
-		},
-		Bundle: &BlueprintBundle{
-			SchemaVersion: BlueprintSchemaVersion,
-		},
+	if report.Bundle == nil {
+		report.Bundle = &BlueprintBundle{SchemaVersion: BlueprintSchemaVersion}
 	}
 
 	stages := []BlueprintStage{
@@ -153,6 +167,23 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 		StageWorkflow,
 		StageWBS,
 		StageCrossValidation,
+	}
+
+	// Ensure report has 7 stages
+	if len(report.Stages) != len(stages) {
+		existingStages := make(map[BlueprintStage]BlueprintStageResult)
+		for _, st := range report.Stages {
+			existingStages[st.Stage] = st
+		}
+		newStages := make([]BlueprintStageResult, len(stages))
+		for i, stName := range stages {
+			if existing, ok := existingStages[stName]; ok {
+				newStages[i] = existing
+			} else {
+				newStages[i] = BlueprintStageResult{Stage: stName, Status: StatusPending}
+			}
+		}
+		report.Stages = newStages
 	}
 
 	var totalBlockingErrors int
@@ -169,17 +200,83 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 			break
 		}
 
+		currStatus := report.Stages[i].Status
+		if currStatus == StatusCompleted {
+			// Stage already completed successfully in previous run. Re-validate to collect issues.
+			issues := r.validateStage(stage, report.Bundle, &input)
+			report.Stages[i].Issues = issues
+			for _, iss := range issues {
+				if iss.Blocking || iss.Severity == SeverityBlockingError {
+					totalBlockingErrors++
+				} else if iss.Severity == SeverityWarning {
+					totalWarnings++
+				}
+			}
+			continue
+		}
+
+		if currStatus == StatusValidated {
+			// Stage was manually completed/edited by BA and set to validated. Validate schema.
+			issues := r.validateStage(stage, report.Bundle, &input)
+			report.Stages[i].Issues = issues
+			hasBlocking := false
+			for _, iss := range issues {
+				if iss.Blocking || iss.Severity == SeverityBlockingError {
+					hasBlocking = true
+					totalBlockingErrors++
+				} else if iss.Severity == SeverityWarning {
+					totalWarnings++
+				}
+			}
+			if hasBlocking {
+				report.Stages[i].Status = StatusFailed
+				report.Stages[i].Error = "manual payload validation failed"
+				pipelineFailed = true
+				break
+			}
+			// Retain StatusValidated
+			continue
+		}
+
+		// Stage needs generation / retry
 		stageStart := r.config.Clock()
 		report.Stages[i].StartedAt = stageStart
 		report.Stages[i].Status = StatusGenerating
+		report.Stages[i].RetryCount++
 
-		// 1. Generate or Synthesize Stage Payload
 		var stageIssues []ValidationIssue
 		var genErr error
 
+		if stage == StageCrossValidation {
+			// Stage 7 is deterministic cross-validation & bundle schema integrity check
+			stageIssues := r.validateStage(stage, report.Bundle, &input)
+			report.Stages[i].Issues = stageIssues
+			hasBlocking := false
+			for _, iss := range stageIssues {
+				if iss.Blocking || iss.Severity == SeverityBlockingError {
+					hasBlocking = true
+					totalBlockingErrors++
+				} else if iss.Severity == SeverityWarning {
+					totalWarnings++
+				}
+			}
+			stageDuration := r.config.Clock().Sub(stageStart)
+			report.Stages[i].DurationMS = stageDuration.Milliseconds()
+			if hasBlocking {
+				report.Stages[i].Status = StatusFailed
+				pipelineFailed = true
+				break
+			}
+			report.Stages[i].Status = StatusCompleted
+			continue
+		}
+
+		systemPrompt, instructionPrompt := r.getPrompt(stage)
 		resp, pErr := r.config.Provider.Generate(ctx, ProviderRequest{
-			Stage: Stage(stage),
-			Model: r.config.Model,
+			Stage:       Stage(stage),
+			Model:       r.config.Model,
+			System:      systemPrompt,
+			Instruction: instructionPrompt,
 			Payload: map[string]interface{}{
 				"stage":  stage,
 				"input":  input,
@@ -190,6 +287,9 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 		if pErr != nil {
 			genErr = pErr
 		} else {
+			report.Stages[i].PromptTokens = resp.PromptTokens
+			report.Stages[i].CandidateTokens = resp.CandidateTokens
+			report.Stages[i].TotalTokens = resp.TotalTokens
 			if resp.Raw != "" {
 				_ = r.writeRaw(safeFixture, stage, resp.Raw)
 				genErr = r.applyStagePayload(stage, resp.Raw, report.Bundle)
@@ -209,7 +309,7 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 			break
 		}
 
-		// 2. Validate Stage Schemas
+		// Validate Stage Schemas
 		stageIssues = r.validateStage(stage, report.Bundle, &input)
 		report.Stages[i].Issues = stageIssues
 
@@ -260,7 +360,21 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 	}
 
 	report.CompletedAt = r.config.Clock()
-	report.TotalLatencyMS = report.CompletedAt.Sub(startedAt).Milliseconds()
+	if report.StartedAt.IsZero() {
+		report.StartedAt = startedAt
+	}
+	report.TotalLatencyMS = report.CompletedAt.Sub(report.StartedAt).Milliseconds()
+
+	var totalPromptTokens, totalCandidateTokens, totalTokens int
+	for _, st := range report.Stages {
+		totalPromptTokens += st.PromptTokens
+		totalCandidateTokens += st.CandidateTokens
+		totalTokens += st.TotalTokens
+	}
+	report.TotalPromptTokens = totalPromptTokens
+	report.TotalCandidateTokens = totalCandidateTokens
+	report.TotalTokens = totalTokens
+	report.EstimatedCostUSD = calculateEstimatedCost(r.config.Model, totalPromptTokens, totalCandidateTokens)
 
 	// Persist report JSON
 	reportFilePath := filepath.Join(r.config.OutputDir, fmt.Sprintf("%s-report.json", safeFixture))
@@ -271,6 +385,103 @@ func (r *BlueprintRunner) Run(ctx context.Context, fixturePath string) (*Bluepri
 	}
 
 	return report, nil
+}
+
+func calculateEstimatedCost(model string, promptTokens, candidateTokens int) float64 {
+	m := strings.ToLower(model)
+	if strings.Contains(m, "flash-lite") {
+		return (float64(promptTokens)*0.075 + float64(candidateTokens)*0.30) / 1000000.0
+	}
+	if strings.Contains(m, "flash") {
+		return (float64(promptTokens)*0.15 + float64(candidateTokens)*0.60) / 1000000.0
+	}
+	return 0.0
+}
+
+func (r *BlueprintRunner) getPrompt(stage BlueprintStage) (system string, instruction string) {
+	if strings.TrimSpace(r.config.ArtifactRoot) == "" {
+		return "", ""
+	}
+
+	safetyPath := filepath.Join(r.config.ArtifactRoot, "safety-envelope.md")
+	if data, err := os.ReadFile(safetyPath); err == nil {
+		system = string(data)
+	}
+
+	var promptFile string
+	switch stage {
+	case StageContextAnalysis:
+		promptFile = "context-prompt-v1.md"
+	case StageJourney:
+		promptFile = "journey-prompt-v1.md"
+	case StageArchitecture:
+		promptFile = "architecture-prompt-v1.md"
+	case StageStateMachine:
+		promptFile = "state-machine-prompt-v1.md"
+	case StageWorkflow:
+		promptFile = "workflow-prompt-v1.md"
+	case StageWBS:
+		promptFile = "wbs-prompt-v1.md"
+	}
+
+	if promptFile != "" {
+		promptPath := filepath.Join(r.config.ArtifactRoot, promptFile)
+		if data, err := os.ReadFile(promptPath); err == nil {
+			instruction = string(data)
+		}
+	}
+	return system, instruction
+}
+
+var (
+	reKeyColon            = regexp.MustCompile(`"([a-zA-Z0-9_]+)":\s*"([a-zA-Z0-9_]+)":`)
+	reEqualVal            = regexp.MustCompile(`:\s*"[^"]+"\s*=\s*"([^"]+)"`)
+	reMissingLeadingQuote = regexp.MustCompile(`(?m)(^\s*)\.([a-zA-Z0-9_\-\.]+)"`)
+	reTrailingComma       = regexp.MustCompile(`,\s*([}\]])`)
+)
+
+func sanitizeJSONSyntax(s string) string {
+	s = reKeyColon.ReplaceAllStringFunc(s, func(m string) string {
+		sub := reKeyColon.FindStringSubmatch(m)
+		if len(sub) == 3 && sub[1] == sub[2] {
+			return fmt.Sprintf(`"%s":`, sub[1])
+		}
+		return m
+	})
+	s = reEqualVal.ReplaceAllString(s, `: "$1"`)
+	s = reMissingLeadingQuote.ReplaceAllString(s, `${1}"$2"`)
+	s = reTrailingComma.ReplaceAllString(s, `$1`)
+	return s
+}
+
+func extractCleanJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		if idx := strings.Index(raw, "\n"); idx != -1 {
+			raw = strings.TrimSpace(raw[idx+1:])
+		}
+		if idx := strings.LastIndex(raw, "```"); idx != -1 {
+			raw = strings.TrimSpace(raw[:idx])
+		}
+	}
+	startObj := strings.Index(raw, "{")
+	startArr := strings.Index(raw, "[")
+	var candidate string
+	if startObj != -1 && (startArr == -1 || startObj < startArr) {
+		endObj := strings.LastIndex(raw, "}")
+		if endObj > startObj {
+			candidate = raw[startObj : endObj+1]
+		}
+	} else if startArr != -1 {
+		endArr := strings.LastIndex(raw, "]")
+		if endArr > startArr {
+			candidate = raw[startArr : endArr+1]
+		}
+	}
+	if candidate == "" {
+		candidate = raw
+	}
+	return sanitizeJSONSyntax(candidate)
 }
 
 func (r *BlueprintRunner) validateStage(stage BlueprintStage, bundle *BlueprintBundle, input *BlueprintInput) []ValidationIssue {
@@ -303,6 +514,7 @@ func (r *BlueprintRunner) applyStagePayload(stage BlueprintStage, raw string, bu
 	if raw == "" {
 		return nil
 	}
+	clean := extractCleanJSON(raw)
 
 	switch stage {
 	case StageContextAnalysis:
@@ -312,7 +524,44 @@ func (r *BlueprintRunner) applyStagePayload(stage BlueprintStage, raw string, bu
 			Assumptions   []string       `json:"assumptions"`
 			OpenQuestions []OpenQuestion `json:"open_questions"`
 		}
-		if err := json.Unmarshal([]byte(raw), &ctxPayload); err != nil {
+		if err := json.Unmarshal([]byte(clean), &ctxPayload); err == nil && (ctxPayload.Title != "" || ctxPayload.Summary != "") {
+			bundle.Title = ctxPayload.Title
+			bundle.Summary = ctxPayload.Summary
+			bundle.Assumptions = ctxPayload.Assumptions
+			bundle.OpenQuestions = ctxPayload.OpenQuestions
+			return nil
+		}
+		var wrapped struct {
+			ContextAnalysis *struct {
+				Title         string         `json:"title"`
+				Summary       string         `json:"summary"`
+				Assumptions   []string       `json:"assumptions"`
+				OpenQuestions []OpenQuestion `json:"open_questions"`
+			} `json:"context_analysis"`
+			Bundle *struct {
+				Title         string         `json:"title"`
+				Summary       string         `json:"summary"`
+				Assumptions   []string       `json:"assumptions"`
+				OpenQuestions []OpenQuestion `json:"open_questions"`
+			} `json:"bundle"`
+		}
+		if errWrap := json.Unmarshal([]byte(clean), &wrapped); errWrap == nil {
+			if wrapped.ContextAnalysis != nil {
+				bundle.Title = wrapped.ContextAnalysis.Title
+				bundle.Summary = wrapped.ContextAnalysis.Summary
+				bundle.Assumptions = wrapped.ContextAnalysis.Assumptions
+				bundle.OpenQuestions = wrapped.ContextAnalysis.OpenQuestions
+				return nil
+			}
+			if wrapped.Bundle != nil {
+				bundle.Title = wrapped.Bundle.Title
+				bundle.Summary = wrapped.Bundle.Summary
+				bundle.Assumptions = wrapped.Bundle.Assumptions
+				bundle.OpenQuestions = wrapped.Bundle.OpenQuestions
+				return nil
+			}
+		}
+		if err := json.Unmarshal([]byte(clean), &ctxPayload); err != nil {
 			return fmt.Errorf("parse context analysis JSON: %w", err)
 		}
 		bundle.Title = ctxPayload.Title
@@ -323,7 +572,27 @@ func (r *BlueprintRunner) applyStagePayload(stage BlueprintStage, raw string, bu
 
 	case StageJourney:
 		var journey JourneySection
-		if err := json.Unmarshal([]byte(raw), &journey); err != nil {
+		if err := json.Unmarshal([]byte(clean), &journey); err == nil && (len(journey.Phases) > 0 || len(journey.Actors) > 0 || len(journey.Activities) > 0) {
+			bundle.Journey = journey
+			return nil
+		}
+		var wrapped struct {
+			Journey JourneySection `json:"journey"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrapped); err == nil && (len(wrapped.Journey.Phases) > 0 || len(wrapped.Journey.Actors) > 0 || len(wrapped.Journey.Activities) > 0) {
+			bundle.Journey = wrapped.Journey
+			return nil
+		}
+		var wrappedBundle struct {
+			Bundle struct {
+				Journey JourneySection `json:"journey"`
+			} `json:"bundle"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrappedBundle); err == nil && (len(wrappedBundle.Bundle.Journey.Phases) > 0 || len(wrappedBundle.Bundle.Journey.Actors) > 0 || len(wrappedBundle.Bundle.Journey.Activities) > 0) {
+			bundle.Journey = wrappedBundle.Bundle.Journey
+			return nil
+		}
+		if err := json.Unmarshal([]byte(clean), &journey); err != nil {
 			return fmt.Errorf("parse journey JSON: %w", err)
 		}
 		bundle.Journey = journey
@@ -331,7 +600,27 @@ func (r *BlueprintRunner) applyStagePayload(stage BlueprintStage, raw string, bu
 
 	case StageArchitecture:
 		var arch ArchitectureSection
-		if err := json.Unmarshal([]byte(raw), &arch); err != nil {
+		if err := json.Unmarshal([]byte(clean), &arch); err == nil && (len(arch.Groups) > 0 || len(arch.Nodes) > 0 || len(arch.Edges) > 0) {
+			bundle.Architecture = arch
+			return nil
+		}
+		var wrapped struct {
+			Architecture ArchitectureSection `json:"architecture"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrapped); err == nil && (len(wrapped.Architecture.Groups) > 0 || len(wrapped.Architecture.Nodes) > 0 || len(wrapped.Architecture.Edges) > 0) {
+			bundle.Architecture = wrapped.Architecture
+			return nil
+		}
+		var wrappedBundle struct {
+			Bundle struct {
+				Architecture ArchitectureSection `json:"architecture"`
+			} `json:"bundle"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrappedBundle); err == nil && (len(wrappedBundle.Bundle.Architecture.Groups) > 0 || len(wrappedBundle.Bundle.Architecture.Nodes) > 0 || len(wrappedBundle.Bundle.Architecture.Edges) > 0) {
+			bundle.Architecture = wrappedBundle.Bundle.Architecture
+			return nil
+		}
+		if err := json.Unmarshal([]byte(clean), &arch); err != nil {
 			return fmt.Errorf("parse architecture JSON: %w", err)
 		}
 		bundle.Architecture = arch
@@ -339,7 +628,27 @@ func (r *BlueprintRunner) applyStagePayload(stage BlueprintStage, raw string, bu
 
 	case StageStateMachine:
 		var sm StateMachineSection
-		if err := json.Unmarshal([]byte(raw), &sm); err != nil {
+		if err := json.Unmarshal([]byte(clean), &sm); err == nil && (sm.Entity != "" || len(sm.States) > 0) {
+			bundle.StateMachine = sm
+			return nil
+		}
+		var wrapped struct {
+			StateMachine StateMachineSection `json:"state_machine"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrapped); err == nil && (wrapped.StateMachine.Entity != "" || len(wrapped.StateMachine.States) > 0) {
+			bundle.StateMachine = wrapped.StateMachine
+			return nil
+		}
+		var wrappedBundle struct {
+			Bundle struct {
+				StateMachine StateMachineSection `json:"state_machine"`
+			} `json:"bundle"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrappedBundle); err == nil && (wrappedBundle.Bundle.StateMachine.Entity != "" || len(wrappedBundle.Bundle.StateMachine.States) > 0) {
+			bundle.StateMachine = wrappedBundle.Bundle.StateMachine
+			return nil
+		}
+		if err := json.Unmarshal([]byte(clean), &sm); err != nil {
 			return fmt.Errorf("parse state machine JSON: %w", err)
 		}
 		bundle.StateMachine = sm
@@ -347,15 +656,75 @@ func (r *BlueprintRunner) applyStagePayload(stage BlueprintStage, raw string, bu
 
 	case StageWorkflow:
 		var workflows []Workflow
-		if err := json.Unmarshal([]byte(raw), &workflows); err != nil {
+		if err := json.Unmarshal([]byte(clean), &workflows); err == nil && len(workflows) > 0 {
+			bundle.Workflows = workflows
+			return nil
+		}
+		var single Workflow
+		if err := json.Unmarshal([]byte(clean), &single); err == nil && (single.ID != "" || single.Name != "" || len(single.Nodes) > 0) {
+			bundle.Workflows = []Workflow{single}
+			return nil
+		}
+		var wrapped struct {
+			Workflows []Workflow `json:"workflows"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrapped); err == nil && len(wrapped.Workflows) > 0 {
+			bundle.Workflows = wrapped.Workflows
+			return nil
+		}
+		var wrappedBundle struct {
+			Bundle struct {
+				Workflows []Workflow `json:"workflows"`
+			} `json:"bundle"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrappedBundle); err == nil && len(wrappedBundle.Bundle.Workflows) > 0 {
+			bundle.Workflows = wrappedBundle.Bundle.Workflows
+			return nil
+		}
+		if err := json.Unmarshal([]byte(clean), &workflows); err != nil {
 			return fmt.Errorf("parse workflow JSON: %w", err)
 		}
 		bundle.Workflows = workflows
 		return nil
 
 	case StageWBS:
+		var wbsPayload struct {
+			Modules         []WBSModule      `json:"modules"`
+			CrossReferences []CrossReference `json:"cross_references"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wbsPayload); err == nil && len(wbsPayload.Modules) > 0 {
+			bundle.WBS = WBSSection{Modules: wbsPayload.Modules}
+			if len(wbsPayload.CrossReferences) > 0 {
+				bundle.CrossReferences = wbsPayload.CrossReferences
+			}
+			return nil
+		}
+		var wrapped struct {
+			WBS             WBSSection       `json:"wbs"`
+			CrossReferences []CrossReference `json:"cross_references"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrapped); err == nil && len(wrapped.WBS.Modules) > 0 {
+			bundle.WBS = wrapped.WBS
+			if len(wrapped.CrossReferences) > 0 {
+				bundle.CrossReferences = wrapped.CrossReferences
+			}
+			return nil
+		}
+		var wrappedBundle struct {
+			Bundle struct {
+				WBS             WBSSection       `json:"wbs"`
+				CrossReferences []CrossReference `json:"cross_references"`
+			} `json:"bundle"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrappedBundle); err == nil && len(wrappedBundle.Bundle.WBS.Modules) > 0 {
+			bundle.WBS = wrappedBundle.Bundle.WBS
+			if len(wrappedBundle.Bundle.CrossReferences) > 0 {
+				bundle.CrossReferences = wrappedBundle.Bundle.CrossReferences
+			}
+			return nil
+		}
 		var wbs WBSSection
-		if err := json.Unmarshal([]byte(raw), &wbs); err != nil {
+		if err := json.Unmarshal([]byte(clean), &wbs); err != nil {
 			return fmt.Errorf("parse wbs JSON: %w", err)
 		}
 		bundle.WBS = wbs
