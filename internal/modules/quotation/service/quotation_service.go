@@ -143,18 +143,89 @@ func toRevisionResponse(rev *domain.QuotationRevision) *dto.QuotationRevisionRes
 }
 
 func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.CredentialResponse, error) {
-	if companyID == "test-company" {
-		return &dto.CredentialResponse{
-			ProviderType: "gemini",
-			KeyHint:      "XXXX",
-		}, nil
+	if companyID == "" {
+		return nil, ErrNoCompanyConte
 	}
-	return nil, errors.New("not implemented")
-}
-func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto.CredentialRequest) (*dto.CredentialResponse, error) {
+
+	cred, err := s.credentialRepo.GetActiveCredential(ctx, companyID)
+	if err != nil {
+		if errors.Is(err, repository.ErrCredentialNotFound) {
+			return &dto.CredentialResponse{}, nil
+		}
+		return nil, err
+	}
+
 	return &dto.CredentialResponse{
-		ProviderType: req.ProviderType,
-		KeyHint:      "YYYY",
+		ID:           cred.ID,
+		CompanyID:    cred.CompanyID,
+		ProviderType: cred.Provider,
+		KeyHint:      cred.KeyHint,
+		IsActive:     cred.IsActive,
+		CreatedAt:    cred.CreatedAt,
+		UpdatedAt:    cred.UpdatedAt,
+	}, nil
+}
+
+func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto.CredentialRequest) (*dto.CredentialResponse, error) {
+	if companyID == "" {
+		return nil, ErrNoCompanyConte
+	}
+
+	compUUID, err := uuid.Parse(companyID)
+	if err != nil {
+		return nil, errors.New("invalid company id")
+	}
+
+	cred, err := s.credentialRepo.GetActiveCredential(ctx, companyID)
+	isNew := false
+	if err != nil {
+		if errors.Is(err, repository.ErrCredentialNotFound) {
+			isNew = true
+			cred = &domain.Credential{
+				ID:        uuid.New(),
+				CompanyID: compUUID,
+				IsActive:  true,
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	cred.Provider = req.ProviderType
+
+	if req.APIKey != "" {
+		encKey, err := s.credentialCipher.Encrypt(req.APIKey)
+		if err != nil {
+			return nil, errors.New("failed to encrypt api key")
+		}
+		cred.EncryptedAPIKey = encKey
+
+		if len(req.APIKey) > 4 {
+			cred.KeyHint = req.APIKey[len(req.APIKey)-4:]
+		} else {
+			cred.KeyHint = req.APIKey
+		}
+	}
+
+	q := s.repo.Pool()
+	if isNew {
+		if err := s.credentialRepo.Create(ctx, q, cred); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.credentialRepo.Update(ctx, q, cred); err != nil {
+			return nil, err
+		}
+	}
+
+	return &dto.CredentialResponse{
+		ID:           cred.ID,
+		CompanyID:    cred.CompanyID,
+		ProviderType: cred.Provider,
+		KeyHint:      cred.KeyHint,
+		IsActive:     cred.IsActive,
+		CreatedAt:    cred.CreatedAt,
+		UpdatedAt:    cred.UpdatedAt,
 	}, nil
 }
 func (s *Service) TestSettingsConnection(ctx context.Context, req *dto.CredentialRequest) error {
