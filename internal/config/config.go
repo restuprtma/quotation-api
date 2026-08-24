@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -97,36 +96,7 @@ type RedisConfig struct {
 	PermissionTTL time.Duration
 }
 
-func loadEnvFile() {
-	candidates := []string{".env", "../.env", "../../.env", "quotation-api/.env"}
-	for _, path := range candidates {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			key := strings.TrimSpace(parts[0])
-			val := strings.TrimSpace(parts[1])
-			val = strings.Trim(val, "\"'")
-			if os.Getenv(key) == "" {
-				_ = os.Setenv(key, val)
-			}
-		}
-		break
-	}
-}
-
 func Load() *Config {
-	loadEnvFile()
 	cfg := &Config{
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),

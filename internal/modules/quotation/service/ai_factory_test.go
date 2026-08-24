@@ -22,6 +22,22 @@ func TestAIFactory_MissingCredential_Ollama(t *testing.T) {
 	assert.NotNil(t, provider)
 }
 
+
+func TestAIFactory_StrictMissingCredential(t *testing.T) {
+	factory := NewProviderFactory()
+	cfg := ProviderConfig{
+		ProviderName: "gemini",
+	}
+
+	provider, err := factory.New(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Nil(t, provider)
+
+	var providerErr *ProviderError
+	require.ErrorAs(t, err, &providerErr)
+	assert.Equal(t, ErrCredentialNotConfigured, providerErr.Code)
+}
+
 func TestAIErrorMapping(t *testing.T) {
 	tests := []struct {
 		name         string

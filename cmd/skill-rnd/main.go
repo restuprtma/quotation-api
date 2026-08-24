@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"venturo-skeleton-go/internal/config"
 	"venturo-skeleton-go/internal/modules/quotation/rnd"
 )
@@ -51,6 +52,7 @@ var (
 )
 
 func main() {
+	_ = godotenv.Load("../../.env", "../.env", ".env")
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
