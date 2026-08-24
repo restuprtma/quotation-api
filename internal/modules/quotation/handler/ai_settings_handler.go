@@ -76,7 +76,7 @@ func (h *Handler) TestSettingsConnection(c *gin.Context) {
 		return
 	}
 
-	err := h.svc.TestSettingsConnection(c.Request.Context(), &req)
+	err := h.svc.TestSettingsConnection(c.Request.Context(), companyID, &req)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Connection test failed", err.Error())
 		return

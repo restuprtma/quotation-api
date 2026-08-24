@@ -234,8 +234,41 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 		UpdatedAt:            cred.UpdatedAt,
 	}, nil
 }
-func (s *Service) TestSettingsConnection(ctx context.Context, req *dto.CredentialRequest) error {
-	return errors.New("not implemented")
+func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, req *dto.CredentialRequest) error {
+	apiKey := req.APIKey
+
+	if apiKey == "" {
+		if companyID == "" {
+			return ErrNoCompanyContext
+		}
+
+		cred, err := s.credentialRepo.GetActiveCredential(ctx, companyID)
+		if err != nil {
+			return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+		}
+
+		apiKey, err = s.credentialCipher.Decrypt(cred.EncryptedAPIKey)
+		if err != nil {
+			return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+		}
+	}
+
+	cfg := ProviderConfig{
+		ProviderName:    req.ProviderType,
+		DecryptedAPIKey: apiKey,
+	}
+
+	provider, err := s.aiFactory.New(ctx, cfg)
+	if err != nil {
+		return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+	}
+
+	_, err = provider.Generate(ctx, GenerateRequest{Prompt: "Ping. Reply with 'Pong'."})
+	if err != nil {
+		return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+	}
+
+	return nil
 }
 func (s *Service) ListSkills(ctx context.Context, companyID string) (interface{}, error) {
 	return nil, errors.New("not implemented")
