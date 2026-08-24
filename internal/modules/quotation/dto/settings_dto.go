@@ -8,6 +8,7 @@ import (
 type CredentialRequest struct {
 	ProviderType string `json:"provider_type" binding:"required"`
 	APIKey       string `json:"api_key"`
+	Model        string `json:"model"`
 }
 
 // CredentialResponse must explicitly exclude any plaintext or encrypted API key.

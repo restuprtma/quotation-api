@@ -234,6 +234,8 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 		UpdatedAt:            cred.UpdatedAt,
 	}, nil
 }
+const ErrConnectionFailedMsg = "Failed to connect to AI provider. Check your credentials or model name"
+
 func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, req *dto.CredentialRequest) error {
 	apiKey := req.APIKey
 
@@ -244,28 +246,29 @@ func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, 
 
 		cred, err := s.credentialRepo.GetActiveCredential(ctx, companyID)
 		if err != nil {
-			return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+			return errors.New(ErrConnectionFailedMsg)
 		}
 
 		apiKey, err = s.credentialCipher.Decrypt(cred.EncryptedAPIKey)
 		if err != nil {
-			return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+			return errors.New(ErrConnectionFailedMsg)
 		}
 	}
 
 	cfg := ProviderConfig{
 		ProviderName:    req.ProviderType,
 		DecryptedAPIKey: apiKey,
+		Model:           req.Model,
 	}
 
 	provider, err := s.aiFactory.New(ctx, cfg)
 	if err != nil {
-		return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+		return errors.New(ErrConnectionFailedMsg)
 	}
 
 	_, err = provider.Generate(ctx, GenerateRequest{Prompt: "Ping. Reply with 'Pong'."})
 	if err != nil {
-		return errors.New("Failed to connect to AI provider. Check your credentials or model name")
+		return errors.New(ErrConnectionFailedMsg)
 	}
 
 	return nil
