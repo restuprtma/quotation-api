@@ -92,3 +92,30 @@ func (r *SkillRepository) GetActiveSkillByCommand(ctx context.Context, companyID
 	}
 	return skill, err
 }
+
+func (r *SkillRepository) ListActiveSkills(ctx context.Context, companyID string) ([]domain.Skill, error) {
+	query := `
+		SELECT id, company_id, name, command, content_instruction, is_active, created_by, created_at, updated_at, deleted_at
+		FROM ai_skills
+		WHERE company_id = $1 AND is_active = true AND deleted_at IS NULL
+		ORDER BY created_at ASC
+	`
+	rows, err := r.db.Query(ctx, query, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var skills []domain.Skill
+	for rows.Next() {
+		var s domain.Skill
+		if err := rows.Scan(
+			&s.ID, &s.CompanyID, &s.Name, &s.Command, &s.ContentInstruction,
+			&s.IsActive, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &s.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		skills = append(skills, s)
+	}
+	return skills, rows.Err()
+}

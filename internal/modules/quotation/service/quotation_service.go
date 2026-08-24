@@ -274,16 +274,87 @@ func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, 
 	return nil
 }
 func (s *Service) ListSkills(ctx context.Context, companyID string) (interface{}, error) {
-	return nil, errors.New("not implemented")
+	skills, err := s.skillRepo.ListActiveSkills(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	res := []dto.SkillResponse{}
+	for _, skill := range skills {
+		res = append(res, dto.SkillResponse{
+			ID:           skill.ID,
+			CompanyID:    skill.CompanyID,
+			Command:      skill.Command,
+			Name:         skill.Name,
+			SystemPrompt: skill.ContentInstruction,
+			IsActive:     skill.IsActive,
+			CreatedAt:    skill.CreatedAt,
+			UpdatedAt:    skill.UpdatedAt,
+		})
+	}
+	return res, nil
 }
+
 func (s *Service) GetSkill(ctx context.Context, companyID, id string) (interface{}, error) {
-	return nil, errors.New("not implemented")
+	skill, err := s.skillRepo.Get(ctx, id, companyID)
+	if err != nil {
+		return nil, err
+	}
+	return dto.SkillResponse{
+		ID:           skill.ID,
+		CompanyID:    skill.CompanyID,
+		Command:      skill.Command,
+		Name:         skill.Name,
+		SystemPrompt: skill.ContentInstruction,
+		IsActive:     skill.IsActive,
+		CreatedAt:    skill.CreatedAt,
+		UpdatedAt:    skill.UpdatedAt,
+	}, nil
 }
-func (s *Service) UpdateSkill(ctx context.Context, companyID, id string, req interface{}) (interface{}, error) {
-	return nil, errors.New("not implemented")
+
+func (s *Service) UpdateSkill(ctx context.Context, companyID, id string, req *dto.UpdateSkillRequest) (interface{}, error) {
+	skill, err := s.skillRepo.Get(ctx, id, companyID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.SystemPrompt != nil {
+		skill.ContentInstruction = *req.SystemPrompt
+	}
+	if req.IsActive != nil {
+		skill.IsActive = *req.IsActive
+	}
+
+	q := s.repo.Pool()
+	if err := s.skillRepo.Update(ctx, q, skill); err != nil {
+		return nil, err
+	}
+
+	return dto.SkillResponse{
+		ID:           skill.ID,
+		CompanyID:    skill.CompanyID,
+		Command:      skill.Command,
+		Name:         skill.Name,
+		SystemPrompt: skill.ContentInstruction,
+		IsActive:     skill.IsActive,
+		CreatedAt:    skill.CreatedAt,
+		UpdatedAt:    skill.UpdatedAt,
+	}, nil
 }
+
 func (s *Service) ResetSkillDefault(ctx context.Context, companyID, id string) error {
-	return errors.New("not implemented")
+	skill, err := s.skillRepo.Get(ctx, id, companyID)
+	if err != nil {
+		return err
+	}
+
+	defaultPrompt := GetSafetyEnvelope(skill.Command + ".txt")
+	if defaultPrompt == "" {
+		return errors.New("default prompt not found")
+	}
+	skill.ContentInstruction = defaultPrompt
+
+	q := s.repo.Pool()
+	return s.skillRepo.Update(ctx, q, skill)
 }
 func (s *Service) ListRateCards(ctx context.Context, companyID string) (interface{}, error) {
 	return nil, errors.New("not implemented")

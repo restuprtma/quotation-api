@@ -124,13 +124,13 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 	}
 	id := c.Param("id")
 	
-	var req map[string]interface{}
+	var req dto.UpdateSkillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
 		return
 	}
 
-	result, err := h.svc.UpdateSkill(c.Request.Context(), companyID, id, req)
+	result, err := h.svc.UpdateSkill(c.Request.Context(), companyID, id, &req)
 	if err != nil {
 		h.handleError(c, err)
 		return
