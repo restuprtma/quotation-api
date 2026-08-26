@@ -58,6 +58,7 @@ type CreateDraftParams struct {
 	RateCardSnapshot      json.RawMessage
 	LegalTemplateSnapshot json.RawMessage
 	SkillSnapshot         json.RawMessage
+	SafetyEnvelopeVersion string
 	CreatedBy             *uuid.UUID
 }
 
@@ -82,6 +83,7 @@ type UpdateGenerationResultParams struct {
 	AiProvider            string
 	AiModel               string
 	ContentHash           *string
+	SafetyEnvelopeVersion string
 }
 
 // CreateDraftTransaction inserts the quotation master (status queued, stable
@@ -166,13 +168,15 @@ func (r *GenerationRepository) tryCreateDraft(ctx context.Context, params Create
 		INSERT INTO quotation_revisions (
 			id, company_id, quotation_id, revision_number, idempotency_key,
 			publication_status, generation_status, generation_input, budget_maximum,
-			rate_card_snapshot, legal_template_snapshot, skill_snapshot, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			rate_card_snapshot, legal_template_snapshot, skill_snapshot,
+			safety_envelope_version, created_by
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`,
 		revisionID, params.CompanyID, quotation.ID, 1, keyUUID,
 		PublicationStatusDraft, GenerationStatusPending, params.GenerationInput, params.BudgetMaximum,
-		params.RateCardSnapshot, params.LegalTemplateSnapshot, params.SkillSnapshot, params.CreatedBy,
+		params.RateCardSnapshot, params.LegalTemplateSnapshot, params.SkillSnapshot,
+		params.SafetyEnvelopeVersion, params.CreatedBy,
 	).Scan(&revisionID)
 	if err != nil {
 		return nil, err
@@ -304,7 +308,8 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 			content_hash = $8,
 			generation_status = $9,
 			generated_at = NOW(),
-			updated_at = NOW()
+			updated_at = NOW(),
+			safety_envelope_version = $12
 		WHERE id = $10 AND company_id = $11
 		RETURNING updated_at
 	`
@@ -313,6 +318,7 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 		res.ContentHTML, res.AllocationSnapshot, res.RateCardSnapshot, res.LegalTemplateSnapshot,
 		res.SkillSnapshot, res.AiProvider, res.AiModel, res.ContentHash,
 		GenerationStatusCompleted, revisionID, companyID,
+		res.SafetyEnvelopeVersion,
 	).Scan(&updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

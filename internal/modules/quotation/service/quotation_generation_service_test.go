@@ -5,6 +5,7 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,7 +23,9 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/service"
 )
 
-const pipelineLegalCode = "quotation_standard"
+// Harus identik dengan kode yang di-seed EnsureDefaultAIAssets (settings_service.go)
+// agar tenant yang memakai default assets langsung kompatibel dengan pipeline.
+const pipelineLegalCode = "QUOTATION_TERMS"
 
 // ---------------------------------------------------------------------------
 // Scripted mock AI provider — the ONLY mocked component in this suite.
@@ -286,7 +289,8 @@ func TestGenerate_HappyPath_PersistsCompletedRevision(t *testing.T) {
 	}}
 	svc, _ := newSvc(pool, mock)
 
-	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	createdByID := uuid.New()
+	qid, err := svc.Generate(context.Background(), fx.companyID, &createdByID, fx.request())
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil, qid)
 
@@ -328,6 +332,18 @@ func TestGenerate_HappyPath_PersistsCompletedRevision(t *testing.T) {
 	var skillMap map[string]any
 	require.NoError(t, json.Unmarshal([]byte(skillSnap), &skillMap))
 	assert.Equal(t, "quotation_s4", skillMap["command"])
+
+	// Audit trail: identitas pembuat (jalur injeksi handler Session 5) dan
+	// versi safety envelope wajib ter-persist.
+	var createdBy, envelopeVersion *string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT created_by::text, safety_envelope_version
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&createdBy, &envelopeVersion))
+	require.NotNil(t, createdBy)
+	assert.Equal(t, createdByID.String(), *createdBy)
+	require.NotNil(t, envelopeVersion)
+	assert.Equal(t, "quotation_safety_v1", *envelopeVersion)
 }
 
 func TestGenerate_BudgetRetry_SecondAttemptSucceedsWithFeedback(t *testing.T) {
@@ -854,6 +870,70 @@ func TestGenerate_NarrativeBudgetLeak_DetectedByDOMValidation(t *testing.T) {
 
 	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
 	assertGenerationCode(t, err, "unsafe_html")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_EmptyNarrative_RejectedUnsafeHTML(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: "   \n\t "}, // narrative kosong setelah trim
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "unsafe_html")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_FencedAllocationJSON_Tolerated(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Provider nyata sering membungkus JSON dalam markdown fence —
+	// extractJSONObject wajib toleran terhadapnya.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: "Berikut proposalnya:\n```json\n" + allocationJSON() + "\n```\nTerima kasih."},
+		{text: narrativeHTML()},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.NoError(t, err)
+	status, _, _, _ := revisionRow(t, pool, qid)
+	assert.Equal(t, "completed", status)
+}
+
+func TestGenerate_ProviderRateLimited_MappedToSafeCode(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{err: &service.ProviderError{Code: service.ErrRateLimited, Message: "429 quota"}},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "provider_rate_limited")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_ProviderGenericFailure_MappedToGenerationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{err: errors.New("connection reset by peer")},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "generation_failed")
 	assert.NotEqual(t, uuid.Nil, qid)
 	assertPendingRevision(t, pool, fx.companyID, fx.key)
 }

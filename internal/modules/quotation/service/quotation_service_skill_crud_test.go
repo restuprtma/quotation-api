@@ -77,9 +77,32 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 	companyA := uuid.New()
 	companyB := uuid.New()
 
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for _, id := range []uuid.UUID{companyA, companyB} {
+			pool.Exec(cleanupCtx, `UPDATE quotations SET active_published_revision_id = NULL WHERE company_id = $1`, id)
+			pool.Exec(cleanupCtx, `DELETE FROM quotation_revisions WHERE company_id = $1`, id)
+			pool.Exec(cleanupCtx, `DELETE FROM quotations WHERE company_id = $1`, id)
+			pool.Exec(cleanupCtx, `DELETE FROM rate_card_items WHERE company_id = $1`, id)
+			pool.Exec(cleanupCtx, `DELETE FROM rate_cards WHERE company_id = $1`, id)
+			pool.Exec(cleanupCtx, `DELETE FROM legal_templates WHERE company_id = $1`, id)
+			pool.Exec(cleanupCtx, `DELETE FROM ai_skills WHERE company_id = $1`, id)
+		}
+	})
+
 	skillRepo := repository.NewSkillRepository(pool)
 	repo := repository.NewRepository(pool)
-	svc := service.NewService(repo, nil, skillRepo, nil, nil, nil, nil, nil)
+	// SettingsService nyata: ListSkills memanggil EnsureDefaultAIAssets yang
+	// men-seed skill/rate card/legal default per company.
+	settingsSvc := service.NewSettingsService(
+		pool,
+		skillRepo,
+		repository.NewRateCardRepository(pool),
+		repository.NewLegalTemplateRepository(pool),
+		service.NewSkillService(skillRepo),
+	)
+	svc := service.NewService(repo, nil, skillRepo, nil, nil, settingsSvc, nil, nil)
 
 	// Create a skill for Company A directly via repo to test the Service read/update methods
 	skillIDA := uuid.New()
@@ -96,13 +119,17 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 	}
 
 	t.Run("ListSkills - Tenant Isolation", func(t *testing.T) {
+		// Panggilan pertama men-trigger EnsureDefaultAIAssets untuk company B
+		// (men-seed skill default /quotation dan /blueprint milik B sendiri).
 		res, err := svc.ListSkills(ctx, companyB.String())
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
 		skills := res.([]dto.SkillResponse)
-		if len(skills) != 0 {
-			t.Errorf("expected 0 skills for company B, got %d", len(skills))
+		for _, s := range skills {
+			if s.ID == skillIDA {
+				t.Errorf("company B must not see company A skill %v", skillIDA)
+			}
 		}
 
 		resA, err := svc.ListSkills(ctx, companyA.String())
@@ -110,8 +137,14 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 			t.Fatalf("expected no error, got %v", err)
 		}
 		skillsA := resA.([]dto.SkillResponse)
-		if len(skillsA) == 0 {
-			t.Errorf("expected at least 1 skill for company A, got 0")
+		found := false
+		for _, s := range skillsA {
+			if s.ID == skillIDA {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected skill %v visible for company A, got %d skills without it", skillIDA, len(skillsA))
 		}
 	})
 

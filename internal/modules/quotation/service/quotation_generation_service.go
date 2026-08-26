@@ -28,8 +28,9 @@ const (
 	SafetyEnvelopeFileName = "quotation_safety_v1.txt"
 	SafetyEnvelopeVersion  = "quotation_safety_v1"
 	// DefaultLegalTemplateCode selects the company's standard legal template.
-	// Kept here (not inline) so a future request field can override it.
-	DefaultLegalTemplateCode = "quotation_standard"
+	// MUST stay identical to the code seeded by SettingsService.
+	// EnsureDefaultAIAssets so tenants using default assets work out of the box.
+	DefaultLegalTemplateCode = "QUOTATION_TERMS"
 
 	dedicatedSquadScheme = "dedicated_squad"
 )
@@ -223,6 +224,7 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		RateCardSnapshot:      cfg.rateCardSnapshot,
 		LegalTemplateSnapshot: cfg.legalSnapshot,
 		SkillSnapshot:         cfg.skillSnapshot,
+		SafetyEnvelopeVersion: SafetyEnvelopeVersion,
 		CreatedBy:             createdBy,
 	})
 	if err != nil {
@@ -305,6 +307,7 @@ func (s *QuotationGenerationService) composeAndPersist(
 		AiProvider:            provName,
 		AiModel:               model,
 		ContentHash:           &hash,
+		SafetyEnvelopeVersion: SafetyEnvelopeVersion,
 	}); uerr != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "failed to persist generation result")
 	}
@@ -746,6 +749,11 @@ var indonesianMonths = []string{
 	"Juli", "Agustus", "September", "Oktober", "November", "Desember",
 }
 
+// wibZone pins quotation issue dates to Indonesia Western Time so the
+// rendered date never shifts with the server host timezone.
+var wibZone = time.FixedZone("WIB", 7*3600)
+
 func indonesianDate(t time.Time) string {
-	return fmt.Sprintf("%d %s %d", t.Day(), indonesianMonths[t.Month()-1], t.Year())
+	local := t.In(wibZone)
+	return fmt.Sprintf("%d %s %d", local.Day(), indonesianMonths[local.Month()-1], local.Year())
 }
