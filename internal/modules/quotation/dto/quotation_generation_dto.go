@@ -15,12 +15,16 @@ var (
 )
 
 type BudgetExceededError struct {
-	Total  int64 `json:"total"`
-	Budget int64 `json:"budget"`
-	Excess int64 `json:"excess"`
+	Total    int64  `json:"total"`
+	Budget   int64  `json:"budget"`
+	Excess   int64  `json:"excess"`
+	Currency string `json:"currency,omitempty"`
 }
 
 func (e *BudgetExceededError) Error() string {
+	if e.Currency != "" {
+		return fmt.Sprintf("%s by %d %s", ErrBudgetExceeded, e.Excess, e.Currency)
+	}
 	return fmt.Sprintf("%s by %d IDR", ErrBudgetExceeded, e.Excess)
 }
 

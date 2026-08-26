@@ -104,9 +104,10 @@ func (r *defaultRateAllocator) Calculate(proposal dto.AllocationProposal, rateCa
 				return dto.EnrichedAllocation{}, fmt.Errorf("budget excess calculation: %w", err)
 			}
 			return dto.EnrichedAllocation{}, &dto.BudgetExceededError{
-				Total:  result.TotalInvestment,
-				Budget: budgetMaximum,
-				Excess: excess,
+				Total:    result.TotalInvestment,
+				Budget:   budgetMaximum,
+				Excess:   excess,
+				Currency: currency,
 			}
 		}
 

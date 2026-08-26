@@ -12,6 +12,11 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 )
 
+var (
+	validRoles       = []string{"business_analyst", "ui_ux_designer", "programmer", "quality_assurance", "devops"}
+	validSeniorities = []string{"associate", "intermediate", "senior"}
+)
+
 type AllocationValidator interface {
 	DecodeAllocationJSON(raw []byte) (dto.AllocationProposal, error)
 	ValidateProposal(input dto.GenerateQuotationRequest, proposal dto.AllocationProposal) error
@@ -73,9 +78,6 @@ func (v *defaultAllocationValidator) ValidateProposal(input dto.GenerateQuotatio
 	}
 
 	coveredMandatory := make(map[string]struct{}, len(input.MandatoryScope))
-
-	validRoles := []string{"business_analyst", "ui_ux_designer", "programmer", "quality_assurance", "devops"}
-	validSeniorities := []string{"associate", "intermediate", "senior"}
 
 	for i, res := range proposal.Resources {
 		if !containsString(validRoles, res.Role) {
