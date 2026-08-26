@@ -285,7 +285,11 @@ func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected In
 	if err != nil {
 		return err
 	}
-	if renderedLegal != expected.LegalHTML {
+	expectedLegal, err := canonicalizeFragmentHTML(expected.LegalHTML)
+	if err != nil {
+		return err
+	}
+	if renderedLegal != expectedLegal {
 		return fmt.Errorf("%w: legal block content was modified", ErrUnsafeHTML)
 	}
 
@@ -371,6 +375,28 @@ func innerHTML(n *html.Node) (string, error) {
 		}
 	}
 	return buf.String(), nil
+}
+
+func canonicalizeFragmentHTML(fragment string) (string, error) {
+	parsed, err := html.Parse(strings.NewReader(fragment))
+	if err != nil {
+		return "", fmt.Errorf("%w: failed to parse expected legal html: %w", ErrUnsafeHTML, err)
+	}
+	var body *html.Node
+	for c := parsed.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode || c.Data != "html" {
+			continue
+		}
+		for b := c.FirstChild; b != nil; b = b.NextSibling {
+			if b.Type == html.ElementNode && b.Data == "body" {
+				body = b
+			}
+		}
+	}
+	if body == nil {
+		return "", fmt.Errorf("%w: expected legal html has no parseable body", ErrUnsafeHTML)
+	}
+	return innerHTML(body)
 }
 
 func scanForbiddenTerms(nodes []*html.Node) error {

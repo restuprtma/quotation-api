@@ -373,4 +373,57 @@ func TestDOMValidator_BudgetEqualToTotalDoesNotFalsePositive(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDOMValidator_LegalWithQuotesApostrophesAndAmpersandsPasses(t *testing.T) {
+	r := service.NewHTMLRenderer()
+
+	legal := `<p>Klien "PT Nusantara & Partners" bertanggung jawab penuh atas data client's area.</p>` +
+		`<ul><li>Penawaran & dokumen terkait berlaku 30 hari.</li></ul>`
+	in := sampleCriticalInput()
+	in.LegalHTML = legal
+	critical, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+
+	full, err := r.Assemble(critical, `<p>naratif</p>`)
+	require.NoError(t, err)
+
+	sanitizer := service.NewHTMLSanitizer()
+	sanitized, err := sanitizer.Sanitize(full)
+	require.NoError(t, err)
+
+	v := service.NewDOMValidator()
+	err = v.ValidateIntegrity(sanitized, service.IntegrityExpectations{
+		Currency:        in.Allocation.Currency,
+		TotalInvestment: in.Allocation.TotalInvestment,
+		LegalHTML:       legal,
+	})
+
+	require.NoError(t, err, "legal snapshot dengan karakter escapable harus lolos validasi tanpa false positive")
+}
+
+func TestDOMValidator_LegalModificationWithSpecialCharactersDetected(t *testing.T) {
+	r := service.NewHTMLRenderer()
+
+	legal := `<p>Batas tanggung jawab "vendor" & klien disepakati bersama.</p>`
+	in := sampleCriticalInput()
+	in.LegalHTML = legal
+	critical, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+	full, err := r.Assemble(critical, `<p>naratif</p>`)
+	require.NoError(t, err)
+	sanitizer := service.NewHTMLSanitizer()
+	sanitized, err := sanitizer.Sanitize(full)
+	require.NoError(t, err)
+
+	tamperedLegal := `<p>Batas tanggung jawab "vendee" & klien disepakati bersama.</p>`
+	v := service.NewDOMValidator()
+	err = v.ValidateIntegrity(sanitized, service.IntegrityExpectations{
+		Currency:        in.Allocation.Currency,
+		TotalInvestment: in.Allocation.TotalInvestment,
+		LegalHTML:       tamperedLegal,
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
 func ptrInt64(v int64) *int64 { return &v }
