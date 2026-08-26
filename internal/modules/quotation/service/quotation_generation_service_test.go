@@ -718,6 +718,107 @@ func TestGenerate_TenantIsolation_NoCrossCompanyCredential(t *testing.T) {
 	assert.Equal(t, fx.companyID, requested[0])
 }
 
+// ---------------------------------------------------------------------------
+// Task 9: full orchestration wiring verification
+// ---------------------------------------------------------------------------
+
+func indexOf(slice []string, target string) int {
+	for i, v := range slice {
+		if v == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestWiring_GenerateEndToEnd_RealComponentsOnlyProviderMocked(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var events []string
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: narrativeHTML()},
+	}}
+	mock.onCall = func(callIndex int) {
+		mu.Lock()
+		defer mu.Unlock()
+		if callIndex == 0 {
+			var pendingCount int
+			pool.QueryRow(ctx, `
+				SELECT COUNT(*) FROM quotation_revisions
+				WHERE company_id = $1 AND idempotency_key = $2 AND generation_status = 'pending'
+			`, fx.companyID, fx.key).Scan(&pendingCount)
+			if pendingCount == 1 {
+				events = append(events, "draft_committed_before_ai")
+			}
+			events = append(events, "allocation_call")
+		} else {
+			events = append(events, "narrative_call")
+		}
+	}
+
+	svc, _ := newSvc(pool, mock)
+	qid, err := svc.Generate(ctx, fx.companyID, nil, fx.request())
+	require.NoError(t, err)
+
+	mu.Lock()
+	require.GreaterOrEqual(t, indexOf(events, "draft_committed_before_ai"), 0)
+	require.GreaterOrEqual(t, indexOf(events, "allocation_call"), 0)
+	require.Less(t, indexOf(events, "draft_committed_before_ai"), indexOf(events, "allocation_call"))
+	require.Less(t, indexOf(events, "allocation_call"), indexOf(events, "narrative_call"))
+	mu.Unlock()
+
+	// Semua komponen NYATA membuktikan dirinya pada artefak persist:
+	var html, allocSnap string
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT content_html, allocation_snapshot::text
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&html, &allocSnap))
+
+	// Renderer nyata: blok metadata + payment + legal + format IDR backend.
+	assert.Contains(t, html, `data-block="metadata"`)
+	assert.Contains(t, html, `data-block="payment_schedule"`)
+	assert.Contains(t, html, `data-block="legal"`)
+	assert.Contains(t, html, "Rp 63.000.000")
+	// Sanitizer nyata: tidak ada tag berbahaya.
+	lowerHTML := strings.ToLower(html)
+	assert.NotContains(t, lowerHTML, "<iframe")
+	assert.NotContains(t, lowerHTML, "<form")
+	assert.NotContains(t, lowerHTML, "javascript:")
+	// Loader/repo nyata: snapshot konsisten dengan seed.
+	assert.Contains(t, allocSnap, "63000000")
+
+	// Re-validasi integritas dokumen TERSIMPAN memakai DOMValidator ASLI,
+	// dengan expectations dari snapshot alokasi yang tersimpan.
+	var enriched dto.EnrichedAllocation
+	require.NoError(t, json.Unmarshal([]byte(allocSnap), &enriched))
+
+	var budgetMax int64
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT budget_maximum FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&budgetMax))
+
+	expectations := service.IntegrityExpectations{
+		Currency:        enriched.Currency,
+		TotalInvestment: enriched.TotalInvestment,
+		LegalHTML:       `<p>Syarat dan ketentuan penawaran resmi berlaku 30 hari.</p>`,
+		BudgetMaximum:   &budgetMax,
+	}
+	for _, res := range enriched.Resources {
+		expectations.Lines = append(expectations.Lines, service.ExpectedLine{
+			Role: res.Role, Seniority: res.Seniority, LineTotal: res.LineTotal,
+		})
+	}
+	expectations.PaymentItems = []service.ExpectedPayment{{Percentage: 50}, {Percentage: 50}}
+
+	require.NoError(t, service.NewDOMValidator().ValidateIntegrity(html, expectations),
+		"content_html tersimpan harus lolos validasi integritas DOM validator asli")
+}
+
 func TestGenerate_NarrativeScriptTag_SanitizedStillCompletes(t *testing.T) {
 	pool := getTestPool(t)
 	fx := seedPipelineFixtures(t, pool)
