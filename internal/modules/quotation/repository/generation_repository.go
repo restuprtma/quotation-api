@@ -323,3 +323,132 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 	}
 	return nil
 }
+
+// Pool exposes the underlying connection pool so callers can pass it as an
+// Execer to UpdateGenerationResult outside of an explicit transaction.
+// ErrRateCardNotFound / ErrSkillNotFound / ErrLegalTemplateNotFound are reused
+// from their respective repository files.
+func (r *GenerationRepository) Pool() *pgxpool.Pool {
+	return r.db
+}
+
+// GetClientName resolves the display name of a platform-global client.
+// core.clients is not company-scoped (tenant authorization for client
+// selection belongs to the API layer), so a miss is a normal outcome and is
+// reported as ("", nil).
+func (r *GenerationRepository) GetClientName(ctx context.Context, clientID uuid.UUID) (string, error) {
+	var name string
+	err := r.db.QueryRow(ctx, `
+		SELECT name FROM core.clients
+		WHERE id = $1 AND is_active = true AND deleted_at IS NULL
+	`, clientID).Scan(&name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return name, nil
+}
+
+// GetSkillForGeneration loads the active, non-deleted skill scoped to the
+// company. Inactive or missing skills are indistinguishable here: both are
+// ErrSkillNotFound so callers surface settings_incomplete either way.
+func (r *GenerationRepository) GetSkillForGeneration(ctx context.Context, companyID, skillID uuid.UUID) (*domain.Skill, error) {
+	skill := &domain.Skill{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, company_id, name, command, content_instruction, is_active, created_by, created_at, updated_at, deleted_at
+		FROM ai_skills
+		WHERE id = $1 AND company_id = $2 AND is_active = true AND deleted_at IS NULL
+	`, skillID, companyID).Scan(
+		&skill.ID, &skill.CompanyID, &skill.Name, &skill.Command, &skill.ContentInstruction,
+		&skill.IsActive, &skill.CreatedBy, &skill.CreatedAt, &skill.UpdatedAt, &skill.DeletedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrSkillNotFound
+		}
+		return nil, err
+	}
+	return skill, nil
+}
+
+// GetRateCardWithItems loads the active rate card header plus all of its
+// items, both tenant-scoped. Items may legitimately be empty; callers decide
+// whether that makes the card unusable.
+func (r *GenerationRepository) GetRateCardWithItems(ctx context.Context, companyID, rateCardID uuid.UUID) (*domain.RateCard, []domain.RateCardItem, error) {
+	card := &domain.RateCard{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, company_id, code, name, market, currency, effective_from, effective_until, is_active, created_by, created_at, updated_at
+		FROM rate_cards
+		WHERE id = $1 AND company_id = $2 AND is_active = true
+	`, rateCardID, companyID).Scan(
+		&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.Currency,
+		&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.CreatedBy, &card.CreatedAt, &card.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrRateCardNotFound
+		}
+		return nil, nil, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, company_id, rate_card_id, role, seniority, term_type, amount_per_month, created_at, updated_at
+		FROM rate_card_items
+		WHERE rate_card_id = $1 AND company_id = $2
+	`, rateCardID, companyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.RateCardItem, 0)
+	for rows.Next() {
+		item := domain.RateCardItem{}
+		if err := rows.Scan(
+			&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.Seniority,
+			&item.TermType, &item.AmountPerMonth, &item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return card, items, nil
+}
+
+// GetActiveLegalTemplateForCompany resolves the highest active version of the
+// given template code for the company, mirroring LegalTemplateRepository
+// semantics. The code is supplied by the service layer from a named constant.
+func (r *GenerationRepository) GetActiveLegalTemplateForCompany(ctx context.Context, companyID uuid.UUID, code string) (*domain.LegalTemplate, error) {
+	tmpl := &domain.LegalTemplate{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, company_id, code, version, content_html, is_active, approved_by, approved_at, created_at
+		FROM legal_templates
+		WHERE company_id = $1 AND code = $2 AND is_active = true
+		ORDER BY version DESC LIMIT 1
+	`, companyID, code).Scan(
+		&tmpl.ID, &tmpl.CompanyID, &tmpl.Code, &tmpl.Version, &tmpl.ContentHTML,
+		&tmpl.IsActive, &tmpl.ApprovedBy, &tmpl.ApprovedAt, &tmpl.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrLegalTemplateNotFound
+		}
+		return nil, err
+	}
+	return tmpl, nil
+}
+
+// NextQuotationNumber derives the next sequential quotation number for the
+// company using the shared QUO-<year>-<seq> convention.
+func (r *GenerationRepository) NextQuotationNumber(ctx context.Context, companyID uuid.UUID) (string, error) {
+	var count int64
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM quotations WHERE company_id = $1`, companyID).Scan(&count); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("QUO-%d-%04d", time.Now().UTC().Year(), count+1), nil
+}
