@@ -97,7 +97,7 @@ func TestSettingsService_EnsureDefaultAIAssets_Idempotent(t *testing.T) {
 	// Idempotency test: all exist
 	skillRepo.On("GetActiveSkillByCommand", mock.Anything, companyID, "/quotation").Return(&domain.Skill{}, nil)
 	skillRepo.On("GetActiveSkillByCommand", mock.Anything, companyID, "/blueprint").Return(&domain.Skill{}, nil)
-	rcRepo.On("GetActiveRateCard", mock.Anything, companyID, "ID").Return(&domain.RateCard{}, nil)
+	rcRepo.On("GetActiveRateCard", mock.Anything, companyID, "DEFAULT").Return(&domain.RateCard{}, nil)
 	legalRepo.On("GetActiveTemplate", mock.Anything, companyID, "QUOTATION_TERMS").Return(&domain.LegalTemplate{}, nil)
 
 	settingsSvc := service.NewSettingsService(dbPool, skillRepo, rcRepo, legalRepo, skillSvc)
@@ -130,7 +130,7 @@ func TestSettingsService_EnsureDefaultAIAssets_CreateAll(t *testing.T) {
 
 	skillRepo.On("GetActiveSkillByCommand", mock.Anything, companyID, "/blueprint").Return(nil, repository.ErrSkillNotFound)
 
-	rcRepo.On("GetActiveRateCard", mock.Anything, companyID, "ID").Return(nil, repository.ErrRateCardNotFound)
+	rcRepo.On("GetActiveRateCard", mock.Anything, companyID, "DEFAULT").Return(nil, repository.ErrRateCardNotFound)
 	rcRepo.On("Create", mock.Anything, tx, mock.AnythingOfType("*domain.RateCard")).Return(nil)
 
 	legalRepo.On("GetActiveTemplate", mock.Anything, companyID, "QUOTATION_TERMS").Return(nil, repository.ErrLegalTemplateNotFound)
