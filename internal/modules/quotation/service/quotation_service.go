@@ -30,6 +30,9 @@ type Service struct {
 	skillRepo        *repository.SkillRepository
 	credentialCipher *CredentialCipher
 	aiFactory        *ProviderFactory
+	settingsSvc      *SettingsService
+	rateCardSvc      *RateCardService
+	legalTemplateSvc *LegalTemplateService
 }
 
 func NewService(
@@ -38,6 +41,9 @@ func NewService(
 	skillRepo *repository.SkillRepository,
 	credentialCipher *CredentialCipher,
 	aiFactory *ProviderFactory,
+	settingsSvc *SettingsService,
+	rateCardSvc *RateCardService,
+	legalTemplateSvc *LegalTemplateService,
 ) *Service {
 	return &Service{
 		repo:             repo,
@@ -45,6 +51,9 @@ func NewService(
 		skillRepo:        skillRepo,
 		credentialCipher: credentialCipher,
 		aiFactory:        aiFactory,
+		settingsSvc:      settingsSvc,
+		rateCardSvc:      rateCardSvc,
+		legalTemplateSvc: legalTemplateSvc,
 	}
 }
 
@@ -143,6 +152,7 @@ func toRevisionResponse(rev *domain.QuotationRevision) *dto.QuotationRevisionRes
 }
 
 func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.CredentialResponse, error) {
+	_ = s.settingsSvc.EnsureDefaultAIAssets(ctx, companyID)
 	if companyID == "" {
 		return nil, ErrNoCompanyContext
 	}
@@ -160,9 +170,10 @@ func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.Crede
 	}
 
 	return &dto.CredentialResponse{
-		ID:           cred.ID,
-		CompanyID:    cred.CompanyID,
-		ProviderType: cred.Provider,
+		ID:                   cred.ID,
+		CompanyID:            cred.CompanyID,
+		Provider:             cred.Provider,
+		Model:                "", // Model not currently stored in cred entity
 		KeyHint:              cred.KeyHint,
 		IsActive:             cred.IsActive,
 		CredentialConfigured: true,
@@ -224,9 +235,10 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 	}
 
 	return &dto.CredentialResponse{
-		ID:           cred.ID,
-		CompanyID:    cred.CompanyID,
-		ProviderType: cred.Provider,
+		ID:                   cred.ID,
+		CompanyID:            cred.CompanyID,
+		Provider:             cred.Provider,
+		Model:                "", // Not mapped to cred yet
 		KeyHint:              cred.KeyHint,
 		IsActive:             cred.IsActive,
 		CredentialConfigured: true,
@@ -274,6 +286,7 @@ func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, 
 	return nil
 }
 func (s *Service) ListSkills(ctx context.Context, companyID string) (interface{}, error) {
+	_ = s.settingsSvc.EnsureDefaultAIAssets(ctx, companyID)
 	skills, err := s.skillRepo.ListActiveSkills(ctx, companyID)
 	if err != nil {
 		return nil, err
@@ -357,11 +370,17 @@ func (s *Service) ResetSkillDefault(ctx context.Context, companyID, id string) e
 	return s.skillRepo.Update(ctx, q, skill)
 }
 func (s *Service) ListRateCards(ctx context.Context, companyID string) (interface{}, error) {
-	return nil, errors.New("not implemented")
+	return s.rateCardSvc.ListActiveRateCards(ctx, companyID)
 }
+
 func (s *Service) GetRateCard(ctx context.Context, companyID, id string) (interface{}, error) {
-	return nil, errors.New("not implemented")
+	return s.rateCardSvc.GetRateCard(ctx, companyID, id)
 }
+
+func (s *Service) ListLegalTemplates(ctx context.Context, companyID string) (interface{}, error) {
+	return s.legalTemplateSvc.ListActiveTemplates(ctx, companyID)
+}
+
 func (s *Service) GetActiveLegalTemplate(ctx context.Context, companyID, code string) (interface{}, error) {
-	return nil, errors.New("not implemented")
+	return s.legalTemplateSvc.GetActiveTemplate(ctx, companyID, code)
 }
