@@ -596,6 +596,128 @@ func TestGenerate_ProviderSeesCommittedDraft_CommitBeforeProvider(t *testing.T) 
 		"draft harus sudah committed sebelum pemanggilan provider pertama")
 }
 
+// ---------------------------------------------------------------------------
+// Task 8: credential handling — Fase 5 compliance
+// ---------------------------------------------------------------------------
+
+const testEncryptionKey = "0123456789abcdef0123456789abcdef" // 32-byte test-only key
+
+func seedCredential(t *testing.T, pool *pgxpool.Pool, companyID uuid.UUID, provider, encryptedKey string) uuid.UUID {
+	t.Helper()
+	credID := uuid.New()
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO ai_credentials (id, company_id, provider, model, encrypted_api_key, key_hint, is_active)
+		VALUES ($1, $2, $3, 'gemini-test', $4, 'hint-abcd', true)
+	`, credID, companyID, provider, encryptedKey)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM ai_credentials WHERE company_id = $1`, companyID)
+	})
+	return credID
+}
+
+func TestProviderSource_MissingCredential_SettingsIncomplete(t *testing.T) {
+	pool := getTestPool(t)
+	source := service.NewDBCredentialProviderSource(
+		repository.NewCredentialRepository(pool),
+		service.NewProviderFactory(),
+		testEncryptionKey,
+	)
+
+	_, _, _, err := source.ProviderForCompany(context.Background(), uuid.New())
+	assertGenerationCode(t, err, "settings_incomplete")
+}
+
+func TestProviderSource_EmptyEncryptedKey_ProviderInvalidCredential(t *testing.T) {
+	pool := getTestPool(t)
+	companyID := uuid.New()
+	seedCredential(t, pool, companyID, "gemini", "") // key kosong => factory guard
+
+	source := service.NewDBCredentialProviderSource(
+		repository.NewCredentialRepository(pool),
+		service.NewProviderFactory(),
+		testEncryptionKey,
+	)
+
+	_, _, _, err := source.ProviderForCompany(context.Background(), companyID)
+	assertGenerationCode(t, err, "provider_invalid_credential")
+}
+
+func TestProviderSource_DecryptsPerRequest_NoCacheNoFallback(t *testing.T) {
+	pool := getTestPool(t)
+	companyID := uuid.New()
+	cipher, err := service.NewCredentialCipher(testEncryptionKey)
+	require.NoError(t, err)
+
+	v1, err := cipher.Encrypt("key-plaintext-one")
+	require.NoError(t, err)
+	seedCredential(t, pool, companyID, "gemini", v1)
+
+	source := service.NewDBCredentialProviderSource(
+		repository.NewCredentialRepository(pool),
+		service.NewProviderFactory(),
+		testEncryptionKey,
+	)
+	ctx := context.Background()
+
+	p1, name1, model1, err := source.ProviderForCompany(ctx, companyID)
+	require.NoError(t, err)
+	assert.NotNil(t, p1)
+	assert.Equal(t, "gemini", name1)
+	assert.Equal(t, "gemini-test", model1)
+
+	// Rotasi ciphertext di DB: jika ada cache (struct field/global), call ke-2
+	// akan memakai hasil decrypt lama atau gagal — sukses di sini membuktikan
+	// decrypt fresh per-request. Tidak ada ketergantungan env GEMINI_API_KEY.
+	v2, err := cipher.Encrypt("key-plaintext-two")
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE ai_credentials SET encrypted_api_key = $1 WHERE company_id = $2`, v2, companyID)
+	require.NoError(t, err)
+
+	p2, _, _, err := source.ProviderForCompany(ctx, companyID)
+	require.NoError(t, err)
+	assert.NotNil(t, p2)
+}
+
+func TestGenerate_TenantIsolation_NoCrossCompanyCredential(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	otherCompany := uuid.New() // TANPA credential apapun
+
+	cipher, err := service.NewCredentialCipher(testEncryptionKey)
+	require.NoError(t, err)
+	plainKey, err := cipher.Encrypt("tenant-a-key")
+	require.NoError(t, err)
+	seedCredential(t, pool, fx.companyID, "gemini", plainKey)
+
+	source := service.NewDBCredentialProviderSource(
+		repository.NewCredentialRepository(pool),
+		service.NewProviderFactory(),
+		testEncryptionKey,
+	)
+
+	// Company A (punya credential) -> sukses instansiasi.
+	_, _, _, err = source.ProviderForCompany(context.Background(), fx.companyID)
+	require.NoError(t, err)
+
+	// Company B (tanpa credential) -> ditolak; tidak ada fallback/pinjam A.
+	_, _, _, err = source.ProviderForCompany(context.Background(), otherCompany)
+	assertGenerationCode(t, err, "settings_incomplete")
+
+	// Pipeline hanya pernah meminta provider untuk company milik request.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: narrativeHTML()},
+	}}
+	svc, fakeSource := newSvc(pool, mock)
+	_, err = svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.NoError(t, err)
+	requested := fakeSource.requests()
+	require.Len(t, requested, 1)
+	assert.Equal(t, fx.companyID, requested[0])
+}
+
 func TestGenerate_NarrativeScriptTag_SanitizedStillCompletes(t *testing.T) {
 	pool := getTestPool(t)
 	fx := seedPipelineFixtures(t, pool)
