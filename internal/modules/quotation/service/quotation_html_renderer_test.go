@@ -198,3 +198,179 @@ func TestRenderCriticalBlocks_EmptyResourcesRejected(t *testing.T) {
 
 	require.Error(t, err)
 }
+
+func assembleForTest(t *testing.T) (string, service.IntegrityExpectations) {
+	t.Helper()
+	r := service.NewHTMLRenderer()
+
+	in := sampleCriticalInput()
+	critical, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+
+	full, err := r.Assemble(critical, `<p>Terima kasih atas kepercayaan Bapak/Ibu.</p>`)
+	require.NoError(t, err)
+
+	lines := make([]service.ExpectedLine, 0, len(in.Allocation.Resources))
+	for _, res := range in.Allocation.Resources {
+		lines = append(lines, service.ExpectedLine{Role: res.Role, Seniority: res.Seniority, LineTotal: res.LineTotal})
+	}
+	exp := service.IntegrityExpectations{
+		Currency:        in.Allocation.Currency,
+		TotalInvestment: in.Allocation.TotalInvestment,
+		Lines:           lines,
+		LegalHTML:       in.LegalHTML,
+		BudgetMaximum:   nil,
+	}
+	return full, exp
+}
+
+func TestAssemble_DocumentStructure(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	critical, err := r.RenderCriticalBlocks(sampleCriticalInput())
+	require.NoError(t, err)
+
+	full, err := r.Assemble(critical, `<p>Naratif pembuka.</p>`)
+	require.NoError(t, err)
+
+	assert.Contains(t, full, `class="quotation-document"`)
+	assert.Contains(t, full, `class="qtr-narrative"`)
+	assert.Contains(t, full, "<p>Naratif pembuka.</p>")
+	assert.Less(t, strings.Index(full, "qtr-narrative"), strings.Index(full, `data-block="investment"`))
+	assert.Less(t, strings.Index(full, `data-block="investment"`), strings.Index(full, `data-block="payment_schedule"`))
+	assert.Less(t, strings.Index(full, `data-block="payment_schedule"`), strings.Index(full, `data-block="legal"`))
+}
+
+func TestAssemble_EmptyCriticalRejected(t *testing.T) {
+	r := service.NewHTMLRenderer()
+
+	_, err := r.Assemble("", `<p>n</p>`)
+	require.Error(t, err)
+}
+
+func TestAssemble_EmptyNarrativeRejected(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	critical, err := r.RenderCriticalBlocks(sampleCriticalInput())
+	require.NoError(t, err)
+
+	_, err = r.Assemble(critical, "   ")
+	require.Error(t, err)
+}
+
+func TestAssemble_RejectsMarkerSpoofInNarrative(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	critical, err := r.RenderCriticalBlocks(sampleCriticalInput())
+	require.NoError(t, err)
+
+	spoof := `<p>Harga kami:</p><td data-field="total_investment">Rp 1.000.000</td>`
+	_, err = r.Assemble(critical, spoof)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_CleanDocumentPasses(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(doc, exp)
+	require.NoError(t, err)
+}
+
+func TestDOMValidator_DetectsModifiedTotalInvestment(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	tampered := strings.Replace(doc, "84.000.000", "99.000.000", 1)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsRemovedTotalRow(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	removedIdx := strings.Index(doc, `<tr class="qtr-total-row">`)
+	endIdx := strings.Index(doc[removedIdx:], "</tr>") + removedIdx + len("</tr>")
+	tampered := doc[:removedIdx] + doc[endIdx:]
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsModifiedLineTotal(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	tampered := strings.Replace(doc, "36.000.000", "13.000.000", 1)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsMissingLegalBlock(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	start := strings.Index(doc, `<div class="qtr-block qtr-legal"`)
+	end := strings.Index(doc[start:], "</div>") + start + len("</div>")
+	tampered := doc[:start] + doc[end:]
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsSingleCharacterLegalModification(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	tampered := strings.Replace(doc, "berlaku 30 hari", "berlaku 31 hari", 1)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsDuplicateTotalMarker(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	injected := strings.Replace(doc,
+		`<p>Terima kasih atas kepercayaan Bapak/Ibu.</p>`,
+		`<p>Terima kasih.</p><div><span data-field="total_investment">Rp 1.000.000</span></div>`,
+		1)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(injected, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsBudgetDigitsLeak(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	exp.BudgetMaximum = ptrInt64(100_000_000)
+	injected := strings.Replace(doc,
+		`<p>Terima kasih atas kepercayaan Bapak/Ibu.</p>`,
+		`<p>Batas anggaran Anda 100.000.000.</p>`,
+		1)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(injected, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_BudgetEqualToTotalDoesNotFalsePositive(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	exp.BudgetMaximum = ptrInt64(exp.TotalInvestment)
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(doc, exp)
+	require.NoError(t, err)
+}
+
+func ptrInt64(v int64) *int64 { return &v }

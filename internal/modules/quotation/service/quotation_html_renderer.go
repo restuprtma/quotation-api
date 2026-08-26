@@ -1,10 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/html"
 
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 )
@@ -186,5 +189,215 @@ func formatCurrency(amount int64, currency string) string {
 }
 
 func (r *defaultHTMLRenderer) Assemble(criticalHTML, narrativeHTML string) (string, error) {
-	panic("not implemented")
+	if strings.TrimSpace(criticalHTML) == "" {
+		return "", fmt.Errorf("%w: critical blocks are empty", ErrUnsafeHTML)
+	}
+	if strings.TrimSpace(narrativeHTML) == "" {
+		return "", fmt.Errorf("%w: narrative is empty", ErrUnsafeHTML)
+	}
+	lower := strings.ToLower(narrativeHTML)
+	for _, marker := range []string{"data-block=", "data-field=", "data-role="} {
+		if strings.Contains(lower, marker) {
+			return "", fmt.Errorf("%w: narrative contains protected block marker %q", ErrUnsafeHTML, marker)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="quotation-document">`)
+	b.WriteString(`<div class="qtr-narrative">` + narrativeHTML + `</div>`)
+	b.WriteString(criticalHTML)
+	b.WriteString(`</div>`)
+	return b.String(), nil
+}
+
+type ExpectedLine struct {
+	Role      string
+	Seniority string
+	LineTotal int64
+}
+
+type IntegrityExpectations struct {
+	Currency        string
+	TotalInvestment int64
+	Lines           []ExpectedLine
+	LegalHTML       string
+	BudgetMaximum   *int64
+}
+
+type DOMValidator interface {
+	ValidateIntegrity(documentHTML string, expected IntegrityExpectations) error
+}
+
+type defaultDOMValidator struct{}
+
+func NewDOMValidator() DOMValidator {
+	return &defaultDOMValidator{}
+}
+
+func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected IntegrityExpectations) error {
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
+	}
+	nodes := collectNodes(root)
+
+	totalCell, err := findExactlyOne(nodes, "data-field", "total_investment")
+	if err != nil {
+		return err
+	}
+	if totalCell == nil {
+		return fmt.Errorf("%w: total investment cell is missing", ErrUnsafeHTML)
+	}
+	wantTotal := formatCurrency(expected.TotalInvestment, expected.Currency)
+	if got := nodeText(totalCell); got != wantTotal {
+		return fmt.Errorf("%w: total investment mismatch: got %q, want %q", ErrUnsafeHTML, got, wantTotal)
+	}
+
+	for _, line := range expected.Lines {
+		rowKey := strings.ToLower(line.Role) + "_" + strings.ToLower(line.Seniority)
+		row, err := findExactlyOne(nodes, "data-role", rowKey)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return fmt.Errorf("%w: allocation row %q is missing", ErrUnsafeHTML, rowKey)
+		}
+		lineCell, err := findExactlyOne(collectNodes(row), "data-field", "line_total")
+		if err != nil {
+			return err
+		}
+		if lineCell == nil {
+			return fmt.Errorf("%w: line total cell for %q is missing", ErrUnsafeHTML, rowKey)
+		}
+		if got := nodeText(lineCell); got != formatNumber(line.LineTotal) {
+			return fmt.Errorf("%w: line total mismatch for %q: got %q, want %q", ErrUnsafeHTML, rowKey, got, formatNumber(line.LineTotal))
+		}
+	}
+
+	legal, err := findExactlyOne(nodes, "data-block", "legal")
+	if err != nil {
+		return err
+	}
+	if legal == nil {
+		return fmt.Errorf("%w: legal block is missing", ErrUnsafeHTML)
+	}
+	renderedLegal, err := innerHTML(legal)
+	if err != nil {
+		return err
+	}
+	if renderedLegal != expected.LegalHTML {
+		return fmt.Errorf("%w: legal block content was modified", ErrUnsafeHTML)
+	}
+
+	if err := scanForbiddenTerms(nodes); err != nil {
+		return err
+	}
+
+	if expected.BudgetMaximum != nil && *expected.BudgetMaximum != expected.TotalInvestment {
+		digits := formatNumber(*expected.BudgetMaximum)
+		for _, n := range nodes {
+			if n.Type == html.TextNode && strings.Contains(n.Data, digits) {
+				return fmt.Errorf("%w: budget maximum %s leaked into document", ErrUnsafeHTML, digits)
+			}
+		}
+	}
+	return nil
+}
+
+func collectNodes(root *html.Node) []*html.Node {
+	var nodes []*html.Node
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		nodes = append(nodes, n)
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	return nodes
+}
+
+func findExactlyOne(nodes []*html.Node, key, val string) (*html.Node, error) {
+	var found *html.Node
+	count := 0
+	for _, n := range nodes {
+		if !hasAttribute(n, key, val) {
+			continue
+		}
+		count++
+		found = n
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("%w: duplicate marker %s=%q", ErrUnsafeHTML, key, val)
+	}
+	return found, nil
+}
+
+func hasAttribute(n *html.Node, key, val string) bool {
+	if n == nil || n.Type != html.ElementNode {
+		return false
+	}
+	for _, attr := range n.Attr {
+		if attr.Key == key && attr.Val == val {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(node *html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.TextNode {
+			b.WriteString(node.Data)
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(n)
+	return strings.TrimSpace(b.String())
+}
+
+func innerHTML(n *html.Node) (string, error) {
+	var buf bytes.Buffer
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.CommentNode {
+			continue
+		}
+		if err := html.Render(&buf, child); err != nil {
+			return "", fmt.Errorf("%w: failed to render node: %v", ErrUnsafeHTML, err)
+		}
+	}
+	return buf.String(), nil
+}
+
+func scanForbiddenTerms(nodes []*html.Node) error {
+	terms := []string{"budget", "unused", "utilization"}
+	for _, n := range nodes {
+		switch n.Type {
+		case html.TextNode:
+			if term := matchForbiddenTerm(n.Data, terms); term != "" {
+				return fmt.Errorf("%w: forbidden term %q found in document text", ErrUnsafeHTML, term)
+			}
+		case html.ElementNode:
+			for _, attr := range n.Attr {
+				if term := matchForbiddenTerm(attr.Val, terms); term != "" {
+					return fmt.Errorf("%w: forbidden term %q found in attribute %q", ErrUnsafeHTML, term, attr.Key)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func matchForbiddenTerm(value string, terms []string) string {
+	lower := strings.ToLower(value)
+	for _, term := range terms {
+		if strings.Contains(lower, term) {
+			return term
+		}
+	}
+	return ""
 }
