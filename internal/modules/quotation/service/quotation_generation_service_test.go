@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -536,6 +537,63 @@ func TestGenerate_NarrativeWithProtectedMarker_RejectedUnsafeHTML(t *testing.T) 
 	assertGenerationCode(t, err, "unsafe_html")
 	assert.NotEqual(t, uuid.Nil, qid)
 	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+// ---------------------------------------------------------------------------
+// Task 7: idempotency replay & commit-before-provider ordering
+// ---------------------------------------------------------------------------
+
+func TestGenerate_IdempotentDoubleCall_SameIDSingleRun(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: narrativeHTML()},
+	}}
+	svc, _ := newSvc(pool, mock)
+	req := fx.request()
+
+	q1, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	q2, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	assert.Equal(t, q1, q2, "double submit harus mengembalikan aggregate yang sama")
+	assert.Equal(t, 2, mock.callCount(), "call ke-2 short-circuit sebelum menyentuh provider")
+}
+
+func TestGenerate_ProviderSeesCommittedDraft_CommitBeforeProvider(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Saat AI call PERTAMA dieksekusi, draft revision SUDAH harus committed
+	// di DB (generation_status='pending') — design rule commit-before-provider.
+	var sawCommittedRow atomic.Bool
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: narrativeHTML()},
+	}}
+	mock.onCall = func(callIndex int) {
+		if callIndex != 0 {
+			return
+		}
+		var status string
+		err := pool.QueryRow(context.Background(), `
+			SELECT generation_status FROM quotation_revisions
+			WHERE company_id = $1 AND idempotency_key = $2 AND quotation_id IS NOT NULL
+		`, fx.companyID, fx.key).Scan(&status)
+		if err == nil && status == "pending" {
+			sawCommittedRow.Store(true)
+		}
+	}
+	svc, _ := newSvc(pool, mock)
+
+	_, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.NoError(t, err)
+	assert.True(t, sawCommittedRow.Load(),
+		"draft harus sudah committed sebelum pemanggilan provider pertama")
 }
 
 func TestGenerate_NarrativeScriptTag_SanitizedStillCompletes(t *testing.T) {
