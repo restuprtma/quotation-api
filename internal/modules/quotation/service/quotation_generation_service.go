@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
@@ -50,6 +51,10 @@ const (
 	ErrCodeProviderTimeout     = "provider_timeout"
 	ErrCodeUnsafeHTML          = "unsafe_html"
 	ErrCodeGenerationFailed    = "generation_failed"
+
+	// Session 5 regeneration-specific safe codes.
+	ErrCodeRegenerateRateLimited = "regenerate_rate_limited"
+	ErrCodeRevisionConflict      = "revision_conflict"
 )
 
 // GenerationError is the ONLY error type returned by Generate. Error() prints
@@ -250,9 +255,9 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	return draft.QuotationID, nil
 }
 
-// composeAndPersist performs the post-allocation half of the pipeline:
-// critical rendering, narrative composition, assembly, sanitization, DOM
-// integrity validation and result persistence.
+// composeAndPersist performs the post-allocation half of the initial
+// generation pipeline: composition (render → narrative → assemble → sanitize
+// → DOM validation) followed by persisting the result.
 func (s *QuotationGenerationService) composeAndPersist(
 	ctx context.Context,
 	provider AIProvider,
@@ -262,38 +267,9 @@ func (s *QuotationGenerationService) composeAndPersist(
 	revisionID uuid.UUID,
 	provName, model string,
 ) error {
-	critical, rerr := s.renderer.RenderCriticalBlocks(CriticalBlocksInput{
-		Metadata: QuotationMetadata{
-			QuotationNumber: cfg.quotationNumber,
-			Subject:         strings.TrimSpace(req.Subject),
-			ClientName:      cfg.clientName,
-			IssueDate:       indonesianDate(time.Now()),
-		},
-		Allocation: enriched,
-		Payment:    req.PaymentTerms,
-		LegalHTML:  cfg.legal.ContentHTML,
-	})
-	if rerr != nil {
-		return newGenerationError(ErrCodeUnsafeHTML, "critical blocks failed to render")
-	}
-
-	narrative, gerr := s.composeNarrative(ctx, provider, req, cfg, enriched)
+	sanitized, gerr := s.runComposition(ctx, provider, req, cfg, enriched)
 	if gerr != nil {
 		return gerr
-	}
-
-	assembled, aerr := s.renderer.Assemble(critical, narrative)
-	if aerr != nil {
-		return newGenerationError(ErrCodeUnsafeHTML, "document assembly rejected")
-	}
-
-	sanitized, serr := s.sanitizer.Sanitize(assembled)
-	if serr != nil {
-		return newGenerationError(ErrCodeUnsafeHTML, "document sanitization failed")
-	}
-
-	if verr := s.domValidator.ValidateIntegrity(sanitized, buildIntegrityExpectations(req, cfg, enriched)); verr != nil {
-		return newGenerationError(ErrCodeUnsafeHTML, "document integrity validation failed")
 	}
 
 	sum := sha256.Sum256([]byte(sanitized))
@@ -310,6 +286,149 @@ func (s *QuotationGenerationService) composeAndPersist(
 		SafetyEnvelopeVersion: SafetyEnvelopeVersion,
 	}); uerr != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "failed to persist generation result")
+	}
+	return nil
+}
+
+// runComposition renders the deterministic critical blocks, composes the AI
+// narrative, assembles, sanitizes and validates DOM integrity. It returns the
+// final sanitized HTML or a safe GenerationError. Nothing is persisted here.
+func (s *QuotationGenerationService) runComposition(
+	ctx context.Context,
+	provider AIProvider,
+	req dto.GenerateQuotationRequest,
+	cfg *generationConfig,
+	enriched dto.EnrichedAllocation,
+) (string, error) {
+	critical, rerr := s.renderer.RenderCriticalBlocks(CriticalBlocksInput{
+		Metadata: QuotationMetadata{
+			QuotationNumber: cfg.quotationNumber,
+			Subject:         strings.TrimSpace(req.Subject),
+			ClientName:      cfg.clientName,
+			IssueDate:       indonesianDate(time.Now()),
+		},
+		Allocation: enriched,
+		Payment:    req.PaymentTerms,
+		LegalHTML:  cfg.legal.ContentHTML,
+	})
+	if rerr != nil {
+		return "", newGenerationError(ErrCodeUnsafeHTML, "critical blocks failed to render")
+	}
+
+	narrative, gerr := s.composeNarrative(ctx, provider, req, cfg, enriched)
+	if gerr != nil {
+		return "", gerr
+	}
+
+	assembled, aerr := s.renderer.Assemble(critical, narrative)
+	if aerr != nil {
+		return "", newGenerationError(ErrCodeUnsafeHTML, "document assembly rejected")
+	}
+
+	sanitized, serr := s.sanitizer.Sanitize(assembled)
+	if serr != nil {
+		return "", newGenerationError(ErrCodeUnsafeHTML, "document sanitization failed")
+	}
+
+	if verr := s.domValidator.ValidateIntegrity(sanitized, buildIntegrityExpectations(req, cfg, enriched)); verr != nil {
+		return "", newGenerationError(ErrCodeUnsafeHTML, "document integrity validation failed")
+	}
+	return sanitized, nil
+}
+
+// ---------------------------------------------------------------------------
+// Session 5: atomic regeneration
+// ---------------------------------------------------------------------------
+
+// Regenerate re-runs the full pipeline for an existing active draft using its
+// stored generation_input plus the tenant's CURRENT skill/rate/legal
+// configuration, then swaps the artefacts atomically:
+//
+//   - failure anywhere BEFORE the final update (provider timeout, invalid
+//     allocation, unsafe HTML, persistence error) leaves the stored
+//     content_html byte-identical and content_version unchanged;
+//   - success replaces content_html + snapshots and increments
+//     content_version in ONE statement; no revision row is ever created;
+//   - published/superseded revisions are rejected with revision_conflict;
+//   - cost-control consumes one regeneration slot per attempt before any AI
+//     spend, bounded to MaxRegeneratesPerHour per hour per draft by an atomic
+//     gated DB update (regenerate_rate_limited when exhausted).
+func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, quotationID uuid.UUID) error {
+	draft, err := s.genRepo.LoadDraftRevisionForRegeneration(ctx, companyID, quotationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrRevisionConflict) {
+			return newGenerationError(ErrCodeRevisionConflict, "regenerate is only allowed on active drafts")
+		}
+		// ErrRevisionNotFound passes through untouched so the HTTP layer can
+		// answer 404 without leaking resource existence across tenants.
+		return err
+	}
+
+	var req dto.GenerateQuotationRequest
+	if jerr := json.Unmarshal(draft.GenerationInput, &req); jerr != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input is unreadable")
+	}
+
+	if _, qerr := s.genRepo.ConsumeRegenerateQuota(ctx, s.genRepo.Pool(), companyID, draft.RevisionID); qerr != nil {
+		if errors.Is(qerr, pgx.ErrNoRows) {
+			return newGenerationError(ErrCodeRegenerateRateLimited, "regenerate limit reached for this draft")
+		}
+		return newGenerationError(ErrCodeGenerationFailed, "failed to update regenerate counter")
+	}
+
+	cfg, gerr := s.loadConfiguration(ctx, companyID, req)
+	if gerr != nil {
+		return gerr
+	}
+	// Reuse the committed quotation number; deriving a fresh sequence number
+	// here would both desynchronise the rendered metadata block and burn the
+	// numbering series without creating anything.
+	cfg.quotationNumber = draft.QuotationNumber
+
+	provider, provName, model, perr := s.providerSource.ProviderForCompany(ctx, companyID)
+	if perr != nil {
+		return perr
+	}
+
+	enriched, gerr := s.optimizeBudget(ctx, provider, req, cfg)
+	if gerr == nil {
+		gerr = s.composeAndPersistRegenerated(ctx, provider, req, cfg, enriched, draft.RevisionID, provName, model)
+	}
+	return gerr
+}
+
+// composeAndPersistRegenerated runs the shared composition pipeline then
+// persists with UpdateRegeneratedResult whose single UPDATE also increments
+// content_version — the swap is therefore atomic with respect to readers and
+// cannot leave a half-updated revision behind.
+func (s *QuotationGenerationService) composeAndPersistRegenerated(
+	ctx context.Context,
+	provider AIProvider,
+	req dto.GenerateQuotationRequest,
+	cfg *generationConfig,
+	enriched dto.EnrichedAllocation,
+	revisionID uuid.UUID,
+	provName, model string,
+) error {
+	sanitized, gerr := s.runComposition(ctx, provider, req, cfg, enriched)
+	if gerr != nil {
+		return gerr
+	}
+
+	sum := sha256.Sum256([]byte(sanitized))
+	hash := hex.EncodeToString(sum[:])
+	if uerr := s.genRepo.UpdateRegeneratedResult(ctx, s.genRepo.Pool(), cfg.companyID, revisionID, repository.UpdateGenerationResultParams{
+		ContentHTML:           sanitized,
+		AllocationSnapshot:    mustJSON(enriched),
+		RateCardSnapshot:      cfg.rateCardSnapshot,
+		LegalTemplateSnapshot: cfg.legalSnapshot,
+		SkillSnapshot:         cfg.skillSnapshot,
+		AiProvider:            provName,
+		AiModel:               model,
+		ContentHash:           &hash,
+		SafetyEnvelopeVersion: SafetyEnvelopeVersion,
+	}); uerr != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist regenerated result")
 	}
 	return nil
 }
