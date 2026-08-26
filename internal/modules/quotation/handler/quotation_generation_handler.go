@@ -92,6 +92,37 @@ func (h *QuotationGenerationHandler) Regenerate(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Quotation regenerated successfully", state)
 }
 
+// GetByID returns the AI-first detail view of a quotation: master identity
+// plus the current revision's generation state (status, content_version,
+// content_html). Budget figures and internal snapshots are excluded. A
+// foreign or unknown aggregate answers 404 so existence is never leaked
+// across tenants.
+//
+// NOTE: this replaces the previous route target, whose service method was an
+// unconditional "not implemented" stub — no working behaviour changed hands.
+func (h *QuotationGenerationHandler) GetByID(c *gin.Context) {
+	quotationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid quotation id", "")
+		return
+	}
+	companyID, ok := companyUUID(c)
+	if !ok {
+		return
+	}
+
+	detail, derr := h.genRepo.GetGenerationDetail(c.Request.Context(), companyID, quotationID)
+	if derr != nil {
+		if errors.Is(derr, repository.ErrRevisionNotFound) {
+			response.Error(c, http.StatusNotFound, "Quotation not found", "")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Failed to load quotation", "")
+		return
+	}
+	response.Success(c, http.StatusOK, "Quotation retrieved successfully", detail)
+}
+
 // GetGenerationStatus returns the safe generation view of a quotation's
 // current revision: status, content_version, content_html and timestamps.
 // Budget figures and internal snapshots are intentionally excluded.

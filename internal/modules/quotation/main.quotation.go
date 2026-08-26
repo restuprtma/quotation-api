@@ -64,11 +64,12 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 	{
 		quotations.GET("", m.Handler.List)
 		quotations.POST("", m.Handler.Create)
-		quotations.GET("/:id", m.Handler.GetByID)
+		// AI-first detail (Fase 6 Session 5): menggantikan target stub yang
+		// sebelumnya selalu "not implemented"; kontrak response bertambah,
+		// tidak ada perilaku lama yang hilang.
+		quotations.GET("/:id", m.GenHandler.GetByID)
 		quotations.PUT("/:id", m.Handler.Update)
 
-		// AI-first generation (Fase 6 Session 5). GET /:id stays on the
-		// legacy handler; generation state is served by /generation-status.
 		quotations.POST("/generate", m.GenHandler.Generate)
 		quotations.POST("/:id/regenerate", m.GenHandler.Regenerate)
 		quotations.GET("/:id/generation-status", m.GenHandler.GetGenerationStatus)
