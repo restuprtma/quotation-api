@@ -338,6 +338,169 @@ func (r *GenerationRepository) Pool() *pgxpool.Pool {
 	return r.db
 }
 
+// ---------------------------------------------------------------------------
+// Session 5: regeneration support — draft loading, race-safe cost-control
+// quota, atomic regenerated-result persistence and read-model state.
+// ---------------------------------------------------------------------------
+
+// ErrRevisionConflict reports a regenerate attempt against a revision that is
+// no longer an active draft (published/superseded).
+var ErrRevisionConflict = errors.New("revision_conflict")
+
+// MaxRegeneratesPerHour bounds regeneration per draft inside the rolling one
+// hour window enforced by ConsumeRegenerateQuota. MUST stay in sync with the
+// INTERVAL '1 hour' literal embedded in that query.
+const MaxRegeneratesPerHour = 5
+
+// DraftRevision is the minimal projection required to re-run the generation
+// pipeline for an existing draft.
+type DraftRevision struct {
+	RevisionID        uuid.UUID
+	QuotationID       uuid.UUID
+	QuotationNumber   string
+	PublicationStatus string
+	GenerationStatus  string
+	GenerationInput   json.RawMessage
+}
+
+// LoadDraftRevisionForRegeneration resolves the current revision of a
+// quotation for regeneration. A missing aggregate or a quotation owned by
+// another company is indistinguishable on purpose (both ErrRevisionNotFound)
+// so the API layer can answer 404 without leaking resource existence.
+// Revisions that are not active drafts yield ErrRevisionConflict.
+func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Context, companyID, quotationID uuid.UUID) (*DraftRevision, error) {
+	var d DraftRevision
+	err := r.db.QueryRow(ctx, `
+		SELECT r.id, r.quotation_id, q.quotation_number, r.publication_status, r.generation_status, r.generation_input
+		FROM quotation_revisions r
+		JOIN quotations q ON q.id = r.quotation_id
+		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
+		  AND q.deleted_at IS NULL
+	`, quotationID, companyID).Scan(
+		&d.RevisionID, &d.QuotationID, &d.QuotationNumber,
+		&d.PublicationStatus, &d.GenerationStatus, &d.GenerationInput,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRevisionNotFound
+		}
+		logger.Error("Failed to load draft revision", logger.Err(err))
+		return nil, err
+	}
+	if d.PublicationStatus != PublicationStatusDraft {
+		return nil, ErrRevisionConflict
+	}
+	return &d, nil
+}
+
+// ConsumeRegenerateQuota enforces the cost-control budget with ONE gated
+// atomic UPDATE — never a read-then-write round trip. Postgres row-level
+// locking serialises concurrent callers, each evaluating the CASE/guard
+// against the latest committed row version, so two simultaneous regenerates
+// can neither double-count nor skip the counter.
+//
+// The window resets when last_regenerate_at is older than one hour; a call
+// beyond the limit matches no row and returns pgx.ErrNoRows while leaving
+// count and window untouched (a rejected attempt must not postpone expiry).
+// Quota is consumed even if the AI call afterwards fails: the guard exists to
+// bound provider spend.
+func (r *GenerationRepository) ConsumeRegenerateQuota(ctx context.Context, q Execer, companyID, revisionID uuid.UUID) (int, error) {
+	var count int
+	err := q.QueryRow(ctx, `
+		UPDATE quotation_revisions SET
+			regenerate_count = CASE
+				WHEN last_regenerate_at IS NULL OR last_regenerate_at <= NOW() - INTERVAL '1 hour' THEN 1
+				ELSE regenerate_count + 1 END,
+			last_regenerate_at = NOW(),
+			updated_at = NOW()
+		WHERE id = $1 AND company_id = $2 AND publication_status = $3
+		  AND (last_regenerate_at IS NULL
+		       OR last_regenerate_at <= NOW() - INTERVAL '1 hour'
+		       OR regenerate_count < $4)
+		RETURNING regenerate_count
+	`, revisionID, companyID, PublicationStatusDraft, MaxRegeneratesPerHour).Scan(&count)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, pgx.ErrNoRows // limit exhausted or revision no longer a draft
+	}
+	if err != nil {
+		logger.Error("Failed to consume regenerate quota", logger.Err(err))
+		return 0, err
+	}
+	return count, nil
+}
+
+// UpdateRegeneratedResult atomically replaces the generated artefacts of a
+// draft revision AND increments content_version in the same statement. It is
+// only invoked after the full pipeline succeeded, so a failed regeneration
+// leaves both the previous content_html and the previous content_version
+// untouched. No new revision row is ever created.
+func (r *GenerationRepository) UpdateRegeneratedResult(ctx context.Context, q Execer, companyID, revisionID uuid.UUID, res UpdateGenerationResultParams) error {
+	query := `
+		UPDATE quotation_revisions SET
+			content_html = $1,
+			allocation_snapshot = $2,
+			rate_card_snapshot = $3,
+			legal_template_snapshot = $4,
+			skill_snapshot = $5,
+			ai_provider = $6,
+			ai_model = $7,
+			content_hash = $8,
+			generation_status = $9,
+			generated_at = NOW(),
+			updated_at = NOW(),
+			safety_envelope_version = $12,
+			content_version = quotation_revisions.content_version + 1
+		WHERE id = $10 AND company_id = $11
+		RETURNING updated_at
+	`
+	var updatedAt time.Time
+	err := q.QueryRow(ctx, query,
+		res.ContentHTML, res.AllocationSnapshot, res.RateCardSnapshot, res.LegalTemplateSnapshot,
+		res.SkillSnapshot, res.AiProvider, res.AiModel, res.ContentHash,
+		GenerationStatusCompleted, revisionID, companyID,
+		res.SafetyEnvelopeVersion,
+	).Scan(&updatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRevisionNotFound
+		}
+		logger.Error("Failed to update regenerated result", logger.Err(err))
+		return err
+	}
+	return nil
+}
+
+// GenerationState is the safe read model behind GET /generation-status and
+// the regenerate response. It intentionally excludes budget figures and
+// internal snapshots.
+type GenerationState struct {
+	GenerationStatus string     `json:"generation_status"`
+	ContentVersion   int        `json:"content_version"`
+	ContentHTML      string     `json:"content_html"`
+	GeneratedAt      *time.Time `json:"generated_at,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// GetGenerationState returns the generation view of a quotation's current
+// revision, tenant-scoped. Missing or foreign aggregates report
+// ErrRevisionNotFound so handlers can answer 404.
+func (r *GenerationRepository) GetGenerationState(ctx context.Context, companyID, quotationID uuid.UUID) (*GenerationState, error) {
+	var s GenerationState
+	err := r.db.QueryRow(ctx, `
+		SELECT r.generation_status, r.content_version, COALESCE(r.content_html, ''), r.generated_at, r.updated_at
+		FROM quotation_revisions r
+		JOIN quotations q ON q.id = r.quotation_id
+		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
+	`, quotationID, companyID).Scan(&s.GenerationStatus, &s.ContentVersion, &s.ContentHTML, &s.GeneratedAt, &s.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRevisionNotFound
+		}
+		return nil, err
+	}
+	return &s, nil
+}
+
 // GetClientName resolves the display name of a platform-global client.
 // core.clients is not company-scoped (tenant authorization for client
 // selection belongs to the API layer), so a miss is a normal outcome and is
