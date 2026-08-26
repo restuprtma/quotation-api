@@ -261,6 +261,8 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			"signed_at",
 			"signed_ip",
 			"signed_user_agent",
+			"regenerate_count",
+			"last_regenerate_at",
 			"created_by",
 			"created_at",
 			"updated_at",
@@ -368,6 +370,16 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			}
 			if !exists {
 				t.Error("expected constraint 'chk_content_version_positive' on quotation_revisions table")
+			}
+		})
+
+		t.Run("chk_regenerate_count_non_negative", func(t *testing.T) {
+			exists, err := constraintExists(ctx, pool, "quotation_revisions", "chk_regenerate_count_non_negative")
+			if err != nil {
+				t.Fatalf("error checking constraint: %v", err)
+			}
+			if !exists {
+				t.Error("expected constraint 'chk_regenerate_count_non_negative' on quotation_revisions table")
 			}
 		})
 	})
