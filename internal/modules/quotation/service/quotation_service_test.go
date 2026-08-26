@@ -12,7 +12,7 @@ import (
 )
 
 func TestService_TestSettingsConnection_NoCompany(t *testing.T) {
-	s := service.NewService(nil, nil, nil, nil, nil)
+	s := service.NewService(nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := &dto.CredentialRequest{
 		ProviderType: "gemini",
@@ -26,7 +26,7 @@ func TestService_TestSettingsConnection_NoCompany(t *testing.T) {
 
 func TestService_TestSettingsConnection_ErrorMasking(t *testing.T) {
 	aiFactory := service.NewProviderFactory()
-	s := service.NewService(nil, nil, nil, nil, aiFactory)
+	s := service.NewService(nil, nil, nil, nil, aiFactory, nil, nil, nil)
 
 	req := &dto.CredentialRequest{
 		ProviderType: "invalid-provider",

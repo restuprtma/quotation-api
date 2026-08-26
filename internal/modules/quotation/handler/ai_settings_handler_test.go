@@ -24,7 +24,7 @@ func setupTestRouter() *gin.Engine {
 
 	// Use a nil db pool for tests since we mocked the service methods
 	repo := repository.NewRepository(nil)
-	svc := service.NewService(repo, nil, nil, nil, nil)
+	svc := service.NewService(repo, nil, nil, nil, nil, nil, nil, nil)
 	hdlr := handler.NewHandler(svc)
 
 	// Add middleware mock for company context
