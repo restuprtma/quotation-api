@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -130,7 +131,7 @@ func (r *GenerationRepository) CreateDraftTransaction(ctx context.Context, param
 		// Practically unreachable (a violation implies a committed winner);
 		// retried defensively within maxCreateDraftAttempts.
 	}
-	return nil, fmt.Errorf("create draft did not settle after %d attempts: %w", maxCreateDraftAttempts, lastErr)
+	return nil, fmt.Errorf("idempotency conflict unresolved after %d attempts: %w", maxCreateDraftAttempts, lastErr)
 }
 
 func (r *GenerationRepository) tryCreateDraft(ctx context.Context, params CreateDraftParams, keyUUID uuid.UUID) (*CreateDraftResult, error) {
@@ -307,7 +308,7 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 		WHERE id = $10 AND company_id = $11
 		RETURNING updated_at
 	`
-	var updatedAt interface{}
+	var updatedAt time.Time
 	err := q.QueryRow(ctx, query,
 		res.ContentHTML, res.AllocationSnapshot, res.RateCardSnapshot, res.LegalTemplateSnapshot,
 		res.SkillSnapshot, res.AiProvider, res.AiModel, res.ContentHash,
