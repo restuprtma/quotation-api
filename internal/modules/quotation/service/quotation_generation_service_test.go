@@ -106,11 +106,11 @@ func (f *fixedProviderSource) requests() []uuid.UUID {
 // ---------------------------------------------------------------------------
 
 const (
-	fixBudget      = int64(150_000_000)
-	fixTinyBudget  = int64(50_000_000)
-	fixValidTotal  = int64(63_000_000) // 12jt*1*3 + 9jt*1*3
-	fixOverTotal   = int64(171_000_000) // 12jt*4*3 + 9jt*1*3
-	fixOverExcess  = int64(21_000_000)
+	fixBudget     = int64(150_000_000)
+	fixTinyBudget = int64(50_000_000)
+	fixValidTotal = int64(63_000_000)  // 12jt*1*3 + 9jt*1*3
+	fixOverTotal  = int64(171_000_000) // 12jt*4*3 + 9jt*1*3
+	fixOverExcess = int64(21_000_000)
 )
 
 type pipelineFixture struct {
