@@ -129,7 +129,7 @@ func (r *defaultHTMLRenderer) renderPaymentSchedule(p dto.PaymentTermsInput) str
 	for _, item := range p.Items {
 		b.WriteString("<tr>")
 		b.WriteString("<td>" + htmlEscape(item.MilestoneName) + "</td>")
-		fmt.Fprintf(&b, "<td>%d%%</td>", item.Percentage)
+		fmt.Fprintf(&b, `<td data-field="payment_percentage">%d%%</td>`, item.Percentage)
 		b.WriteString("<td>" + htmlEscape(item.Description) + "</td>")
 		b.WriteString("</tr>")
 	}
@@ -216,10 +216,15 @@ type ExpectedLine struct {
 	LineTotal int64
 }
 
+type ExpectedPayment struct {
+	Percentage int64
+}
+
 type IntegrityExpectations struct {
 	Currency        string
 	TotalInvestment int64
 	Lines           []ExpectedLine
+	PaymentItems    []ExpectedPayment
 	LegalHTML       string
 	BudgetMaximum   *int64
 }
@@ -293,6 +298,12 @@ func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected In
 		return fmt.Errorf("%w: legal block content was modified", ErrUnsafeHTML)
 	}
 
+	if len(expected.PaymentItems) > 0 {
+		if err := validatePaymentSchedule(nodes, expected.PaymentItems); err != nil {
+			return err
+		}
+	}
+
 	if err := scanForbiddenTerms(nodes); err != nil {
 		return err
 	}
@@ -335,6 +346,38 @@ func findExactlyOne(nodes []*html.Node, key, val string) (*html.Node, error) {
 		return nil, fmt.Errorf("%w: duplicate marker %s=%q", ErrUnsafeHTML, key, val)
 	}
 	return found, nil
+}
+
+func findAllOrdered(nodes []*html.Node, key, val string) []*html.Node {
+	var found []*html.Node
+	for _, n := range nodes {
+		if hasAttribute(n, key, val) {
+			found = append(found, n)
+		}
+	}
+	return found
+}
+
+func validatePaymentSchedule(nodes []*html.Node, items []ExpectedPayment) error {
+	block, err := findExactlyOne(nodes, "data-block", "payment_schedule")
+	if err != nil {
+		return err
+	}
+	if block == nil {
+		return fmt.Errorf("%w: payment schedule block is missing", ErrUnsafeHTML)
+	}
+
+	cells := findAllOrdered(collectNodes(block), "data-field", "payment_percentage")
+	if len(cells) != len(items) {
+		return fmt.Errorf("%w: payment schedule has %d rows, want %d", ErrUnsafeHTML, len(cells), len(items))
+	}
+	for i, item := range items {
+		want := fmt.Sprintf("%d%%", item.Percentage)
+		if got := nodeText(cells[i]); got != want {
+			return fmt.Errorf("%w: payment row %d percentage mismatch: got %q, want %q", ErrUnsafeHTML, i, got, want)
+		}
+	}
+	return nil
 }
 
 func hasAttribute(n *html.Node, key, val string) bool {

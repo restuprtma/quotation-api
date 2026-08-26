@@ -427,3 +427,77 @@ func TestDOMValidator_LegalModificationWithSpecialCharactersDetected(t *testing.
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+func TestDOMValidator_DetectsModifiedPaymentPercentage(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	in := sampleCriticalInput()
+	critical, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+	full, err := r.Assemble(critical, `<p>naratif</p>`)
+	require.NoError(t, err)
+
+	tampered := strings.Replace(full, ">70%<", ">95%<", 1)
+	require.NotEqual(t, full, tampered)
+
+	v := service.NewDOMValidator()
+	err = v.ValidateIntegrity(tampered, service.IntegrityExpectations{
+		Currency:        in.Allocation.Currency,
+		TotalInvestment: in.Allocation.TotalInvestment,
+		PaymentItems: []service.ExpectedPayment{
+			{Percentage: 30},
+			{Percentage: 70},
+		},
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsRemovedPaymentRow(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	in := sampleCriticalInput()
+	critical, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+	full, err := r.Assemble(critical, `<p>naratif</p>`)
+	require.NoError(t, err)
+
+	start := strings.Index(full, `<tr><td>Pelunasan</td>`)
+	require.Greater(t, start, -1)
+	end := strings.Index(full[start:], "</tr>") + start + len("</tr>")
+	tampered := full[:start] + full[end:]
+
+	v := service.NewDOMValidator()
+	err = v.ValidateIntegrity(tampered, service.IntegrityExpectations{
+		Currency:        in.Allocation.Currency,
+		TotalInvestment: in.Allocation.TotalInvestment,
+		PaymentItems: []service.ExpectedPayment{
+			{Percentage: 30},
+			{Percentage: 70},
+		},
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_PaymentExpectationsSatisfiedPasses(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	in := sampleCriticalInput()
+	critical, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+	full, err := r.Assemble(critical, `<p>naratif</p>`)
+	require.NoError(t, err)
+
+	v := service.NewDOMValidator()
+	err = v.ValidateIntegrity(full, service.IntegrityExpectations{
+		Currency:        in.Allocation.Currency,
+		TotalInvestment: in.Allocation.TotalInvestment,
+		PaymentItems: []service.ExpectedPayment{
+			{Percentage: 30},
+			{Percentage: 70},
+		},
+		LegalHTML: in.LegalHTML,
+	})
+
+	require.NoError(t, err)
+}
