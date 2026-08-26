@@ -18,3 +18,7 @@ func NewLegalTemplateService(repo *repository.LegalTemplateRepository) *LegalTem
 func (s *LegalTemplateService) GetActiveTemplate(ctx context.Context, companyID, code string) (*domain.LegalTemplate, error) {
 	return s.repo.GetActiveTemplate(ctx, companyID, code)
 }
+
+func (s *LegalTemplateService) ListActiveTemplates(ctx context.Context, companyID string) ([]*domain.LegalTemplate, error) {
+	return s.repo.ListActiveTemplates(ctx, companyID)
+}

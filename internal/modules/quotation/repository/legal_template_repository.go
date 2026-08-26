@@ -99,3 +99,28 @@ func (r *LegalTemplateRepository) CreateNewVersion(ctx context.Context, q Execer
 	// Essentially same as Create
 	return r.Create(ctx, q, template)
 }
+
+func (r *LegalTemplateRepository) ListActiveTemplates(ctx context.Context, companyID string) ([]*domain.LegalTemplate, error) {
+	query := `
+		SELECT id, company_id, code, version, content_html, is_active, approved_by, approved_at, created_at, updated_at
+		FROM legal_templates
+		WHERE company_id = $1 AND is_active = true
+		ORDER BY created_at DESC
+	`
+	rows, err := r.db.Query(ctx, query, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*domain.LegalTemplate
+	for rows.Next() {
+		lt := &domain.LegalTemplate{}
+		err := rows.Scan(&lt.ID, &lt.CompanyID, &lt.Code, &lt.Version, &lt.ContentHTML, &lt.IsActive, &lt.ApprovedBy, &lt.ApprovedAt, &lt.CreatedAt, &lt.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, lt)
+	}
+	return list, rows.Err()
+}
