@@ -516,3 +516,63 @@ func TestGenerate_MandatoryScopeDroppedOnRetry_FatalAllocationInvalid(t *testing
 	assertPendingRevision(t, pool, fx.companyID, fx.key)
 	_ = qid
 }
+
+// ---------------------------------------------------------------------------
+// Task 6: unsafe narrative handling & sanitization enforcement
+// ---------------------------------------------------------------------------
+
+func TestGenerate_NarrativeWithProtectedMarker_RejectedUnsafeHTML(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Narrative mencoba memalsukan blok critical backend => Assemble wajib menolak.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: `<p>Aman.</p><div data-block="investment">blok palsu dari AI</div>`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "unsafe_html")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_NarrativeScriptTag_SanitizedStillCompletes(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// <script> di narrative tidak boleh menggagalkan pipeline — sanitizer
+	// menghapusnya dan hasil tetap completed tanpa jejak script.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: `<p>Aman</p><script>alert(1)</script><strong>OK</strong>`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.NoError(t, err)
+
+	status, html, _, _ := revisionRow(t, pool, qid)
+	assert.Equal(t, "completed", status)
+	assert.NotContains(t, strings.ToLower(html), "<script")
+	assert.Contains(t, html, "<strong>OK</strong>")
+}
+
+func TestGenerate_NarrativeBudgetLeak_DetectedByDOMValidation(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Narrative membocorkan angka budget maximum (150.000.000) =>
+	// defense-in-depth DOM validator harus menolak dokumen final.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: `<p>Total penawaran kami hanya Rp 150.000.000 semua termasuk.</p>`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "unsafe_html")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
