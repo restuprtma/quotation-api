@@ -6,7 +6,7 @@ import (
 )
 
 type CredentialRequest struct {
-	ProviderType string `json:"provider_type" binding:"required"`
+	ProviderType string `json:"provider" binding:"required"`
 	APIKey       string `json:"api_key"`
 	Model        string `json:"model"`
 }
@@ -16,9 +16,10 @@ type CredentialRequest struct {
 type CredentialResponse struct {
 	ID           uuid.UUID `json:"id"`
 	CompanyID    uuid.UUID `json:"company_id"`
-	ProviderType string    `json:"provider_type"`
-	KeyHint      string    `json:"key_hint"`
-	IsActive     bool      `json:"is_active"`
+	Provider             string    `json:"provider"`
+	Model                string    `json:"model"`
+	KeyHint              string    `json:"key_hint"`
+	IsActive             bool      `json:"is_active"`
 	CredentialConfigured bool      `json:"credential_configured"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
