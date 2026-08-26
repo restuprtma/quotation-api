@@ -428,6 +428,11 @@ func (s *QuotationGenerationService) composeAndPersistRegenerated(
 		ContentHash:           &hash,
 		SafetyEnvelopeVersion: SafetyEnvelopeVersion,
 	}); uerr != nil {
+		if errors.Is(uerr, repository.ErrRevisionConflict) {
+			// The revision stopped being an active draft while the pipeline
+			// was running — never overwrite published/superseded content.
+			return newGenerationError(ErrCodeRevisionConflict, "revision is no longer an active draft")
+		}
 		return newGenerationError(ErrCodeGenerationFailed, "failed to persist regenerated result")
 	}
 	return nil

@@ -348,9 +348,12 @@ func (r *GenerationRepository) Pool() *pgxpool.Pool {
 var ErrRevisionConflict = errors.New("revision_conflict")
 
 // MaxRegeneratesPerHour bounds regeneration per draft inside the rolling one
-// hour window enforced by ConsumeRegenerateQuota. MUST stay in sync with the
-// INTERVAL '1 hour' literal embedded in that query.
-const MaxRegeneratesPerHour = 5
+// hour window enforced by ConsumeRegenerateQuota. MaxRegenerateWindowHours is
+// bound into the SQL via make_interval so the two can never drift apart.
+const (
+	MaxRegeneratesPerHour    = 5
+	MaxRegenerateWindowHours = 1
+)
 
 // DraftRevision is the minimal projection required to re-run the generation
 // pipeline for an existing draft.
@@ -409,18 +412,22 @@ func (r *GenerationRepository) ConsumeRegenerateQuota(ctx context.Context, q Exe
 	err := q.QueryRow(ctx, `
 		UPDATE quotation_revisions SET
 			regenerate_count = CASE
-				WHEN last_regenerate_at IS NULL OR last_regenerate_at <= NOW() - INTERVAL '1 hour' THEN 1
+				WHEN last_regenerate_at IS NULL OR last_regenerate_at <= NOW() - make_interval(hours => $5) THEN 1
 				ELSE regenerate_count + 1 END,
 			last_regenerate_at = NOW(),
 			updated_at = NOW()
 		WHERE id = $1 AND company_id = $2 AND publication_status = $3
 		  AND (last_regenerate_at IS NULL
-		       OR last_regenerate_at <= NOW() - INTERVAL '1 hour'
+		       OR last_regenerate_at <= NOW() - make_interval(hours => $5)
 		       OR regenerate_count < $4)
 		RETURNING regenerate_count
-	`, revisionID, companyID, PublicationStatusDraft, MaxRegeneratesPerHour).Scan(&count)
+	`, revisionID, companyID, PublicationStatusDraft, MaxRegeneratesPerHour, MaxRegenerateWindowHours).Scan(&count)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, pgx.ErrNoRows // limit exhausted or revision no longer a draft
+		// Limit exhausted, or the revision stopped being an active draft in
+		// the microseconds between the caller's pre-check and this UPDATE.
+		// The service layer reports rate_limited here; the residual race is
+		// re-checked by UpdateRegeneratedResult's draft guard below.
+		return 0, pgx.ErrNoRows
 	}
 	if err != nil {
 		logger.Error("Failed to consume regenerate quota", logger.Err(err))
@@ -434,6 +441,11 @@ func (r *GenerationRepository) ConsumeRegenerateQuota(ctx context.Context, q Exe
 // only invoked after the full pipeline succeeded, so a failed regeneration
 // leaves both the previous content_html and the previous content_version
 // untouched. No new revision row is ever created.
+//
+// The publication_status guard closes the TOCTOU window spanning the AI
+// pipeline: if the revision is published/superseded while regeneration was
+// running, the UPDATE matches nothing and reports ErrRevisionConflict instead
+// of overwriting published content.
 func (r *GenerationRepository) UpdateRegeneratedResult(ctx context.Context, q Execer, companyID, revisionID uuid.UUID, res UpdateGenerationResultParams) error {
 	query := `
 		UPDATE quotation_revisions SET
@@ -450,7 +462,7 @@ func (r *GenerationRepository) UpdateRegeneratedResult(ctx context.Context, q Ex
 			updated_at = NOW(),
 			safety_envelope_version = $12,
 			content_version = quotation_revisions.content_version + 1
-		WHERE id = $10 AND company_id = $11
+		WHERE id = $10 AND company_id = $11 AND publication_status = $13
 		RETURNING updated_at
 	`
 	var updatedAt time.Time
@@ -458,11 +470,11 @@ func (r *GenerationRepository) UpdateRegeneratedResult(ctx context.Context, q Ex
 		res.ContentHTML, res.AllocationSnapshot, res.RateCardSnapshot, res.LegalTemplateSnapshot,
 		res.SkillSnapshot, res.AiProvider, res.AiModel, res.ContentHash,
 		GenerationStatusCompleted, revisionID, companyID,
-		res.SafetyEnvelopeVersion,
+		res.SafetyEnvelopeVersion, PublicationStatusDraft,
 	).Scan(&updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrRevisionNotFound
+			return ErrRevisionConflict
 		}
 		logger.Error("Failed to update regenerated result", logger.Err(err))
 		return err
@@ -491,6 +503,7 @@ func (r *GenerationRepository) GetGenerationState(ctx context.Context, companyID
 		FROM quotation_revisions r
 		JOIN quotations q ON q.id = r.quotation_id
 		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
+		  AND q.deleted_at IS NULL
 	`, quotationID, companyID).Scan(&s.GenerationStatus, &s.ContentVersion, &s.ContentHTML, &s.GeneratedAt, &s.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

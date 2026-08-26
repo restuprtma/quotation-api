@@ -5,7 +5,6 @@ package repository_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,13 +33,14 @@ func seedRegenDraft(t *testing.T, pool *pgxpool.Pool) regenFixture {
 	companyID := uuid.New()
 	cleanupCompanies(t, pool, companyID)
 
-	res, err := repo.CreateDraftTransaction(ctx, validDraftParams(companyID))
+	params := validDraftParams(companyID)
+	res, err := repo.CreateDraftTransaction(ctx, params)
 	require.NoError(t, err)
 	return regenFixture{
 		companyID:   companyID,
 		quotationID: res.QuotationID,
 		revisionID:  res.RevisionID,
-		number:      validDraftParams(companyID).QuotationNumber,
+		number:      params.QuotationNumber,
 	}
 }
 
@@ -201,6 +201,59 @@ func TestUpdateRegeneratedResult_IncrementsVersionReplacesHTML(t *testing.T) {
 	assert.Equal(t, "gemini", prov)
 }
 
+// TestUpdateRegeneratedResult_PublishedMidFlight_IsConflict menutup TOCTOU
+// window: jika revision ter-publish selagi pipeline AI berjalan, persist
+// final WAJIB gagal dengan conflict — bukan menimpa konten published.
+func TestUpdateRegeneratedResult_PublishedMidFlight_IsConflict(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	fx := seedRegenDraft(t, pool)
+
+	_, err := pool.Exec(ctx,
+		`UPDATE quotation_revisions SET publication_status = 'published' WHERE id = $1`,
+		fx.revisionID)
+	require.NoError(t, err)
+
+	hash := "deadbeef"
+	err = repo.UpdateRegeneratedResult(ctx, repo.Pool(), fx.companyID, fx.revisionID, repository.UpdateGenerationResultParams{
+		ContentHTML:           "<p>overwrite ilegal</p>",
+		AllocationSnapshot:    []byte(`{}`),
+		RateCardSnapshot:      []byte(`{}`),
+		LegalTemplateSnapshot: []byte(`{}`),
+		SkillSnapshot:         []byte(`{}`),
+		AiProvider:            "gemini",
+		AiModel:               "gemini-test",
+		ContentHash:           &hash,
+		SafetyEnvelopeVersion: "quotation_safety_v1",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repository.ErrRevisionConflict))
+
+	var html string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT content_html FROM quotation_revisions WHERE id = $1`, fx.revisionID).Scan(&html))
+	assert.Equal(t, "", html, "konten published tidak boleh tertimpa hasil regenerate")
+}
+
+func TestGetGenerationState_SoftDeletedQuotation_IsNotFound(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	fx := seedRegenDraft(t, pool)
+
+	_, err := pool.Exec(ctx,
+		`UPDATE quotations SET deleted_at = NOW() WHERE id = $1`, fx.quotationID)
+	require.NoError(t, err)
+
+	_, err = repo.GetGenerationState(ctx, fx.companyID, fx.quotationID)
+	assert.True(t, errors.Is(err, repository.ErrRevisionNotFound),
+		"quotation soft-deleted tidak boleh masih terbaca via generation-status")
+
+	_, err = repo.GetGenerationDetail(ctx, fx.companyID, fx.quotationID)
+	assert.True(t, errors.Is(err, repository.ErrRevisionNotFound))
+}
+
 // revisionCount menghitung jumlah baris revision milik satu quotation.
 func revisionCount(t *testing.T, pool *pgxpool.Pool, quotationID uuid.UUID) int {
 	t.Helper()
@@ -249,5 +302,5 @@ func TestConsumeQuota_ConcurrentCalls_CounterExact(t *testing.T) {
 	count, _ := quotaState(t, pool, fx.revisionID)
 	assert.Equal(t, repository.MaxRegeneratesPerHour, count,
 		"counter akhir harus persis jumlah gate yang lolos (tidak skip, tidak double)")
-	fmt.Println("concurrent quota:", succeeded.Load(), "ok /", limited.Load(), "limited")
+	t.Logf("concurrent quota: %d ok / %d limited", succeeded.Load(), limited.Load())
 }

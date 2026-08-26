@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -225,10 +227,19 @@ func httpNarrativeHTML() string {
 // ---------------------------------------------------------------------------
 
 // getHandlerPool menyediakan pool integrasi untuk package handler_test
-// (duplikat getTestPool karena bed package).
+// (duplikat getTestPool karena bed package) dengan resolusi env yang sama.
 func getHandlerPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := "postgresql://postgres:postgres@localhost:5432/quotation_db?sslmode=disable"
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		host := envOr("DB_HOST", "localhost")
+		port := envOr("DB_PORT", "5432")
+		user := envOr("DB_USER", "postgres")
+		pass := envOr("DB_PASSWORD", "postgres")
+		name := envOr("DB_NAME", "quotation_db")
+		dsn = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s",
+			user, pass, host, port, name, envOr("DB_SSLMODE", "disable"))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -242,6 +253,13 @@ func getHandlerPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner uuid.UUID, opts ...service.GenerationOption) *gin.Engine {
