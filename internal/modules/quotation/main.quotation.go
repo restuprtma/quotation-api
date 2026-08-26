@@ -12,8 +12,9 @@ import (
 )
 
 type Module struct {
-	Handler *handler.Handler
-	Service *service.Service
+	Handler    *handler.Handler
+	GenHandler *handler.QuotationGenerationHandler
+	Service    *service.Service
 }
 
 // Initialize wires the quotation module. The AI provider is instantiated via
@@ -40,9 +41,17 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	svc := service.NewService(repo, credentialRepo, skillRepo, cipher, aiFactory, settingsSvc, rcSvc, legalSvc)
 	hdlr := handler.NewHandler(svc)
 
+	// AI-first generation stack (Fase 6): request-scoped credential
+	// resolution stays inside DBCredentialProviderSource; nothing derived
+	// from credentials is cached.
+	genRepo := repository.NewGenerationRepository(db)
+	providerSource := service.NewDBCredentialProviderSource(credentialRepo, aiFactory, cfg.AI.CredentialEncryptionKey)
+	genSvc := service.NewQuotationGenerationService(genRepo, providerSource)
+
 	return &Module{
-		Handler: hdlr,
-		Service: svc,
+		Handler:    hdlr,
+		GenHandler: handler.NewQuotationGenerationHandler(genSvc, genRepo),
+		Service:    svc,
 	}
 }
 
@@ -57,6 +66,12 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.POST("", m.Handler.Create)
 		quotations.GET("/:id", m.Handler.GetByID)
 		quotations.PUT("/:id", m.Handler.Update)
+
+		// AI-first generation (Fase 6 Session 5). GET /:id stays on the
+		// legacy handler; generation state is served by /generation-status.
+		quotations.POST("/generate", m.GenHandler.Generate)
+		quotations.POST("/:id/regenerate", m.GenHandler.Regenerate)
+		quotations.GET("/:id/generation-status", m.GenHandler.GetGenerationStatus)
 
 		// V2 Revisions & Sharing
 		quotations.POST("/:id/revisions", m.Handler.CreateRevision)
