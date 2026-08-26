@@ -378,3 +378,47 @@ func TestGenerate_ThreeTimesOverbudget_BudgetUnfeasible(t *testing.T) {
 	assert.NotEqual(t, uuid.Nil, qid)
 	assertPendingRevision(t, pool, fx.companyID, fx.key)
 }
+
+func TestGenerate_AllocationTimeout_ProviderTimeoutFastFail(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Provider lebih lambat dari deadline attempt => harus provider_timeout,
+	// cepat, fatal (tidak lanjut attempt 2), dan revision tetap pending.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON(), delay: 500 * time.Millisecond},
+	}}
+	svc, _ := newSvc(pool, mock, service.WithAttemptTimeout(80*time.Millisecond))
+
+	start := time.Now()
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	var ge *service.GenerationError
+	require.ErrorAs(t, err, &ge)
+	assert.Equal(t, "provider_timeout", ge.Code)
+	assert.Less(t, elapsed, 2*time.Second, "attempt yang melewati deadline tidak boleh menggantung")
+	assert.Equal(t, 1, mock.callCount(), "timeout bersifat fatal: tidak retry attempt berikutnya")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_NarrativeTimeout_ProviderTimeout(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Allocation cepat; narrative lambat => tahap narrative juga wajib
+	// ter-cover deadline per attempt.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: narrativeHTML(), delay: 500 * time.Millisecond},
+	}}
+	svc, _ := newSvc(pool, mock, service.WithAttemptTimeout(80*time.Millisecond))
+
+	_, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.Error(t, err)
+	var ge *service.GenerationError
+	require.ErrorAs(t, err, &ge)
+	assert.Equal(t, "provider_timeout", ge.Code)
+}
