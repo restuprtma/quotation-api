@@ -580,3 +580,74 @@ func TestHTTP_GetGenerationStatus_ExposesStateWithoutBudgetLeak(t *testing.T) {
 		assert.NotContains(t, body, forbidden)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task: wiring verification — request HTTP nyata harus mengalir sampai
+// pipeline asli (handler → service → repo/renderer/sanitizer/DOM validator);
+// HANYA AI provider yang di-mock.
+// ---------------------------------------------------------------------------
+
+func TestWiring_HTTPGenerateAndRegenerate_HandlerToRealPipeline(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+	mock := &adaptiveAIProvider{}
+	router := newGenerationRouter(pool, mock, fx.companyID)
+
+	// 1) POST /generate lewat HTTP nyata → response JSON nyata.
+	wGen := doJSON(router, http.MethodPost, "/quotation/v1/quotations/generate", nil, fx.requestBody())
+	require.Equal(t, http.StatusCreated, wGen.Code, wGen.Body.String())
+	qid := quotationIDFrom(t, wGen)
+	require.NotEqual(t, uuid.Nil, qid)
+
+	// 2) Artefak yang mendasari response harus berasal dari pipeline ASLI:
+	//    re-validasi content_html tersimpan dengan DOMValidator produksi dan
+	//    expectations yang dibangun dari allocation_snapshot tersimpan.
+	var html, allocSnap string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_html, allocation_snapshot::text
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&html, &allocSnap))
+
+	var enriched dto.EnrichedAllocation
+	require.NoError(t, json.Unmarshal([]byte(allocSnap), &enriched))
+	require.Equal(t, int64(63_000_000), enriched.TotalInvestment,
+		"snapshot berasal dari RateAllocator asli terhadap rate card fixture")
+
+	expectations := service.IntegrityExpectations{
+		Currency:        enriched.Currency,
+		TotalInvestment: enriched.TotalInvestment,
+		LegalHTML:       "<p>Syarat dan ketentuan penawaran resmi berlaku 30 hari.</p>",
+		BudgetMaximum:   &fx.budget,
+	}
+	for _, res := range enriched.Resources {
+		expectations.Lines = append(expectations.Lines, service.ExpectedLine{
+			Role: res.Role, Seniority: res.Seniority, LineTotal: res.LineTotal,
+		})
+	}
+	expectations.PaymentItems = []service.ExpectedPayment{{Percentage: 50}, {Percentage: 50}}
+
+	require.NoError(t, service.NewDOMValidator().ValidateIntegrity(html, expectations),
+		"content_html di balik response HTTP harus lolos DOM validator asli")
+
+	// 3) POST /:id/regenerate lewat HTTP → versi baru juga hasil pipeline asli.
+	wRegen := doJSON(router, http.MethodPost, "/quotation/v1/quotations/"+qid.String()+"/regenerate", nil, nil)
+	require.Equal(t, http.StatusOK, wRegen.Code, wRegen.Body.String())
+
+	var env struct {
+		Data struct {
+			ContentVersion int    `json:"content_version"`
+			ContentHTML    string `json:"content_html"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wRegen.Body.Bytes(), &env))
+	require.Equal(t, 2, env.Data.ContentVersion)
+
+	var htmlV2 string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_html FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&htmlV2))
+	assert.Equal(t, htmlV2, env.Data.ContentHTML,
+		"response regenerate harus konsisten dengan artefak tersimpan")
+	require.NoError(t, service.NewDOMValidator().ValidateIntegrity(htmlV2, expectations),
+		"content v2 harus tetap lolos validasi integritas")
+}
