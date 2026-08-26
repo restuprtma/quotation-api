@@ -258,6 +258,19 @@ func revisionRow(t *testing.T, pool *pgxpool.Pool, quotationID uuid.UUID) (statu
 	return
 }
 
+func assertPendingRevision(t *testing.T, pool *pgxpool.Pool, companyID uuid.UUID, key uuid.UUID) {
+	t.Helper()
+	var status, html string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT r.generation_status, COALESCE(r.content_html,'')
+		FROM quotation_revisions r
+		JOIN quotations q ON q.id = r.quotation_id
+		WHERE r.company_id = $1 AND r.idempotency_key = $2
+	`, companyID, key).Scan(&status, &html))
+	assert.Equal(t, "pending", status, "revision gagal harus tetap pending/retryable")
+	assert.Empty(t, html, "revision gagal tidak boleh punya content_html")
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -314,4 +327,54 @@ func TestGenerate_HappyPath_PersistsCompletedRevision(t *testing.T) {
 	var skillMap map[string]any
 	require.NoError(t, json.Unmarshal([]byte(skillSnap), &skillMap))
 	assert.Equal(t, "quotation_s4", skillMap["command"])
+}
+
+func TestGenerate_BudgetRetry_SecondAttemptSucceedsWithFeedback(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Attempt 1: 12jt*4*3 + 9jt*1*3 = 171jt > budget 150jt (excess 21jt).
+	// Attempt 2: valid & in-budget => lanjut narrative.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSONOverbudget()},
+		{text: allocationJSON()},
+		{text: narrativeHTML()},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, mock.callCount()) // 2 allocation + 1 narrative
+	assert.Contains(t, mock.prompts[1], `"attempt_number":2`)
+	assert.Contains(t, mock.prompts[1], `"maximum_attempts":3`)
+	assert.Contains(t, mock.prompts[1], `"budget_excess_amount":21000000`)
+
+	status, html, _, _ := revisionRow(t, pool, qid)
+	assert.Equal(t, "completed", status)
+	assert.Contains(t, html, "Rp 63.000.000")
+}
+
+func TestGenerate_ThreeTimesOverbudget_BudgetUnfeasible(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	fx.budget = fixTinyBudget // 50jt < alokasi minimum viable 63jt
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSON()},
+		{text: allocationJSON()},
+		{text: allocationJSON()},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	require.Error(t, err)
+	var ge *service.GenerationError
+	require.ErrorAs(t, err, &ge)
+	assert.Equal(t, "budget_unfeasible", ge.Code)
+	assert.Len(t, ge.Error(), len("budget_unfeasible")) // redaksi: pesan == kode saja
+
+	assert.Equal(t, 3, mock.callCount(), "tepat 3 attempts, tidak lebih")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
 }

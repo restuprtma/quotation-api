@@ -418,7 +418,7 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 	envelope := GetSafetyEnvelope(SafetyEnvelopeFileName)
 	var feedback *retryFeedback
 
-	for attempt := 1; attempt <= 1; attempt++ {
+	for attempt := 1; attempt <= MaxProposalAttempts; attempt++ {
 		text, gerr := s.callProvider(ctx, provider, buildAllocationPrompt(envelope, cfg.skill.ContentInstruction, buildAllocationPayload(req, cfg, feedback)))
 		if gerr != nil {
 			return dto.EnrichedAllocation{}, gerr
@@ -438,16 +438,23 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 		}
 
 		var exceeded *dto.BudgetExceededError
-		switch {
-		case errors.As(aerr, &exceeded):
-			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
-		case errors.Is(aerr, dto.ErrMissingRateItem):
-			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeRateItemMissing, "rate item is missing for the proposed allocation")
-		default:
-			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
+		if errors.As(aerr, &exceeded) {
+			if attempt == MaxProposalAttempts {
+				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
+			}
+			feedback = &retryFeedback{
+				AttemptNumber:      attempt + 1,
+				MaximumAttempts:    MaxProposalAttempts,
+				BudgetExcessAmount: exceeded.Excess,
+			}
+			continue
 		}
+		if errors.Is(aerr, dto.ErrMissingRateItem) {
+			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeRateItemMissing, "rate item is missing for the proposed allocation")
+		}
+		return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
 	}
-	// Unreachable while the loop bound equals its iteration count.
+	// Defensive: unreachable while every iteration either returns or continues.
 	return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
 }
 
