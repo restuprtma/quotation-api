@@ -60,13 +60,13 @@ func TestCredentialCipher(t *testing.T) {
 
 		// Tamper with the base64 string
 		tampered := ciphertext[:len(ciphertext)-5] + "A" + ciphertext[len(ciphertext)-4:]
-		
+
 		_, err := cipher.Decrypt(tampered)
 		if err == nil {
 			t.Error("expected error when decrypting tampered ciphertext")
 		}
 	})
-	
+
 	t.Run("Short ciphertext", func(t *testing.T) {
 		// Just standard base64 but shorter than nonce
 		short := "short"

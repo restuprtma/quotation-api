@@ -123,7 +123,7 @@ func (h *Handler) UpdateSkill(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	
+
 	var req dto.UpdateSkillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())

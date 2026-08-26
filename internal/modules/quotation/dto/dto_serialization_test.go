@@ -12,13 +12,13 @@ import (
 
 func TestCredentialResponse_JSONSerialization(t *testing.T) {
 	resp := CredentialResponse{
-		ID:           uuid.New(),
-		CompanyID:    uuid.New(),
-		Provider: "openai",
-		KeyHint:      "sk-...abcd",
-		IsActive:     true,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:        uuid.New(),
+		CompanyID: uuid.New(),
+		Provider:  "openai",
+		KeyHint:   "sk-...abcd",
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	b, err := json.Marshal(resp)

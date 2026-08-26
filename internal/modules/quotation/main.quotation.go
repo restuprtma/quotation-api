@@ -22,12 +22,12 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	repo := repository.NewRepository(db)
 	credentialRepo := repository.NewCredentialRepository(db)
 	skillRepo := repository.NewSkillRepository(db)
-	
+
 	cipher, err := service.NewCredentialCipher(cfg.AI.CredentialEncryptionKey)
 	if err != nil {
 		panic("failed to initialize credential cipher: " + err.Error())
 	}
-	
+
 	aiFactory := service.NewProviderFactory()
 
 	rcRepo := repository.NewRateCardRepository(db)

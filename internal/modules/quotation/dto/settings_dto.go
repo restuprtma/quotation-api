@@ -14,8 +14,8 @@ type CredentialRequest struct {
 // CredentialResponse must explicitly exclude any plaintext or encrypted API key.
 // We use KeyHint to show the last 4 characters to the user.
 type CredentialResponse struct {
-	ID           uuid.UUID `json:"id"`
-	CompanyID    uuid.UUID `json:"company_id"`
+	ID                   uuid.UUID `json:"id"`
+	CompanyID            uuid.UUID `json:"company_id"`
 	Provider             string    `json:"provider"`
 	Model                string    `json:"model"`
 	KeyHint              string    `json:"key_hint"`

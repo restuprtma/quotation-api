@@ -39,7 +39,7 @@ func TestAIProviderIsolation(t *testing.T) {
 	defer server.Close()
 
 	factory := NewProviderFactory()
-	
+
 	// Create channels for synchronization
 	startCh := make(chan struct{})
 	var wg sync.WaitGroup
@@ -51,9 +51,9 @@ func TestAIProviderIsolation(t *testing.T) {
 	for i := 0; i < tenantCount; i++ {
 		go func(tenantID int) {
 			defer wg.Done()
-			
+
 			key := "tenant_key_" + string(rune('A'+tenantID))
-			
+
 			cfg := ProviderConfig{
 				ProviderName:    "ollama",
 				DecryptedAPIKey: key,
@@ -111,13 +111,13 @@ func TestProvider_ConcurrentIsolation(t *testing.T) {
 				DecryptedAPIKey: expectedKey,
 				BaseURL:         server.URL,
 			}
-			
+
 			provider, err := factory.New(context.Background(), cfg)
 			require.NoError(t, err)
-			
+
 			gemini, ok := provider.(*GeminiProvider)
 			require.True(t, ok)
-			
+
 			// Simulate race condition scenario where another tenant gets created
 			time.Sleep(10 * time.Millisecond)
 			assert.Equal(t, expectedKey, gemini.cfg.DecryptedAPIKey)
@@ -128,10 +128,10 @@ func TestProvider_ConcurrentIsolation(t *testing.T) {
 
 func TestProvider_KeyRotationRace(t *testing.T) {
 	factory := NewProviderFactory()
-	
+
 	// Tenant API key in "database" (memory for test)
 	currentKey := "old_key"
-	
+
 	cfg := ProviderConfig{
 		ProviderName:    "gemini",
 		DecryptedAPIKey: currentKey,

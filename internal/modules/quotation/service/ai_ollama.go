@@ -27,7 +27,7 @@ func NewOllamaProvider(cfg ProviderConfig) *OllamaProvider {
 
 func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
 	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/api/generate"
-	
+
 	body, err := json.Marshal(map[string]any{
 		"model":  p.cfg.Model,
 		"prompt": req.Prompt,
@@ -41,13 +41,13 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	
+
 	client := &http.Client{Timeout: timeout}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to create request"}
 	}
-	
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	if p.cfg.DecryptedAPIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+p.cfg.DecryptedAPIKey)
@@ -74,11 +74,11 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	var response struct {
 		Response string `json:"response"`
 	}
-	
+
 	if err := json.Unmarshal(data, &response); err != nil {
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "invalid response format"}
 	}
-	
+
 	return GenerateResult{Text: response.Response}, nil
 }
 

@@ -70,7 +70,7 @@ func TestGetSettings_NoLeakage(t *testing.T) {
 	assert.Equal(t, "gemini", resp.Data.ProviderType)
 	assert.Equal(t, "XXXX", resp.Data.KeyHint)
 	assert.Empty(t, resp.Data.APIKey, "API key should not be exposed in response")
-	
+
 	// Also check raw string to be absolutely sure
 	bodyStr := w.Body.String()
 	assert.False(t, strings.Contains(bodyStr, "api_key"), "Response should not contain api_key field")
@@ -98,7 +98,7 @@ func TestUpdateSettings_NoLeakage(t *testing.T) {
 		Data map[string]interface{} `json:"data"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	
+
 	_, hasAPIKey := resp.Data["api_key"]
 	assert.False(t, hasAPIKey, "API key should not be exposed in PUT response")
 }

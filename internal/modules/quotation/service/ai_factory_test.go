@@ -22,7 +22,6 @@ func TestAIFactory_MissingCredential_Ollama(t *testing.T) {
 	assert.NotNil(t, provider)
 }
 
-
 func TestAIFactory_StrictMissingCredential(t *testing.T) {
 	factory := NewProviderFactory()
 	cfg := ProviderConfig{

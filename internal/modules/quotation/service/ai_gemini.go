@@ -24,7 +24,7 @@ func NewGeminiProvider(cfg ProviderConfig) *GeminiProvider {
 
 func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
 	endpoint := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(p.cfg.Model) + ":generateContent"
-	
+
 	body, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{
 			{
@@ -42,13 +42,13 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	
+
 	client := &http.Client{Timeout: timeout}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to create request"}
 	}
-	
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-goog-api-key", p.cfg.DecryptedAPIKey)
 
@@ -79,11 +79,11 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 			} `json:"content"`
 		} `json:"candidates"`
 	}
-	
+
 	if err := json.Unmarshal(data, &response); err != nil || len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "invalid response format"}
 	}
-	
+
 	return GenerateResult{Text: response.Candidates[0].Content.Parts[0].Text}, nil
 }
 

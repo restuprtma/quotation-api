@@ -246,6 +246,7 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 		UpdatedAt:            cred.UpdatedAt,
 	}, nil
 }
+
 const ErrConnectionFailedMsg = "Failed to connect to AI provider. Check your credentials or model name"
 
 func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, req *dto.CredentialRequest) error {

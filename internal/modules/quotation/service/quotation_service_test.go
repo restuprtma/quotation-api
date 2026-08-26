@@ -35,7 +35,7 @@ func TestService_TestSettingsConnection_ErrorMasking(t *testing.T) {
 	}
 
 	err := s.TestSettingsConnection(context.Background(), "company-123", req)
-	
+
 	// Ensure error is masked
 	assert.Equal(t, errors.New(service.ErrConnectionFailedMsg), err)
 }

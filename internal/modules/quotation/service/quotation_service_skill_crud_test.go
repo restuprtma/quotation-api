@@ -78,7 +78,8 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 	companyB := uuid.New()
 
 	skillRepo := repository.NewSkillRepository(pool)
-	repo := repository.NewRepository(pool); svc := service.NewService(repo, nil, skillRepo, nil, nil) // 5 arguments
+	repo := repository.NewRepository(pool)
+	svc := service.NewService(repo, nil, skillRepo, nil, nil) // 5 arguments
 
 	// Create a skill for Company A directly via repo to test the Service read/update methods
 	skillIDA := uuid.New()
@@ -135,7 +136,7 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 			SystemPrompt: ptrString("Updated Prompt"),
 			IsActive:     ptrBool(false),
 		}
-		
+
 		// Attempt to update with wrong company
 		_, err := svc.UpdateSkill(ctx, companyB.String(), skillIDA.String(), req)
 		if err == nil {
@@ -147,7 +148,7 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
-		
+
 		updated := res.(dto.SkillResponse)
 		if updated.SystemPrompt != "Updated Prompt" {
 			t.Errorf("expected prompt 'Updated Prompt', got %s", updated.SystemPrompt)
