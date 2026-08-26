@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -12,9 +13,12 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 )
 
+var slugPattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+
 var (
-	ErrUnsafeHTML          = errors.New("unsafe_html")
-	ErrInvalidPaymentTerms = errors.New("invalid_payment_terms")
+	ErrUnsafeHTML             = errors.New("unsafe_html")
+	ErrInvalidPaymentTerms    = errors.New("invalid_payment_terms")
+	ErrInvalidAllocationInput = errors.New("invalid_allocation_input")
 )
 
 type QuotationMetadata struct {
@@ -45,6 +49,9 @@ func NewHTMLRenderer() HTMLRenderer {
 func (r *defaultHTMLRenderer) RenderCriticalBlocks(in CriticalBlocksInput) (string, error) {
 	if len(in.Allocation.Resources) == 0 {
 		return "", fmt.Errorf("%w: allocation has no resources", ErrInvalidPaymentTerms)
+	}
+	if err := validateResourceLabels(in.Allocation.Resources); err != nil {
+		return "", err
 	}
 	if err := validatePaymentTerms(in.Payment); err != nil {
 		return "", err
@@ -94,6 +101,18 @@ func (r *defaultHTMLRenderer) renderMetadata(m QuotationMetadata) string {
 	return b.String()
 }
 
+func validateResourceLabels(resources []dto.EnrichedResource) error {
+	for i, res := range resources {
+		if !slugPattern.MatchString(strings.ToLower(res.Role)) {
+			return fmt.Errorf("%w: resources[%d].role %q is not a lowercase slug", ErrInvalidAllocationInput, i, res.Role)
+		}
+		if !slugPattern.MatchString(strings.ToLower(res.Seniority)) {
+			return fmt.Errorf("%w: resources[%d].seniority %q is not a lowercase slug", ErrInvalidAllocationInput, i, res.Seniority)
+		}
+	}
+	return nil
+}
+
 func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) string {
 	var b strings.Builder
 	b.WriteString(`<div class="qtr-block qtr-investment" data-block="investment">`)
@@ -101,7 +120,7 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 	b.WriteString(`<thead><tr><th>Peran</th><th>Senioritas</th><th>Jumlah SDM</th><th>Durasi (bulan)</th><th>Tarif/Bulan</th><th>Total</th></tr></thead>`)
 	b.WriteString(`<tbody>`)
 	for _, res := range a.Resources {
-		rowKey := res.Role + "_" + res.Seniority
+		rowKey := strings.ToLower(res.Role) + "_" + strings.ToLower(res.Seniority)
 		fmt.Fprintf(&b, `<tr data-role="%s">`, htmlEscape(rowKey))
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Role)) + "</td>")
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Seniority)) + "</td>")

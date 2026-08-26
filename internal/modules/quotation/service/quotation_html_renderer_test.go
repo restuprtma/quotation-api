@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/service"
 )
@@ -427,6 +429,68 @@ func TestDOMValidator_LegalModificationWithSpecialCharactersDetected(t *testing.
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+func TestRenderCriticalBlocks_MixedCaseRoleProducesLowercaseMarker(t *testing.T) {
+	in := sampleCriticalInput()
+	in.Allocation.Resources[0].Role = "Programmer"
+	in.Allocation.Resources[0].Seniority = "Senior"
+	r := service.NewHTMLRenderer()
+
+	out, err := r.RenderCriticalBlocks(in)
+
+	require.NoError(t, err)
+	assert.Contains(t, out, `data-role="programmer_senior"`)
+	assert.NotContains(t, out, `data-role="Programmer`)
+}
+
+func TestRenderCriticalBlocks_RoleWithIllegalCharactersRejected(t *testing.T) {
+	in := sampleCriticalInput()
+	in.Allocation.Resources[0].Seniority = `junior"><script>`
+	r := service.NewHTMLRenderer()
+
+	_, err := r.RenderCriticalBlocks(in)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrInvalidAllocationInput)
+}
+
+func TestWiring_LowercasedMixedCaseRolesStayConsistent(t *testing.T) {
+	allocator := service.NewRateAllocator()
+	renderer := service.NewHTMLRenderer()
+	sanitizer := service.NewHTMLSanitizer()
+	validator := service.NewDOMValidator()
+
+	rateCardItems := []domain.RateCardItem{
+		{ID: uuid.New(), CompanyID: uuid.New(), RateCardID: uuid.New(), Role: "programmer", Seniority: "senior", TermType: "long_term", AmountPerMonth: 12_000_000},
+	}
+	proposal := dto.AllocationProposal{
+		Resources: []dto.AllocationResource{{Role: "programmer", Seniority: "senior", EmployeeCount: 1, PeriodMonths: 3}},
+	}
+
+	enriched, err := allocator.Calculate(proposal, rateCardItems, 3, 100_000_000, "IDR")
+	require.NoError(t, err)
+
+	critical, err := renderer.RenderCriticalBlocks(service.CriticalBlocksInput{
+		Metadata:   service.QuotationMetadata{QuotationNumber: "QTN/CASE/001", Subject: "S", ClientName: "C"},
+		Allocation: enriched,
+		Payment:    dto.PaymentTermsInput{Mode: "milestone", Items: []dto.PaymentTermItem{{MilestoneName: "Full", Percentage: 100}}},
+		LegalHTML:  `<p>Legal.</p>`,
+	})
+	require.NoError(t, err)
+
+	assembled, err := renderer.Assemble(critical, `<p>naratif</p>`)
+	require.NoError(t, err)
+	sanitized, err := sanitizer.Sanitize(assembled)
+	require.NoError(t, err)
+
+	err = validator.ValidateIntegrity(sanitized, service.IntegrityExpectations{
+		Currency:        enriched.Currency,
+		TotalInvestment: enriched.TotalInvestment,
+		Lines:           []service.ExpectedLine{{Role: enriched.Resources[0].Role, Seniority: enriched.Resources[0].Seniority, LineTotal: enriched.Resources[0].LineTotal}},
+		LegalHTML:       `<p>Legal.</p>`,
+	})
+	require.NoError(t, err)
+}
 
 func TestDOMValidator_DetectsModifiedPaymentPercentage(t *testing.T) {
 	r := service.NewHTMLRenderer()
