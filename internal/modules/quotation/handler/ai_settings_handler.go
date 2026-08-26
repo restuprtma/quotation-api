@@ -46,7 +46,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		oldSettings, err := h.svc.GetSettings(c.Request.Context(), companyID)
 		// We only enforce this if there are existing settings
 		if err == nil && oldSettings != nil {
-			if oldSettings.ProviderType != req.ProviderType {
+			if oldSettings.Provider != req.ProviderType {
 				response.Error(c, http.StatusBadRequest, "API Key is required when changing provider", "")
 				return
 			}
@@ -183,6 +183,21 @@ func (h *Handler) GetRateCard(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Rate card retrieved successfully", result)
+}
+
+func (h *Handler) ListLegalTemplates(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	if companyID == "" {
+		response.Error(c, http.StatusForbidden, "Company context is required", "")
+		return
+	}
+
+	result, err := h.svc.ListLegalTemplates(c.Request.Context(), companyID)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "Legal templates retrieved successfully", result)
 }
 
 func (h *Handler) GetActiveLegalTemplate(c *gin.Context) {

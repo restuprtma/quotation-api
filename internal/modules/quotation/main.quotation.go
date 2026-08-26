@@ -30,7 +30,14 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	
 	aiFactory := service.NewProviderFactory()
 
-	svc := service.NewService(repo, credentialRepo, skillRepo, cipher, aiFactory)
+	rcRepo := repository.NewRateCardRepository(db)
+	legalRepo := repository.NewLegalTemplateRepository(db)
+	rcSvc := service.NewRateCardService(rcRepo)
+	legalSvc := service.NewLegalTemplateService(legalRepo)
+	skillSvc := service.NewSkillService(skillRepo)
+	settingsSvc := service.NewSettingsService(db, skillRepo, rcRepo, legalRepo, skillSvc)
+
+	svc := service.NewService(repo, credentialRepo, skillRepo, cipher, aiFactory, settingsSvc, rcSvc, legalSvc)
 	hdlr := handler.NewHandler(svc)
 
 	return &Module{
@@ -81,6 +88,7 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 	legalTemplates := router.Group("/legal-templates")
 	legalTemplates.Use(middleware.JWTAuth(), middleware.CompanyContext())
 	{
+		legalTemplates.GET("", m.Handler.ListLegalTemplates)
 		legalTemplates.GET("/active/:code", m.Handler.GetActiveLegalTemplate)
 	}
 }
