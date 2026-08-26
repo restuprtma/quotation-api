@@ -92,3 +92,28 @@ func (r *RateCardRepository) GetActiveRateCard(ctx context.Context, companyID, m
 	}
 	return rc, err
 }
+
+func (r *RateCardRepository) ListActiveRateCards(ctx context.Context, companyID string) ([]*domain.RateCard, error) {
+	query := `
+		SELECT id, company_id, code, name, market, currency, effective_from, effective_until, is_active, created_by, created_at, updated_at
+		FROM rate_cards
+		WHERE company_id = $1 AND is_active = true
+		ORDER BY created_at DESC
+	`
+	rows, err := r.db.Query(ctx, query, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*domain.RateCard
+	for rows.Next() {
+		rc := &domain.RateCard{}
+		err := rows.Scan(&rc.ID, &rc.CompanyID, &rc.Code, &rc.Name, &rc.Market, &rc.Currency, &rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, rc)
+	}
+	return list, rows.Err()
+}
