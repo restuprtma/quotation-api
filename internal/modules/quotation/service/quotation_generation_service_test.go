@@ -422,3 +422,97 @@ func TestGenerate_NarrativeTimeout_ProviderTimeout(t *testing.T) {
 	require.ErrorAs(t, err, &ge)
 	assert.Equal(t, "provider_timeout", ge.Code)
 }
+
+// ---------------------------------------------------------------------------
+// Task 5: validation failure mapping & mandatory scope across retries
+// ---------------------------------------------------------------------------
+
+// assertGenerationCode memastikan error adalah GenerationError dengan kode
+// tertentu DAN pesan ter-redaksi (Error() == kode saja).
+func assertGenerationCode(t *testing.T, err error, code string) {
+	t.Helper()
+	require.Error(t, err)
+	var ge *service.GenerationError
+	require.ErrorAs(t, err, &ge)
+	assert.Equal(t, code, ge.Code)
+	assert.Equal(t, code, err.Error(), "pesan error harus ter-redaksi menjadi kode saja")
+}
+
+func TestGenerate_UnknownRole_AllocationInvalidSingleCall(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: `{"resources":[{"role":"data_scientist","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Analisis data"}],"selected_optional_scope":[],"standard_activities":[]}`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "allocation_invalid")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assert.Equal(t, 1, mock.callCount(), "allocation_invalid bersifat fatal")
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_ForbiddenRateField_AllocationInvalid(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// AI mencoba menyelipkan angka rate/total — DisallowUnknownFields harus menolak.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Implementasi","rate":12000000}],"selected_optional_scope":[],"standard_activities":[],"total":36000000}`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	_, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "allocation_invalid")
+}
+
+func TestGenerate_NewBusinessFeatureRejected_AllocationInvalid(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Fitur baru di luar mandatory+optional+standard allowlist.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["AI dashboard"],"reason":"Fitur AI baru"}],"selected_optional_scope":[],"standard_activities":[]}`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	_, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "allocation_invalid")
+}
+
+func TestGenerate_MissingRateItem_RateItemMissing(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// quality_assurance valid sbg role tapi tidak ada di rate card fixture.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Implementasi"},{"role":"quality_assurance","seniority":"intermediate","employee_count":1,"period_months":3,"scope_references":["Admin panel"],"reason":"Uji kualitas"}],"selected_optional_scope":[],"standard_activities":[]}`},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	_, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "rate_item_missing")
+}
+
+func TestGenerate_MandatoryScopeDroppedOnRetry_FatalAllocationInvalid(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	// Attempt 1: overbudget tapi mandatory ter-cover semua.
+	// Attempt 2: muat budget TAPI "Admin panel" hilang => validator wajib
+	// menolak meski sedang berada di tengah retry loop.
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: allocationJSONOverbudget()},
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Implementasi"}],"selected_optional_scope":["Notification center"],"standard_activities":[]}`},
+		{text: narrativeHTML()},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "allocation_invalid")
+	assert.Equal(t, 2, mock.callCount(), "gagal pada attempt-2 menghentikan loop")
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+	_ = qid
+}
