@@ -15,6 +15,13 @@ import (
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 
+var whitespaceRemoved = strings.NewReplacer(
+	" ", "",
+	"\t", "",
+	"\n", "",
+	"\r", "",
+)
+
 var (
 	ErrUnsafeHTML             = errors.New("unsafe_html")
 	ErrInvalidPaymentTerms    = errors.New("invalid_payment_terms")
@@ -215,8 +222,9 @@ func (r *defaultHTMLRenderer) Assemble(criticalHTML, narrativeHTML string) (stri
 		return "", fmt.Errorf("%w: narrative is empty", ErrUnsafeHTML)
 	}
 	lower := strings.ToLower(narrativeHTML)
+	compacted := whitespaceRemoved.Replace(lower)
 	for _, marker := range []string{"data-block=", "data-field=", "data-role="} {
-		if strings.Contains(lower, marker) {
+		if strings.Contains(compacted, marker) {
 			return "", fmt.Errorf("%w: narrative contains protected block marker %q", ErrUnsafeHTML, marker)
 		}
 	}
@@ -264,6 +272,16 @@ func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected In
 		return fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
 	}
 	nodes := collectNodes(root)
+
+	for _, requiredBlock := range []string{"metadata", "investment", "payment_schedule"} {
+		block, err := findExactlyOne(nodes, "data-block", requiredBlock)
+		if err != nil {
+			return err
+		}
+		if block == nil {
+			return fmt.Errorf("%w: %s block is missing", ErrUnsafeHTML, requiredBlock)
+		}
+	}
 
 	totalCell, err := findExactlyOne(nodes, "data-field", "total_investment")
 	if err != nil {

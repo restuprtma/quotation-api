@@ -454,6 +454,46 @@ func TestRenderCriticalBlocks_RoleWithIllegalCharactersRejected(t *testing.T) {
 	assert.ErrorIs(t, err, service.ErrInvalidAllocationInput)
 }
 
+func TestAssemble_RejectsWhitespaceSeparatedMarkerInNarrative(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	critical, err := r.RenderCriticalBlocks(sampleCriticalInput())
+	require.NoError(t, err)
+
+	spoof := `<p>Harga:</p><span data-field = "total_investment">Rp 1.000.000</span>`
+	_, err = r.Assemble(critical, spoof)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsRemovedMetadataBlock(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	start := strings.Index(doc, `<div class="qtr-block qtr-metadata"`)
+	require.Greater(t, start, -1)
+	end := strings.Index(doc[start:], `26 Agustus 2026</p></div>`) + start + len(`26 Agustus 2026</p></div>`)
+	tampered := doc[:start] + doc[end:]
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_DetectsRemovedInvestmentBlock(t *testing.T) {
+	doc, exp := assembleForTest(t)
+	start := strings.Index(doc, `<div class="qtr-block qtr-investment"`)
+	require.Greater(t, start, -1)
+	end := strings.Index(doc[start:], `</tbody></table></div>`) + start + len(`</tbody></table></div>`)
+	tampered := doc[:start] + doc[end:]
+	v := service.NewDOMValidator()
+
+	err := v.ValidateIntegrity(tampered, exp)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
 func TestWiring_LowercasedMixedCaseRolesStayConsistent(t *testing.T) {
 	allocator := service.NewRateAllocator()
 	renderer := service.NewHTMLRenderer()
