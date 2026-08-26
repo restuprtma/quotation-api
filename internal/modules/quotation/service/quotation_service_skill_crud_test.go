@@ -79,7 +79,7 @@ func TestQuotationService_SkillCRUD(t *testing.T) {
 
 	skillRepo := repository.NewSkillRepository(pool)
 	repo := repository.NewRepository(pool)
-	svc := service.NewService(repo, nil, skillRepo, nil, nil) // 5 arguments
+	svc := service.NewService(repo, nil, skillRepo, nil, nil, nil, nil, nil)
 
 	// Create a skill for Company A directly via repo to test the Service read/update methods
 	skillIDA := uuid.New()
