@@ -286,7 +286,9 @@ func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, 
 	return nil
 }
 func (s *Service) ListSkills(ctx context.Context, companyID string) (interface{}, error) {
-	_ = s.settingsSvc.EnsureDefaultAIAssets(ctx, companyID)
+	if err := s.settingsSvc.EnsureDefaultAIAssets(ctx, companyID); err != nil {
+		fmt.Printf("EnsureDefaultAIAssets error: %v\n", err)
+	}
 	skills, err := s.skillRepo.ListActiveSkills(ctx, companyID)
 	if err != nil {
 		return nil, err

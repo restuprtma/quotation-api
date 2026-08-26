@@ -14,7 +14,7 @@ func TestCredentialResponse_JSONSerialization(t *testing.T) {
 	resp := CredentialResponse{
 		ID:           uuid.New(),
 		CompanyID:    uuid.New(),
-		ProviderType: "openai",
+		Provider: "openai",
 		KeyHint:      "sk-...abcd",
 		IsActive:     true,
 		CreatedAt:    time.Now(),
@@ -34,6 +34,6 @@ func TestCredentialResponse_JSONSerialization(t *testing.T) {
 	_, hasAPIKey := raw["api_key"]
 	assert.False(t, hasAPIKey, "JSON should not contain api_key")
 
-	assert.Equal(t, "openai", raw["provider_type"])
+	assert.Equal(t, "openai", raw["provider"])
 	assert.Equal(t, "sk-...abcd", raw["key_hint"])
 }

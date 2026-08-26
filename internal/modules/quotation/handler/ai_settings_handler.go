@@ -206,12 +206,12 @@ func (h *Handler) GetActiveLegalTemplate(c *gin.Context) {
 		response.Error(c, http.StatusForbidden, "Company context is required", "")
 		return
 	}
-	code := c.Param("code")
 
+	code := c.Param("code")
 	result, err := h.svc.GetActiveLegalTemplate(c.Request.Context(), companyID, code)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
-	response.Success(c, http.StatusOK, "Legal template retrieved successfully", result)
+	response.Success(c, http.StatusOK, "Active legal template retrieved successfully", result)
 }

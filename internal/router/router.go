@@ -66,6 +66,7 @@ func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) {
 			"http://localhost:5173", "http://localhost:3000", "http://localhost:3001",
 			"http://localhost:8081", "http://localhost:8084", "http://127.0.0.1:8084",
 			"http://10.20.1.3:8081", "http://10.20.1.3:8084", "http://10.20.1.3:3000", "http://10.20.1.3:5173",
+			"http://10.20.1.243:8081", "http://10.20.1.243:8084", "http://10.20.1.243:3000", "http://10.20.1.243:5173",
 			"http://172.31.144.1:8081", "http://172.31.144.1:8084", "http://192.168.43.50:8084",
 			"https://app.tuai.id", "https://jesuit.venturo.pro", "https://skeleton.venturo.id",
 		},

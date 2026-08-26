@@ -106,7 +106,7 @@ func (r *SkillRepository) ListActiveSkills(ctx context.Context, companyID string
 	}
 	defer rows.Close()
 
-	var skills []domain.Skill
+	skills := make([]domain.Skill, 0)
 	for rows.Next() {
 		var s domain.Skill
 		if err := rows.Scan(

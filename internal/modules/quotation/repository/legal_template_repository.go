@@ -113,7 +113,7 @@ func (r *LegalTemplateRepository) ListActiveTemplates(ctx context.Context, compa
 	}
 	defer rows.Close()
 
-	var list []*domain.LegalTemplate
+	list := make([]*domain.LegalTemplate, 0)
 	for rows.Next() {
 		lt := &domain.LegalTemplate{}
 		err := rows.Scan(&lt.ID, &lt.CompanyID, &lt.Code, &lt.Version, &lt.ContentHTML, &lt.IsActive, &lt.ApprovedBy, &lt.ApprovedAt, &lt.CreatedAt, &lt.UpdatedAt)

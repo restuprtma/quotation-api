@@ -100,7 +100,7 @@ func (s *SettingsService) EnsureDefaultAIAssets(ctx context.Context, companyID s
 	}
 
 	// 3. Ensure Default Rate Card
-	_, err = s.rateCardRepo.GetActiveRateCard(ctx, companyID, "ID")
+	_, err = s.rateCardRepo.GetActiveRateCard(ctx, companyID, "DEFAULT")
 	if errors.Is(err, repository.ErrRateCardNotFound) {
 		now := time.Now()
 		rc := &domain.RateCard{
@@ -108,7 +108,7 @@ func (s *SettingsService) EnsureDefaultAIAssets(ctx context.Context, companyID s
 			CompanyID:     companyUUID,
 			Code:          "DEFAULT",
 			Name:          "Default Rate Card",
-			Market:        "ID",
+			Market:        "national",
 			Currency:      "IDR",
 			EffectiveFrom: now,
 			IsActive:      true,

@@ -106,7 +106,7 @@ func (r *RateCardRepository) ListActiveRateCards(ctx context.Context, companyID 
 	}
 	defer rows.Close()
 
-	var list []*domain.RateCard
+	list := make([]*domain.RateCard, 0)
 	for rows.Next() {
 		rc := &domain.RateCard{}
 		err := rows.Scan(&rc.ID, &rc.CompanyID, &rc.Code, &rc.Name, &rc.Market, &rc.Currency, &rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt)
