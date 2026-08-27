@@ -673,6 +673,15 @@ func TestDOMValidator_CheckCommercialModified_MatchesReturnsFalse(t *testing.T) 
 	assert.False(t, modified)
 }
 
+func TestDOMValidator_CheckCommercialModified_EmptyExpectationsReturnsFalse(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment"><p>Any text</p></section>`
+
+	modified, err := v.CheckCommercialModified(doc, service.IntegrityExpectations{})
+	require.NoError(t, err)
+	assert.False(t, modified)
+}
+
 func TestDOMValidator_CheckCommercialModified_ChangedTotalReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
 	doc := `<section data-block="investment">

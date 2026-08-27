@@ -166,6 +166,10 @@ func (h *QuotationGenerationHandler) SaveDraft(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
 		return
 	}
+	if req.ContentVersion < 1 {
+		response.Error(c, http.StatusBadRequest, "Invalid content version", "")
+		return
+	}
 
 	var userID *uuid.UUID
 	if rawID, uerr := middleware.GetUserID(c); uerr == nil {

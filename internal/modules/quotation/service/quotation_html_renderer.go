@@ -384,6 +384,10 @@ func (v *defaultDOMValidator) CheckLegalModified(documentHTML string, expectedLe
 }
 
 func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expected IntegrityExpectations) (bool, error) {
+	if expected.TotalInvestment == 0 && len(expected.Lines) == 0 {
+		return false, nil
+	}
+
 	root, err := html.Parse(strings.NewReader(documentHTML))
 	if err != nil {
 		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)

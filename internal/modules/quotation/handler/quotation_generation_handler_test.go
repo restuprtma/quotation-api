@@ -786,6 +786,10 @@ func TestSaveDraft_HTTP_InvalidPayload_Returns400(t *testing.T) {
 	// Bad JSON body
 	wBadBody := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+uuid.New().String()+"/draft", nil, []byte(`invalid json`))
 	assert.Equal(t, http.StatusBadRequest, wBadBody.Code)
+
+	// Non-positive version in JSON body
+	wZeroVersion := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+uuid.New().String()+"/draft", nil, []byte(`{"content_version": 0, "content_html": "<p>test</p>"}`))
+	assert.Equal(t, http.StatusBadRequest, wZeroVersion.Code)
 }
 
 func TestSaveDraft_HTTP_NotFound_Returns404(t *testing.T) {
