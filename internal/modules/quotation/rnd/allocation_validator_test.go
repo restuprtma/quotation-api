@@ -258,7 +258,7 @@ func cardsFor(items ...RateItem) RateCardFixture {
 
 func loadCommittedAllocationData(t *testing.T, fixtureName string) (Fixture, RateCardFixture) {
 	t.Helper()
-	root := filepath.Join("..", "..", "..", "..", "..", "docs", "roadmap", "rnd", "quotation-skill")
+	root := filepath.Join("testdata", "quotation-skill")
 	fixture, err := loadFixture(filepath.Join(root, "fixtures", fixtureName))
 	if err != nil {
 		t.Fatal(err)

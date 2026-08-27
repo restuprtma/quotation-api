@@ -2,11 +2,12 @@ package rnd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestPrintCommittedLegalChecksum(t *testing.T) {
-	markdownBytes, err := os.ReadFile(`D:\venturo\Quotation-generator\docs\roadmap\rnd\quotation-skill\legal-template-v1.md`)
+	markdownBytes, err := os.ReadFile(filepath.Join("testdata", "quotation-skill", "legal-template-v1.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,3 +21,4 @@ func TestPrintCommittedLegalChecksum(t *testing.T) {
 	}
 	t.Log(checksum)
 }
+

@@ -109,7 +109,7 @@ func TestLoadFixtureValidatesGenerationInput(t *testing.T) {
 }
 
 func TestLoadFixtureAcceptsCommittedFixtures(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "..", "docs", "roadmap", "rnd", "quotation-skill", "fixtures", "*.json"))
+	paths, err := filepath.Glob(filepath.Join("testdata", "quotation-skill", "fixtures", "*.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
