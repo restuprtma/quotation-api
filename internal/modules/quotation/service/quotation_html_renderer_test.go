@@ -762,4 +762,3 @@ func TestDOMValidator_ValidateDocumentSafety_BudgetLeakRejects(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
 }
-

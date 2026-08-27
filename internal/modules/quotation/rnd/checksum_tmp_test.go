@@ -21,4 +21,3 @@ func TestPrintCommittedLegalChecksum(t *testing.T) {
 	}
 	t.Log(checksum)
 }
-
