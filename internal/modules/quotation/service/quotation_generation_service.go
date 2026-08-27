@@ -439,6 +439,144 @@ func (s *QuotationGenerationService) composeAndPersistRegenerated(
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7 Session 1: Save Draft Contract
+// ---------------------------------------------------------------------------
+
+// SaveDraft persists user edits to a draft quotation's HTML document, performing
+// allowlist sanitization, independent DOM verification of legal & commercial blocks
+// against stored snapshots, and atomic optimistic locking via content_version.
+func (s *QuotationGenerationService) SaveDraft(
+	ctx context.Context,
+	companyID, quotationID uuid.UUID,
+	userID *uuid.UUID,
+	req dto.SaveDraftRequest,
+) (*dto.SaveDraftResponse, error) {
+	if req.ContentVersion < 1 {
+		return nil, newGenerationError(ErrCodeRevisionConflict, "content_version must be positive")
+	}
+	trimmedHTML := strings.TrimSpace(req.ContentHTML)
+	if trimmedHTML == "" {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "content_html cannot be empty")
+	}
+
+	draft, err := s.genRepo.LoadDraftRevisionForSave(ctx, companyID, quotationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrRevisionConflict) {
+			return nil, newGenerationError(ErrCodeRevisionConflict, "save draft is only allowed on active drafts")
+		}
+		return nil, err
+	}
+	if req.RevisionID != uuid.Nil && req.RevisionID != draft.RevisionID {
+		return nil, newGenerationError(ErrCodeRevisionConflict, "revision_id mismatch")
+	}
+	if draft.ContentVersion != req.ContentVersion {
+		return nil, newGenerationError(ErrCodeRevisionConflict, "stale content_version")
+	}
+
+	// 1. Sanitize HTML via allowlist
+	sanitized, serr := s.sanitizer.Sanitize(trimmedHTML)
+	if serr != nil {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "document sanitization failed")
+	}
+
+	// 2. Extract snapshot expectations for comparisons
+	var enriched dto.EnrichedAllocation
+	var totalInvestment int64
+	if len(draft.AllocationSnapshot) > 0 && string(draft.AllocationSnapshot) != "{}" {
+		_ = json.Unmarshal(draft.AllocationSnapshot, &enriched)
+		totalInvestment = enriched.TotalInvestment
+	}
+
+	// 3. Validate safety (forbidden terms, budget leak)
+	if verr := s.domValidator.ValidateDocumentSafety(sanitized, draft.BudgetMaximum, totalInvestment); verr != nil {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	// 4. Check Legal Block modification
+	var expectedLegalHTML string
+	if len(draft.LegalTemplateSnapshot) > 0 {
+		var legalSnap struct {
+			Code        string `json:"code"`
+			ContentHTML string `json:"content_html"`
+		}
+		if jerr := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); jerr == nil {
+			expectedLegalHTML = legalSnap.ContentHTML
+			if expectedLegalHTML == "" && legalSnap.Code != "" {
+				if tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code); terr == nil {
+					expectedLegalHTML = tmpl.ContentHTML
+				}
+			}
+		}
+	}
+	if expectedLegalHTML == "" {
+		if tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, DefaultLegalTemplateCode); terr == nil {
+			expectedLegalHTML = tmpl.ContentHTML
+		}
+	}
+
+	legalModified, lerr := s.domValidator.CheckLegalModified(sanitized, expectedLegalHTML)
+	if lerr != nil {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+	}
+
+	// 5. Check Commercial Block modification
+	var expectations IntegrityExpectations
+	if totalInvestment > 0 {
+		expectations = IntegrityExpectations{
+			Currency:        enriched.Currency,
+			TotalInvestment: enriched.TotalInvestment,
+			Lines:           make([]ExpectedLine, 0, len(enriched.Resources)),
+		}
+		for _, res := range enriched.Resources {
+			expectations.Lines = append(expectations.Lines, ExpectedLine{
+				Role:      res.Role,
+				Seniority: res.Seniority,
+				LineTotal: res.LineTotal,
+			})
+		}
+	}
+	commercialModified, cerr := s.domValidator.CheckCommercialModified(sanitized, expectations)
+	if cerr != nil {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	}
+
+	// 6. Compute hash
+	sum := sha256.Sum256([]byte(sanitized))
+	hash := hex.EncodeToString(sum[:])
+	now := time.Now().UTC()
+
+	// 7. Atomic update in repository with optimistic locking
+	res, uerr := s.genRepo.UpdateDraft(ctx, s.genRepo.Pool(), companyID, quotationID, repository.UpdateDraftParams{
+		RevisionID:                draft.RevisionID,
+		ExpectedVersion:           req.ContentVersion,
+		ContentHTML:               sanitized,
+		ContentHash:               &hash,
+		LegalContentModified:      legalModified,
+		LegalModifiedBy:           userID,
+		LegalModifiedAt:           &now,
+		CommercialContentModified: commercialModified,
+		CommercialModifiedBy:      userID,
+		CommercialModifiedAt:      &now,
+	})
+	if uerr != nil {
+		if errors.Is(uerr, repository.ErrRevisionConflict) {
+			return nil, newGenerationError(ErrCodeRevisionConflict, "stale content_version")
+		}
+		return nil, newGenerationError(ErrCodeGenerationFailed, "failed to persist draft update")
+	}
+
+	return &dto.SaveDraftResponse{
+		QuotationID:               quotationID,
+		RevisionID:                res.RevisionID,
+		ContentVersion:            res.ContentVersion,
+		ContentHTML:               res.ContentHTML,
+		LegalContentModified:      res.LegalContentModified,
+		CommercialContentModified: res.CommercialContentModified,
+		UpdatedAt:                 res.UpdatedAt,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
 // Configuration loading
 // ---------------------------------------------------------------------------
 
@@ -514,9 +652,10 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 		Items:    rateCardItemViews(items),
 	})
 	cfg.legalSnapshot = mustJSON(legalSnapshotView{
-		ID:      legal.ID,
-		Code:    legal.Code,
-		Version: legal.Version,
+		ID:          legal.ID,
+		Code:        legal.Code,
+		Version:     legal.Version,
+		ContentHTML: legal.ContentHTML,
 	})
 	cfg.skillSnapshot = mustJSON(skillSnapshotView{
 		ID:      skill.ID,
@@ -753,9 +892,10 @@ type rateCardSnapshotView struct {
 }
 
 type legalSnapshotView struct {
-	ID      uuid.UUID `json:"id"`
-	Code    string    `json:"code"`
-	Version int       `json:"version"`
+	ID          uuid.UUID `json:"id"`
+	Code        string    `json:"code"`
+	Version     int       `json:"version"`
+	ContentHTML string    `json:"content_html,omitempty"`
 }
 
 type skillSnapshotView struct {
