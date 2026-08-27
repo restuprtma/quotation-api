@@ -149,6 +149,64 @@ func (h *QuotationGenerationHandler) GetGenerationStatus(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Generation status retrieved successfully", state)
 }
 
+// SaveDraft persists user edits to a quotation's draft revision with optimistic locking.
+func (h *QuotationGenerationHandler) SaveDraft(c *gin.Context) {
+	quotationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid quotation id", "")
+		return
+	}
+	companyID, ok := companyUUID(c)
+	if !ok {
+		return
+	}
+
+	var req dto.SaveDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+
+	var userID *uuid.UUID
+	if rawID, uerr := middleware.GetUserID(c); uerr == nil {
+		if uid, perr := uuid.Parse(rawID); perr == nil {
+			userID = &uid
+		}
+	}
+
+	res, err := h.genSvc.SaveDraft(c.Request.Context(), companyID, quotationID, userID, req)
+	if err != nil {
+		h.mapSaveDraftError(c, err)
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Draft saved successfully", res)
+}
+
+// mapSaveDraftError distinguishes tenant isolation 404, conflict 409, and DOM safety 422.
+func (h *QuotationGenerationHandler) mapSaveDraftError(c *gin.Context, err error) {
+	if errors.Is(err, repository.ErrRevisionNotFound) {
+		response.Error(c, http.StatusNotFound, "Quotation not found", "")
+		return
+	}
+	if errors.Is(err, repository.ErrRevisionConflict) {
+		response.Error(c, http.StatusConflict, "Revision conflict: stale content version", service.ErrCodeRevisionConflict)
+		return
+	}
+	var ge *service.GenerationError
+	if errors.As(err, &ge) {
+		if ge.Code == service.ErrCodeRevisionConflict {
+			response.Error(c, http.StatusConflict, "Revision conflict: stale content version", ge.Error())
+			return
+		}
+		if ge.Code == service.ErrCodeUnsafeHTML {
+			response.Error(c, http.StatusUnprocessableEntity, "Unsafe HTML or integrity validation failed", ge.Error())
+			return
+		}
+	}
+	h.mapGenerationError(c, err)
+}
+
 // mapRegenerateError distinguishes the tenant-isolation miss (404, no
 // existence leak across companies) from service-level safe codes.
 func (h *QuotationGenerationHandler) mapRegenerateError(c *gin.Context, err error) {

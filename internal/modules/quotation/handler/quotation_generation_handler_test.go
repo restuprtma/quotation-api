@@ -291,6 +291,7 @@ func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner 
 		q.POST("/generate", genHandler.Generate)
 		q.POST("/:id/regenerate", genHandler.Regenerate)
 		q.GET("/:id/generation-status", genHandler.GetGenerationStatus)
+		q.PUT("/:id/draft", genHandler.SaveDraft)
 	}
 	return router
 }
@@ -669,3 +670,151 @@ func TestWiring_HTTPGenerateAndRegenerate_HandlerToRealPipeline(t *testing.T) {
 	require.NoError(t, service.NewDOMValidator().ValidateIntegrity(htmlV2, expectations),
 		"content v2 harus tetap lolos validasi integritas")
 }
+
+func TestSaveDraft_HTTP_Success_And_StaleSaveCheckpoint(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+
+	ai := &adaptiveAIProvider{}
+	router := newGenerationRouter(pool, ai, fx.companyID)
+
+	// 1) Generate quotation awal (content_version = 1)
+	wGen := doJSON(router, http.MethodPost, "/quotation/v1/quotations/generate", nil, fx.requestBody())
+	require.Equal(t, http.StatusCreated, wGen.Code, wGen.Body.String())
+	var genResp struct {
+		Data struct {
+			QuotationID uuid.UUID `json:"quotation_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	qid := genResp.Data.QuotationID
+
+	// Ambil content awal
+	var initHTML string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_html FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&initHTML))
+
+	// 2) PUT draft dengan content_version = 1 -> Sukses 200 OK, versi naik ke 2
+	updatedLegalHTML := strings.Replace(
+		initHTML,
+		"Syarat dan ketentuan penawaran resmi berlaku 30 hari.",
+		"Syarat dan ketentuan khusus telah dinegosiasikan 60 hari.",
+		1,
+	)
+	saveBody1, err := json.Marshal(dto.SaveDraftRequest{
+		ContentHTML:    updatedLegalHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+
+	wSave1 := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+qid.String()+"/draft", nil, saveBody1)
+	require.Equal(t, http.StatusOK, wSave1.Code, wSave1.Body.String())
+
+	var saveResp1 struct {
+		Message string                `json:"message"`
+		Data    dto.SaveDraftResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wSave1.Body.Bytes(), &saveResp1))
+	assert.Equal(t, "Draft saved successfully", saveResp1.Message)
+	assert.Equal(t, 2, saveResp1.Data.ContentVersion)
+	assert.True(t, saveResp1.Data.LegalContentModified)
+	assert.False(t, saveResp1.Data.CommercialContentModified)
+	assert.Equal(t, updatedLegalHTML, saveResp1.Data.ContentHTML)
+
+	// 3) Stale-Save Checkpoint: PUT kedua berurutan dengan content_version = 1 (stale)
+	staleHTML := "<p>Stale edit yang seharusnya ditolak</p>"
+	saveBodyStale, err := json.Marshal(dto.SaveDraftRequest{
+		ContentHTML:    staleHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+
+	wSaveStale := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+qid.String()+"/draft", nil, saveBodyStale)
+	assert.Equal(t, http.StatusConflict, wSaveStale.Code, "Stale save must receive 409 Conflict")
+	assert.Equal(t, service.ErrCodeRevisionConflict, detailCode(t, wSaveStale))
+
+	// 4) Buktikan HTML di database TIDAK tertimpa oleh stale save dan versi tetap 2
+	var currentHTML string
+	var currentVersion int
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_html, content_version FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&currentHTML, &currentVersion))
+	assert.Equal(t, 2, currentVersion)
+	assert.Equal(t, updatedLegalHTML, currentHTML)
+	assert.NotEqual(t, staleHTML, currentHTML)
+}
+
+func TestSaveDraft_HTTP_UnsafeHTML_Returns422(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+
+	ai := &adaptiveAIProvider{}
+	router := newGenerationRouter(pool, ai, fx.companyID)
+
+	wGen := doJSON(router, http.MethodPost, "/quotation/v1/quotations/generate", nil, fx.requestBody())
+	require.Equal(t, http.StatusCreated, wGen.Code)
+	var genResp struct {
+		Data struct {
+			QuotationID uuid.UUID `json:"quotation_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	qid := genResp.Data.QuotationID
+
+	// Kirim HTML dengan kata terlarang "budget"
+	unsafeBody, _ := json.Marshal(dto.SaveDraftRequest{
+		ContentHTML:    "<p>Informasi budget internal kami</p>",
+		ContentVersion: 1,
+	})
+
+	wSave := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+qid.String()+"/draft", nil, unsafeBody)
+	assert.Equal(t, http.StatusUnprocessableEntity, wSave.Code)
+	assert.Equal(t, service.ErrCodeUnsafeHTML, detailCode(t, wSave))
+}
+
+func TestSaveDraft_HTTP_InvalidPayload_Returns400(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+
+	router := newGenerationRouter(pool, &adaptiveAIProvider{}, fx.companyID)
+
+	// Bad UUID in path
+	wBadUUID := doJSON(router, http.MethodPut, "/quotation/v1/quotations/not-a-uuid/draft", nil, []byte(`{}`))
+	assert.Equal(t, http.StatusBadRequest, wBadUUID.Code)
+
+	// Bad JSON body
+	wBadBody := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+uuid.New().String()+"/draft", nil, []byte(`invalid json`))
+	assert.Equal(t, http.StatusBadRequest, wBadBody.Code)
+}
+
+func TestSaveDraft_HTTP_NotFound_Returns404(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+
+	router := newGenerationRouter(pool, &adaptiveAIProvider{}, fx.companyID)
+
+	validBody, _ := json.Marshal(dto.SaveDraftRequest{
+		ContentHTML:    "<p>Hello</p>",
+		ContentVersion: 1,
+	})
+
+	// Non-existent quotation
+	wNotFound := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+uuid.New().String()+"/draft", nil, validBody)
+	assert.Equal(t, http.StatusNotFound, wNotFound.Code)
+
+	// Cross-tenant: quotation milik company lain
+	wGen := doJSON(router, http.MethodPost, "/quotation/v1/quotations/generate", nil, fx.requestBody())
+	require.Equal(t, http.StatusCreated, wGen.Code)
+	var genResp struct {
+		Data struct {
+			QuotationID uuid.UUID `json:"quotation_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+
+	otherCompany := uuid.New()
+	wCrossTenant := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+genResp.Data.QuotationID.String()+"/draft", &otherCompany, validBody)
+	assert.Equal(t, http.StatusNotFound, wCrossTenant.Code, "Cross-tenant access must return 404 without leaking existence")
+}
+

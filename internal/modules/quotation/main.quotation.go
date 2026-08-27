@@ -73,6 +73,7 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.POST("/generate", m.GenHandler.Generate)
 		quotations.POST("/:id/regenerate", m.GenHandler.Regenerate)
 		quotations.GET("/:id/generation-status", m.GenHandler.GetGenerationStatus)
+		quotations.PUT("/:id/draft", m.GenHandler.SaveDraft)
 
 		// V2 Revisions & Sharing
 		quotations.POST("/:id/revisions", m.Handler.CreateRevision)
