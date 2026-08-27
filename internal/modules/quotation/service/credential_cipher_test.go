@@ -58,8 +58,14 @@ func TestCredentialCipher(t *testing.T) {
 		plaintext := "secret"
 		ciphertext, _ := cipher.Encrypt(plaintext)
 
-		// Tamper with the base64 string
-		tampered := ciphertext[:len(ciphertext)-5] + "A" + ciphertext[len(ciphertext)-4:]
+		// Tamper with the base64 string guaranteed to change a character
+		tamperedBytes := []byte(ciphertext)
+		if tamperedBytes[len(tamperedBytes)-5] == 'A' {
+			tamperedBytes[len(tamperedBytes)-5] = 'B'
+		} else {
+			tamperedBytes[len(tamperedBytes)-5] = 'A'
+		}
+		tampered := string(tamperedBytes)
 
 		_, err := cipher.Decrypt(tampered)
 		if err == nil {
