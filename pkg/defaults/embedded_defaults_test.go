@@ -1,7 +1,6 @@
 package defaults_test
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,16 +8,9 @@ import (
 	"venturo-skeleton-go/pkg/defaults"
 )
 
-func getProjectRoot() string {
-	cwd, _ := os.Getwd()
-	// Navigate up from quotation-api/pkg/defaults to project root
-	return filepath.Join(cwd, "..", "..", "..")
-}
-
 func TestEmbeddedDefaultsParser(t *testing.T) {
-	projectRoot := getProjectRoot()
-	rateCardFixturePath := filepath.Join(projectRoot, "docs", "roadmap", "rnd", "quotation-skill", "rate-card-fixture.json")
-	legalTemplatePath := filepath.Join(projectRoot, "docs", "roadmap", "rnd", "quotation-skill", "legal-template-v1.md")
+	rateCardFixturePath := filepath.Join("testdata", "rate-card-fixture.json")
+	legalTemplatePath := filepath.Join("testdata", "legal-template-v1.md")
 
 	t.Run("ParseRateCardFixture is pure and idempotent", func(t *testing.T) {
 		rateCards, rateCardItems, err := defaults.ParseRateCardFixture(rateCardFixturePath)
