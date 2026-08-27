@@ -482,6 +482,123 @@ func (r *GenerationRepository) UpdateRegeneratedResult(ctx context.Context, q Ex
 	return nil
 }
 
+// DraftRevisionForSave is the projection of a draft revision needed to validate
+// and execute a SaveDraft operation.
+type DraftRevisionForSave struct {
+	RevisionID                uuid.UUID
+	QuotationID               uuid.UUID
+	RevisionNumber            int
+	PublicationStatus         string
+	GenerationStatus          string
+	ContentVersion            int
+	BudgetMaximum             *int64
+	AllocationSnapshot        json.RawMessage
+	RateCardSnapshot          json.RawMessage
+	LegalTemplateSnapshot     json.RawMessage
+	LegalContentModified      bool
+	CommercialContentModified bool
+}
+
+// UpdateDraftParams contains the payload and metadata for updating a draft revision.
+type UpdateDraftParams struct {
+	RevisionID                uuid.UUID
+	ExpectedVersion           int
+	ContentHTML               string
+	ContentHash               *string
+	LegalContentModified      bool
+	LegalModifiedBy           *uuid.UUID
+	LegalModifiedAt           *time.Time
+	CommercialContentModified bool
+	CommercialModifiedBy      *uuid.UUID
+	CommercialModifiedAt      *time.Time
+}
+
+// SaveDraftResult reports the committed version and state of the saved draft.
+type SaveDraftResult struct {
+	RevisionID                uuid.UUID
+	ContentVersion            int
+	ContentHTML               string
+	LegalContentModified      bool
+	CommercialContentModified bool
+	UpdatedAt                 time.Time
+}
+
+// LoadDraftRevisionForSave resolves the current draft revision for a quotation.
+// Returns ErrRevisionNotFound if the aggregate does not exist, or ErrRevisionConflict
+// if the current revision is not in 'draft' status.
+func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, companyID, quotationID uuid.UUID) (*DraftRevisionForSave, error) {
+	var d DraftRevisionForSave
+	err := r.db.QueryRow(ctx, `
+		SELECT r.id, r.quotation_id, r.revision_number, r.publication_status, r.generation_status,
+		       r.content_version, r.budget_maximum, r.allocation_snapshot, r.rate_card_snapshot, r.legal_template_snapshot,
+		       r.legal_content_modified, r.commercial_content_modified
+		FROM quotation_revisions r
+		JOIN quotations q ON q.id = r.quotation_id
+		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
+		  AND q.deleted_at IS NULL
+	`, quotationID, companyID).Scan(
+		&d.RevisionID, &d.QuotationID, &d.RevisionNumber, &d.PublicationStatus, &d.GenerationStatus,
+		&d.ContentVersion, &d.BudgetMaximum, &d.AllocationSnapshot, &d.RateCardSnapshot, &d.LegalTemplateSnapshot,
+		&d.LegalContentModified, &d.CommercialContentModified,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRevisionNotFound
+		}
+		logger.Error("Failed to load draft revision for save", logger.Err(err))
+		return nil, err
+	}
+	if d.PublicationStatus != PublicationStatusDraft {
+		return nil, ErrRevisionConflict
+	}
+	return &d, nil
+}
+
+// UpdateDraft updates a draft revision's HTML content and flags with optimistic concurrency control.
+// It matches by revision ID, quotation ID, company ID, publication_status = 'draft', and the exact expected content_version.
+// If the row was modified or published in the meantime, 0 rows match and ErrRevisionConflict is returned.
+func (r *GenerationRepository) UpdateDraft(ctx context.Context, q Execer, companyID, quotationID uuid.UUID, params UpdateDraftParams) (*SaveDraftResult, error) {
+	query := `
+		UPDATE quotation_revisions SET
+			content_html = $1,
+			content_hash = $2,
+			legal_content_modified = $3,
+			legal_modified_by = CASE WHEN $3 THEN COALESCE($4, legal_modified_by) ELSE legal_modified_by END,
+			legal_modified_at = CASE WHEN $3 THEN COALESCE($5, NOW()) ELSE legal_modified_at END,
+			commercial_content_modified = $6,
+			commercial_modified_by = CASE WHEN $6 THEN COALESCE($7, commercial_modified_by) ELSE commercial_modified_by END,
+			commercial_modified_at = CASE WHEN $6 THEN COALESCE($8, NOW()) ELSE commercial_modified_at END,
+			content_version = quotation_revisions.content_version + 1,
+			updated_at = NOW()
+		WHERE id = $9 AND quotation_id = $10 AND company_id = $11
+		  AND publication_status = $12
+		  AND content_version = $13
+		RETURNING content_version, updated_at
+	`
+	res := &SaveDraftResult{
+		RevisionID:                params.RevisionID,
+		ContentHTML:               params.ContentHTML,
+		LegalContentModified:      params.LegalContentModified,
+		CommercialContentModified: params.CommercialContentModified,
+	}
+
+	err := q.QueryRow(ctx, query,
+		params.ContentHTML, params.ContentHash,
+		params.LegalContentModified, params.LegalModifiedBy, params.LegalModifiedAt,
+		params.CommercialContentModified, params.CommercialModifiedBy, params.CommercialModifiedAt,
+		params.RevisionID, quotationID, companyID,
+		PublicationStatusDraft, params.ExpectedVersion,
+	).Scan(&res.ContentVersion, &res.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRevisionConflict
+		}
+		logger.Error("Failed to update draft revision", logger.Err(err))
+		return nil, err
+	}
+	return res, nil
+}
+
 // GenerationState is the safe read model behind GET /generation-status and
 // the regenerate response. It intentionally excludes budget figures and
 // internal snapshots.
