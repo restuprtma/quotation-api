@@ -667,25 +667,15 @@ func TestBlueprintCrossValidator_EmptySection(t *testing.T) {
 
 func getResultsDirectory(t *testing.T) string {
 	t.Helper()
-	candidates := []string{
-		"../../../../../docs/roadmap/rnd/blueprint-skill/results",
-		"../../../../docs/roadmap/rnd/blueprint-skill/results",
-		"../../docs/roadmap/rnd/blueprint-skill/results",
-		"../docs/roadmap/rnd/blueprint-skill/results",
-		"docs/roadmap/rnd/blueprint-skill/results",
+	dir := filepath.Join("testdata", "blueprint-skill", "results")
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("cannot resolve testdata/blueprint-skill/results: %v", err)
 	}
-
-	for _, c := range candidates {
-		abs, err := filepath.Abs(c)
-		if err == nil {
-			if info, err := os.Stat(abs); err == nil && info.IsDir() {
-				return abs
-			}
-		}
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		t.Fatalf("testdata/blueprint-skill/results not found at %s — run from package directory", abs)
 	}
-
-	t.Fatalf("results directory not found among candidates: %v", candidates)
-	return ""
+	return abs
 }
 
 func TestBlueprintCrossValidator_RealRepresentativeOutputs(t *testing.T) {

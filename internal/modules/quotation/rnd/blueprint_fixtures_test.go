@@ -31,27 +31,15 @@ var (
 
 func getFixturesDirectory(t *testing.T) string {
 	t.Helper()
-	// Relative path from quotation-api/internal/modules/quotation/rnd
-	// Path to docs/roadmap/rnd/blueprint-skill/fixtures
-	candidates := []string{
-		filepath.Join("..", "..", "..", "..", "..", "docs", "roadmap", "rnd", "blueprint-skill", "fixtures"),
-		filepath.Join("..", "..", "..", "..", "docs", "roadmap", "rnd", "blueprint-skill", "fixtures"),
-		filepath.Join("..", "..", "docs", "roadmap", "rnd", "blueprint-skill", "fixtures"),
-		filepath.Join("..", "docs", "roadmap", "rnd", "blueprint-skill", "fixtures"),
-		filepath.Join("docs", "roadmap", "rnd", "blueprint-skill", "fixtures"),
+	dir := filepath.Join("testdata", "blueprint-skill", "fixtures")
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("cannot resolve testdata/blueprint-skill/fixtures: %v", err)
 	}
-
-	for _, c := range candidates {
-		abs, err := filepath.Abs(c)
-		if err == nil {
-			if info, err := os.Stat(abs); err == nil && info.IsDir() {
-				return abs
-			}
-		}
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		t.Fatalf("testdata/blueprint-skill/fixtures not found at %s — run from package directory", abs)
 	}
-
-	t.Fatalf("fixtures directory not found among candidates: %v", candidates)
-	return ""
+	return abs
 }
 
 func TestBlueprintFixtures_AllTenPresentAndValidSchema(t *testing.T) {
