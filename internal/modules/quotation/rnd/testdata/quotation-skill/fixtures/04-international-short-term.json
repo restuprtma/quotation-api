@@ -1,0 +1,65 @@
+{
+  "fixture_id": "04-international-short-term",
+  "description": "Synthetic short-term international-market quotation for an API integration dashboard, priced in IDR.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Global 04",
+      "pic_name": "PIC Uji 04"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/004",
+      "date": "2026-09-04",
+      "subject": "Pengembangan Dashboard Integrasi API Sintetis"
+    },
+    "solution_type": "api_integration",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-INTERNATIONAL-2026",
+    "project_duration_months": 1,
+    "budget_maximum": 90000000,
+    "summary": "Dashboard sintetis untuk menampilkan status pertukaran data dari API yang disediakan dalam lingkungan pengujian.",
+    "mandatory_scope": [
+      "Koneksi API pengujian",
+      "Sinkronisasi data terjadwal",
+      "Dashboard status sinkronisasi",
+      "Log kegagalan integrasi"
+    ],
+    "optional_scope": [
+      "Notifikasi kegagalan sinkronisasi",
+      "Ekspor ringkasan log"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation"
+    ],
+    "payment_terms": {
+      "mode": "milestone",
+      "items": [
+        {
+          "label": "Down Payment",
+          "percentage": 50,
+          "invoice_date": "2026-09-09",
+          "due_date": "2026-09-23"
+        },
+        {
+          "label": "Pelunasan",
+          "percentage": 50,
+          "invoice_date": "2026-10-05",
+          "due_date": "2026-10-19"
+        }
+      ]
+    },
+    "additional_notes": "Seluruh nominal tetap dinyatakan dalam Rupiah meskipun market rate card adalah international."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "short_term",
+    "allocation_outcome": "feasible",
+    "security_outcome": "pass",
+    "assertions": [
+      "Use only SYNTH-INTERNATIONAL-2026 short-term rates.",
+      "Keep every commercial value in integer IDR.",
+      "Do not cross-select national-market rates or expose budget_maximum."
+    ]
+  }
+}

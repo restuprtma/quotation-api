@@ -1,0 +1,79 @@
+{
+  "source_quotation_revision_id": "REV-2026-APP-009",
+  "source_context": {
+    "subject": "Sistem Workflow Persetujuan Dokumen Korporat dan Anggaran Multi-Tier",
+    "solution_type": "custom_software",
+    "summary": "Platform perutean alur kerja persetujuan (approval workflow engine) perusahaan untuk permohonan anggaran, kontrak kerjasama, dan dokumen kebijakan. Mendukung mesin status hirarkis bersyarat, delegasi wewenang saat cuti, reminder SLA otomatis, dan jejak audit digital terenkripsi.",
+    "scope": [
+      "Formulir dinamis pengajuan dokumen permohonan dan anggaran",
+      "Mesin aturan alur kerja (workflow rule engine) multi-tier dan percabangan kondisional",
+      "Portal eksekutif untuk review, revisi, penolakan, atau persetujuan dokumen",
+      "Fitur delegasi wewenang persetujuan sementara (acting approver)",
+      "SLA reminder otomatis H+2 dan eskalasi timeout persetujuan",
+      "Pencatatan jejak audit (audit trail) tidak dapat diubah (immutable logs)"
+    ],
+    "timeline": "4 bulan"
+  },
+  "business_goals": [
+    "Mempercepat waktu siklus persetujuan dokumen korporat dari rata-rata 14 hari menjadi di bawah 3 hari",
+    "Memastikan kepatuhan tata kelola (governance & compliance) dengan validasi matriks wewenang ketat",
+    "Menghilangkan hambatan operasional (bottleneck) melalui delegasi persetujuan otomatis",
+    "Menyediakan transparansi status dan riwayat review dokumen secara menyeluruh bagi auditor"
+  ],
+  "actors": [
+    "Pemohon (Requester / Staff)",
+    "Reviewer Teknis (Department Head)",
+    "Approver Keuangan (Finance Manager)",
+    "Direksi (Executive Director / Board)",
+    "Auditor Internal (Compliance Officer)"
+  ],
+  "channels": [
+    "Web Executive Portal Approval",
+    "Mobile Push Notification & Quick Approval Action",
+    "Corporate Email Action Link Gateway"
+  ],
+  "business_phases": [
+    "Penyusunan Draf & Pengunggahan Lampiran",
+    "Pengajuan & Validasi Aturan Matriks Wewenang",
+    "Review Teknis Departemen Terkait",
+    "Review Kelayakan Finansial & Anggaran",
+    "Persetujuan Final Direksi",
+    "Penerbitan Keputusan Resmi & Pengarsipan"
+  ],
+  "business_rules": [
+    "Pengajuan dengan nilai anggaran di atas ambang batas otorisasi direksi (500.000.000) wajib mendapatkan persetujuan Direksi setelah lolos review teknis dan keuangan",
+    "Approver yang berhalangan hadir dapat mendelegasikan hak persetujuan ke pejabat setingkat dengan batas waktu maksimal 14 hari kerja",
+    "Dokumen yang diminta revisi (REVISED) dikembalikan ke pemohon dan harus diajukan ulang dalam batas waktu 7 hari kerja sebelum dibatalkan otomatis",
+    "Jika approver tidak memberikan tindakan dalam 48 jam, sistem otomatis mengirimkan email pengingat (SLA reminder) ke approver dan atasan langsung",
+    "Seluruh catatan revisi dan tanda tangan persetujuan bersifat permanen dan tidak dapat diubah (immutable audit log)"
+  ],
+  "known_states": [
+    "DRAFT",
+    "SUBMITTED",
+    "TECHNICAL_REVIEW",
+    "FINANCIAL_REVIEW",
+    "DIRECTOR_APPROVAL",
+    "APPROVED",
+    "REJECTED",
+    "REVISED",
+    "EXPIRED",
+    "CANCELLED"
+  ],
+  "integrations": [
+    "Corporate Active Directory / LDAP Identity Provider",
+    "Enterprise Document Management System (EDMS)",
+    "Digital Signature Cryptographic Module (PKI)",
+    "Corporate Notification Hub (Email & Webhook)"
+  ],
+  "technology_preferences": [
+    "Go / Java Spring Boot backend untuk robustness workflow engine",
+    "PostgreSQL dengan append-only audit trail tables",
+    "React TypeScript untuk Executive Portal",
+    "PWA / Flutter untuk mobile approval responsif"
+  ],
+  "operational_constraints": [
+    "Audit trail persetujuan harus menggunakan timestamp berstandar NTP dan checksum kriptografis untuk integritas data legal",
+    "Transisi state mesin alur kerja harus bersifat deterministik dan mencegah deadlock transisi pada skenario delegasi ganda"
+  ],
+  "additional_notes": "Perhatikan kompleksitas state machine bersyarat dan penanganan delegasi wewenang saat cuti."
+}

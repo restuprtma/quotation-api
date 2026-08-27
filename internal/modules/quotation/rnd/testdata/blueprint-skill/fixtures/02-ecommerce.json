@@ -1,0 +1,77 @@
+{
+  "source_quotation_revision_id": "REV-2026-ECOM-002",
+  "source_context": {
+    "subject": "Platform E-Commerce Omnichannel Retail Nusantara",
+    "solution_type": "web_and_mobile_application",
+    "summary": "Solusi belanja retail daring terintegrasi mencakup katalog produk, manajemen keranjang, payment gateway multi-metode, integrasi kurir ekspedisi logistik, serta manajemen pesanan merchant.",
+    "scope": [
+      "Storefront katalog produk dan pencarian dinamis",
+      "Manajemen keranjang belanja dan checkout multi-alamat",
+      "Integrasi payment gateway (Virtual Account, QRIS, E-Wallet)",
+      "Integrasi kalkulasi ongkos kirim dan resi otomatis ekspedisi logistik",
+      "Manajemen pesanan, stok inventaris, dan pengiriman merchant",
+      "Aplikasi mobile pembeli (Android dan iOS)"
+    ],
+    "timeline": "5 bulan"
+  },
+  "business_goals": [
+    "Memfasilitasi transaksi jual-beli daring omnichannel yang aman dan andal",
+    "Mengotomasi konfirmasi pembayaran dan penerbitan nomor resi pengiriman",
+    "Mencegah overselling dengan reservasi stok real-time saat checkout",
+    "Meningkatkan retensi pelanggan melalui pelacakan status pesanan transparan"
+  ],
+  "actors": [
+    "Pembeli (Customer)",
+    "Penjual (Merchant / Store Staff)",
+    "Admin Operasional Marketplace",
+    "Kurir Ekspedisi Mitra"
+  ],
+  "channels": [
+    "Mobile App Pembeli (Android & iOS)",
+    "Web Storefront E-Commerce",
+    "Merchant Admin Web Panel",
+    "Sistem Notifikasi Push & Email"
+  ],
+  "business_phases": [
+    "Eksplorasi & Pemilihan Produk",
+    "Checkout & Pemilihan Ekspedisi",
+    "Pembayaran Pesanan",
+    "Pemrosesan & Pengemasan Produk",
+    "Pengiriman & Pelacakan Logistik",
+    "Penerimaan & Ulasan Produk"
+  ],
+  "business_rules": [
+    "Batas waktu pembayaran pesanan adalah 24 jam untuk Virtual Account dan 15 menit untuk QRIS sebelum dibatalkan otomatis",
+    "Stok produk dikunci (reserved) selama batas waktu pembayaran berlangsung",
+    "Merchant wajib memproses pesanan dalam batas waktu maksimal 2 hari kerja setelah pembayaran terkonfirmasi",
+    "Dana transaksi diteruskan ke dompet merchant setelah pembeli mengonfirmasi penerimaan atau 3 hari setelah status barang terkirim (auto-complete)"
+  ],
+  "known_states": [
+    "PENDING_PAYMENT",
+    "PAID",
+    "PROCESSING",
+    "SHIPPED",
+    "DELIVERED",
+    "COMPLETED",
+    "CANCELLED",
+    "REFUNDED"
+  ],
+  "integrations": [
+    "Payment Gateway Midtrans / Xendit Sandbox",
+    "Shipping Aggregator API (Biteship / RajaOngkir)",
+    "Firebase Cloud Messaging (FCM)",
+    "Transactional Email Gateway (SendGrid / Mailgun)"
+  ],
+  "technology_preferences": [
+    "Node.js / Go REST API backend",
+    "PostgreSQL untuk relasional data dan transaksi keuangan",
+    "Redis untuk rate limiting dan locking stok",
+    "Flutter / React Native untuk mobile app",
+    "Next.js / Nuxt untuk web storefront SEO-friendly"
+  ],
+  "operational_constraints": [
+    "Pemeriksaan idempotensi wajib diterapkan pada seluruh webhook callback payment gateway",
+    "Katalog produk dan pencarian harus merespons dalam waktu kurang dari 300 ms pada 500 pengguna konkuren"
+  ],
+  "additional_notes": "Fokuskan pada alur webhook pembayaran idempotensi dan keakuratan pemotongan stok inventaris."
+}

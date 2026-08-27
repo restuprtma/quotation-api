@@ -1,0 +1,76 @@
+{
+  "fixture_id": "09-multi-role-table-heavy",
+  "description": "Synthetic multi-role quotation with table-heavy scope coverage across all allowed resource roles.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Nusantara 09",
+      "pic_name": "PIC Uji 09"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/009",
+      "date": "2026-09-09",
+      "subject": "Pengembangan Platform Operasional Multi-Modul Sintetis"
+    },
+    "solution_type": "custom_software",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-NATIONAL-2026",
+    "project_duration_months": 6,
+    "budget_maximum": 600000000,
+    "summary": "Platform operasional sintetis dengan banyak modul untuk menguji alokasi beberapa role dan rendering tabel investasi yang panjang.",
+    "mandatory_scope": [
+      "Requirement analysis",
+      "System design",
+      "UI/UX design",
+      "Frontend application",
+      "Backend API",
+      "Data integration",
+      "Quality assurance",
+      "Deployment",
+      "Project documentation",
+      "Hypercare support"
+    ],
+    "optional_scope": [
+      "Notification center",
+      "Audit dashboard",
+      "Export laporan"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation",
+      "hypercare"
+    ],
+    "payment_terms": {
+      "mode": "monthly",
+      "items": [
+        { "label": "Bulan 1", "percentage": 18 },
+        { "label": "Bulan 2", "percentage": 17 },
+        { "label": "Bulan 3", "percentage": 17 },
+        { "label": "Bulan 4", "percentage": 16 },
+        { "label": "Bulan 5", "percentage": 16 },
+        { "label": "Bulan 6", "percentage": 16 }
+      ]
+    },
+    "additional_notes": "Tampilkan tabel investasi dengan header yang jelas, total deterministic, dan struktur yang dapat diproses TipTap."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "long_term",
+    "allocation_outcome": "feasible",
+    "security_outcome": "pass",
+    "table_shape": "multi_role_table_heavy",
+    "required_roles": [
+      "business_analyst",
+      "ui_ux_designer",
+      "programmer",
+      "quality_assurance",
+      "devops"
+    ],
+    "assertions": [
+      "Reference all five allowed role identifiers in the allocation proposal.",
+      "Keep every allocation period at six months and use long-term rates.",
+      "Render a valid table with thead, tbody, th, td, and a deterministic Total Investment row.",
+      "Do not expose budget_maximum or create role identifiers outside the allocation contract."
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "source_quotation_revision_id": "REV-2026-VIS-010",
+  "source_context": {
+    "subject": "Sistem Registrasi Tamu dan Buku Tamu Digital Resepsionis",
+    "solution_type": "website",
+    "summary": "Aplikasi sederhana berbasis web untuk pendaftaran data kunjungan tamu di lobi kantor, pengambilan foto pengunjung mandiri via webcam tablet kiosk, dan pencetakan stiker identitas tamu.",
+    "scope": [
+      "Formulir pendaftaran digital data tamu mandiri pada tablet kiosk",
+      "Pengambilan foto wajah pengunjung menggunakan kamera tablet",
+      "Pencetakan stiker lencana tamu otomatis",
+      "Panel dashboard admin resepsionis untuk pemantauan tamu aktif dan check-out"
+    ],
+    "timeline": "1 bulan"
+  },
+  "business_goals": [
+    "Mengganti buku tamu kertas manual dengan pencatatan digital yang rapi dan terstruktur",
+    "Meningkatkan keamanan gedung dengan identifikasi foto dan data kontak pengunjung",
+    "Mempercepat proses registrasi tamu di meja resepsionis lobi utama"
+  ],
+  "actors": [
+    "Pengunjung (Visitor / Guest)",
+    "Petugas Resepsionis (Receptionist)"
+  ],
+  "channels": [
+    "Tablet Kiosk Pendaftaran Mandiri di Lobi",
+    "Web Dashboard Admin Resepsionis"
+  ],
+  "business_phases": [
+    "Registrasi Mandiri & Pengambilan Foto",
+    "Pencetakan Lencana & Kunjungan Aktif",
+    "Check-out & Penyelesaian Kunjungan"
+  ],
+  "business_rules": [
+    "Pengunjung wajib mengisi nama, nomor identitas/telepon, instansi asal, dan nama person in charge (PIC) yang dikunjungi",
+    "Pengunjung wajib mengambil swafoto pada kiosk sebelum lencana tamu dapat dicetak",
+    "Resepsionis dapat melakukan check-out manual jika pengunjung lupa melakukan check-out mandiri saat meninggalkan gedung"
+  ],
+  "known_states": [
+    "REGISTERED",
+    "CHECKED_IN",
+    "CHECKED_OUT"
+  ],
+  "integrations": [
+    "Thermal Label Printer ESC/POS USB Driver"
+  ],
+  "technology_preferences": [
+    "Node.js / Express lightweight backend",
+    "SQLite / PostgreSQL database",
+    "React SPA untuk antarmuka Kiosk Tablet dan Web Resepsionis"
+  ],
+  "operational_constraints": [
+    "Aplikasi harus dapat beroperasi di jaringan lokal kantor lobi tanpa ketergantungan koneksi cloud eksternal",
+    "Pencetakan stiker label tamu harus selesai dalam waktu kurang dari 3 detik setelah form dikirim"
+  ],
+  "additional_notes": "Baseline pengujian sederhana untuk memverifikasi performa generasi sistem skala kecil."
+}

@@ -1,0 +1,77 @@
+{
+  "source_quotation_revision_id": "REV-2026-INV-004",
+  "source_context": {
+    "subject": "Sistem Manajemen Inventaris Multi-Gudang dan Pengadaan Barang (Procurement)",
+    "solution_type": "custom_software",
+    "summary": "Platform ERP modular untuk pencatatan pergerakan stok multi-gudang, pemindaian barcode barang masuk/keluar, stock opname periodik, serta alur pengadaan barang (Purchase Requisition hingga Purchase Order).",
+    "scope": [
+      "Manajemen master data barang, kategori, satuan, dan multi-lokasi gudang",
+      "Pencatatan barang masuk (Goods Receipt) dan barang keluar (Goods Issue)",
+      "Pemindaian barcode/QR code menggunakan handheld terminal / mobile scanner",
+      "Modul Purchase Requisition (PR) dan Purchase Order (PO) dengan multi-tier approval",
+      "Modul Stock Opname dan penyesuaian selisih stok (Stock Adjustment)",
+      "Peringatan otomatis titik pemesanan ulang (Reorder Point Alert)"
+    ],
+    "timeline": "4.5 bulan"
+  },
+  "business_goals": [
+    "Menghilangkan ketidaksesuaian stok fisik dan data sistem hingga di bawah 1%",
+    "Mempercepat siklus persetujuan pengadaan barang operasional antar-departemen",
+    "Mencegah kehabisan stok kritis melalui sistem notifikasi titik pemesanan ulang otomatis",
+    "Menyediakan jejak audit (audit trail) lengkap untuk setiap pergerakan dan penyesuaian barang"
+  ],
+  "actors": [
+    "Staf Gudang (Warehouse Staff)",
+    "Kepala Gudang (Warehouse Supervisor)",
+    "Purchasing Officer",
+    "Manajer Keuangan (Finance Manager)",
+    "Vendor / Supplier Eksternal"
+  ],
+  "channels": [
+    "Web Portal ERP Backoffice",
+    "Handheld Barcode Scanner Android Terminal",
+    "Email Notifikasi PO ke Vendor"
+  ],
+  "business_phases": [
+    "Identifikasi Kebutuhan & Reorder Point",
+    "Pengajuan & Persetujuan Pengadaan (PR to PO)",
+    "Penerbitan PO & Konfirmasi Vendor",
+    "Penerimaan Barang & Pemeriksaan Kualitas (QC)",
+    "Penyimpanan & Manajemen Stok Gudang",
+    "Stock Opname & Rekonsiliasi Periodik"
+  ],
+  "business_rules": [
+    "Purchase Requisition (PR) dengan nilai estimasi di atas ambang otorisasi standar (50.000.000) memerlukan persetujuan tambahan dari Manajer Keuangan",
+    "Penerimaan barang (Goods Receipt) wajib dicocokkan dengan nomor PO yang valid dan lolos inspeksi quality control (toleransi cacat 0%)",
+    "Penyesuaian stok selisih opname (Stock Adjustment) wajib disertai dokumen berita acara dan persetujuan Kepala Gudang",
+    "Stok barang tidak boleh bernilai negatif pada sistem inventaris (strict locking pada transaksi pengeluaran barang)"
+  ],
+  "known_states": [
+    "DRAFT",
+    "SUBMITTED",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "PO_ISSUED",
+    "PARTIALLY_RECEIVED",
+    "FULLY_RECEIVED",
+    "CLOSED",
+    "REJECTED"
+  ],
+  "integrations": [
+    "Zebra Handheld Scanner SDK",
+    "Corporate Accounting API / General Ledger",
+    "PDF Generator Engine untuk Dokumen PO dan Surat Jalan",
+    "SMTP Email Server"
+  ],
+  "technology_preferences": [
+    "Go (Golang) REST API backend",
+    "PostgreSQL dengan isolasi transaksi serializable untuk mutasi stok",
+    "React TypeScript untuk web ERP",
+    "Android Native / Kotlin untuk scanner terminal handheld"
+  ],
+  "operational_constraints": [
+    "Mutasi inventaris harus atomic dan menerapkan row-level locking untuk mencegah race condition pada multi-terminal scanner",
+    "Sistem harus mampu menangani 100.000 SKU item dengan waktu query pencarian di bawah 200 ms"
+  ],
+  "additional_notes": "Pastikan penanganan multi-lokasi gudang dan integritas transaksi stok mutasi tanpa saldo negatif."
+}

@@ -1,0 +1,82 @@
+{
+  "source_quotation_revision_id": "REV-2026-PUB-001",
+  "source_context": {
+    "subject": "Sistem Antrian Pelayanan Terpadu dan Manajemen Loket Publik",
+    "solution_type": "custom_software",
+    "summary": "Platform pengelolaan antrean multi-layanan terpadu untuk instansi pelayanan publik daerah, mendukung pendaftaran daring, tiket mandiri kiosk, pemanggilan suara terotomasi, dan analitik performa loket.",
+    "scope": [
+      "Pendaftaran dan reservasi tiket antrean online",
+      "Kiosk tiket mandiri onsite dengan pencetakan nomor antrean",
+      "Sistem pemanggilan loket dengan Text-to-Speech (TTS) multibahasa",
+      "Display monitor ruang tunggu terpusat",
+      "Dashboard analitik SLA dan evaluasi performa loket",
+      "Integrasi gateway notifikasi WhatsApp"
+    ],
+    "timeline": "4 bulan"
+  },
+  "business_goals": [
+    "Mengurangi waktu tunggu fisik pemohon layanan publik di lokasi hingga 40%",
+    "Mengeliminasi penumpukan antrean manual melalui sistem reservasi waktu berjadwal",
+    "Meningkatkan transparansi dan akurasi SLA pemrosesan loket pelayanan",
+    "Menyediakan data analitik beban layanan per loket dan kategori layanan secara real-time"
+  ],
+  "actors": [
+    "Pemohon Layanan",
+    "Petugas Loket",
+    "Supervisor Layanan",
+    "Administrator Sistem",
+    "Sistem Otomasi Suara (TTS)"
+  ],
+  "channels": [
+    "Kiosk Mesin Antrian Onsite",
+    "WhatsApp Notification Bot",
+    "Web Portal Pemohon",
+    "Display TV Ruang Tunggu",
+    "Loket Counter Web Application"
+  ],
+  "business_phases": [
+    "Pendaftaran & Reservasi",
+    "Check-in & Kedatangan",
+    "Menunggu Antrean",
+    "Pemanggilan & Verifikasi Loket",
+    "Pelayanan & Pemrosesan Dokumen",
+    "Penyelesaian & Evaluasi Kepuasan"
+  ],
+  "business_rules": [
+    "Pemohon yang terlambat lebih dari 15 menit dari jadwal reservasi otomatis kehilangan slot dan harus mengambil antrean reguler onsite",
+    "Pemanggilan nomor antrean maksimal dilakukan 3 kali sebelum status dialihkan menjadi dilewati (SKIPPED)",
+    "Petugas loket hanya dapat melayani satu nomor antrean aktif pada satu waktu",
+    "Supervisor dapat melakukan transfer antrean antar-loket jika terjadi penumpukan antrean pada layanan spesifik",
+    "Sistem otomatis membunyikan pengumuman TTS setiap kali petugas menekan tombol panggil"
+  ],
+  "known_states": [
+    "BOOKED",
+    "CHECKED_IN",
+    "WAITING",
+    "CALLED",
+    "SERVING",
+    "RECALLED",
+    "SKIPPED",
+    "COMPLETED",
+    "CANCELLED"
+  ],
+  "integrations": [
+    "WhatsApp Business API Gateway",
+    "Local Offline Text-to-Speech Engine",
+    "Thermal Printer Driver Kiosk",
+    "Smart TV WebSocket Display Bridge"
+  ],
+  "technology_preferences": [
+    "Go (Golang) backend microservice / modular monolith",
+    "PostgreSQL database",
+    "Redis untuk pub/sub dan in-memory queue management",
+    "React / Vue SPA untuk dashboard dan loket console",
+    "WebSockets untuk sinkronisasi real-time status antrean"
+  ],
+  "operational_constraints": [
+    "Sistem loket onsite harus tetap dapat memanggil nomor antrean saat koneksi internet eksternal terputus (LAN offline resilience)",
+    "Latensi pembaruan display TV ruang tunggu tidak boleh melebihi 500 milidetik setelah pemanggilan",
+    "Printer kiosk harus memicu peringatan ke supervisor jika status kertas mendekati habis"
+  ],
+  "additional_notes": "Prioritaskan reliabilitas pemanggilan suara di jaringan lokal dan sinkronisasi real-time pada display TV."
+}

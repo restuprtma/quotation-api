@@ -1,0 +1,76 @@
+{
+  "source_quotation_revision_id": "REV-2026-SUP-007",
+  "source_context": {
+    "subject": "Sistem Helpdesk & Customer Support Ticketing dengan Manajemen SLA Multi-Tier",
+    "solution_type": "custom_software",
+    "summary": "Platform penanganan tiket keluhan dan bantuan pelanggan multi-saluran, dilengkapi auto-assignment cerdas, matriks SLA waktu respons & resolusi berdasarkan tingkat keparahan, eskalasi berjenjang, dan survei kepuasan pelanggan (CSAT).",
+    "scope": [
+      "Portal pelaporan tiket keluhan mandiri untuk pelanggan",
+      "Integrasi Email-to-Ticket dan Web Live Chat Widget",
+      "Mesin distribusi tiket otomatis (Auto-Assignment) berdasarkan keahlian agen dan beban kerja",
+      "Pemantauan SLA real-time dengan countdown timer respons dan resolusi",
+      "Alur eskalasi otomatis dari L1 Support ke L2 Specialist / Team Lead jika SLA terlampaui",
+      "Dashboard metrik CSAT (Customer Satisfaction Score) dan laporan kinerja tim helpdesk"
+    ],
+    "timeline": "3.5 bulan"
+  },
+  "business_goals": [
+    "Menjamin pemenuhan target SLA First Response Time di bawah 30 menit untuk isu kritis",
+    "Mengeliminasi tiket terabaikan melalui sistem auto-escalation cerdas",
+    "Meningkatkan tingkat kepuasan pelanggan (CSAT) hingga di atas 85%",
+    "Menyediakan visibilitas penuh bagi manajemen terhadap volume isu berulang dan performa staf support"
+  ],
+  "actors": [
+    "Pelanggan (Customer / User)",
+    "Support Agent Level 1 (Triage & General Support)",
+    "Support Specialist Level 2 (Technical Specialist)",
+    "Customer Support Lead / Supervisor"
+  ],
+  "channels": [
+    "Web Helpdesk Portal Pelanggan",
+    "Email Inbound Support Gateway",
+    "Web Live Chat Embedded Widget",
+    "Agent Workspace Console"
+  ],
+  "business_phases": [
+    "Penerimaan & Registrasi Tiket",
+    "Triase & Penugasan Agen",
+    "Investigasi & Komunikasi Solusi",
+    "Eskalasi Tingkat Lanjut (Kondisional)",
+    "Resolusi & Verifikasi Pelanggan",
+    "Survei Kepuasan (CSAT) & Penutupan"
+  ],
+  "business_rules": [
+    "Tingkat prioritas tiket terbagi atas: Low (SLA resolusi 48 jam), Medium (24 jam), High (8 jam), dan Critical (2 jam)",
+    "Tiket berstatus High atau Critical yang tidak direspons dalam 30 menit otomatis memicu eskalasi notifikasi ke Support Lead",
+    "Jika tiket menunggu tanggapan pelanggan (PENDING_CUSTOMER) lebih dari 3 hari kerja, sistem otomatis mengirimkan peringatan dan menutup tiket setelah 5 hari",
+    "Setelah tiket diselesaikan (RESOLVED), survei kepuasan bintang 1-5 otomatis dikirimkan ke pelanggan"
+  ],
+  "known_states": [
+    "NEW",
+    "ASSIGNED",
+    "IN_PROGRESS",
+    "PENDING_CUSTOMER",
+    "ESCALATED_L2",
+    "RESOLVED",
+    "CLOSED",
+    "REOPENED"
+  ],
+  "integrations": [
+    "Inbound/Outbound IMAP/SMTP Email Gateway",
+    "Slack / Microsoft Teams Webhook untuk Notifikasi Alert Kritis",
+    "Knowledge Base API Integration",
+    "WebSocket Server untuk Live Chat & Status Tiket Real-time"
+  ],
+  "technology_preferences": [
+    "Go / Node.js backend dengan arsitektur event-driven",
+    "PostgreSQL untuk database utama",
+    "Redis untuk tracking SLA countdown timers dan pub/sub event",
+    "React TypeScript / Tailwind CSS untuk Agent Console dan Customer Portal"
+  ],
+  "operational_constraints": [
+    "Sistem parser email inbound harus mampu mengekstrak lampiran gambar/file maksimal 10 MB dan mencegah loop email auto-reply",
+    "Pembaruan countdown timer SLA pada antarmuka agen harus diperbarui secara real-time"
+  ],
+  "additional_notes": "Perhatikan kalkulasi waktu kerja (business hours vs calendar hours) pada penghitungan SLA dan skenario auto-closure."
+}

@@ -1,0 +1,75 @@
+{
+  "source_quotation_revision_id": "REV-2026-HR-003",
+  "source_context": {
+    "subject": "Portal Employee Self-Service (ESS) dan Manajemen SDM Terpadu",
+    "solution_type": "custom_software",
+    "summary": "Sistem swakelola karyawan berbasis web dan mobile untuk presensi geolokasi, pengajuan cuti berjenjang, klaim reimbursement medis, serta distribusi slip gaji digital terenkripsi.",
+    "scope": [
+      "Presensi mandiri mobile dengan verifikasi radius GPS dan swafoto",
+      "Pengajuan dan persetujuan cuti berjenjang (atasan langsung dan HR)",
+      "Pengajuan klaim reimbursement dengan upload bukti struk",
+      "Penerbitan dan pengunduhan slip gaji digital berpassword",
+      "Manajemen master data karyawan dan struktur organisasi",
+      "Integrasi mesin fingerprint kantor cabang"
+    ],
+    "timeline": "3.5 bulan"
+  },
+  "business_goals": [
+    "Mengurangi beban administratif tim HR hingga 60% dalam pemrosesan cuti dan klaim",
+    "Meningkatkan akurasi data kehadiran karyawan lintas cabang dengan validasi geofencing",
+    "Menyediakan akses mandiri bagi karyawan terhadap dokumen kepegawaian dan riwayat kompensasi",
+    "Menstandarkan alur persetujuan permohonan kerja sesuai hierarki manajerial"
+  ],
+  "actors": [
+    "Karyawan (Employee)",
+    "Manajer Divisi (Supervisor / Approver)",
+    "HR Administrator",
+    "Finance & Payroll Officer"
+  ],
+  "channels": [
+    "Mobile ESS App (Android & iOS)",
+    "Web Portal HR & Management Backoffice",
+    "Email Notifikasi Korporat"
+  ],
+  "business_phases": [
+    "Pencatatan Presensi Harian",
+    "Pengajuan Izin / Cuti / Klaim",
+    "Verifikasi & Persetujuan Berjenjang",
+    "Pemrosesan Payroll & Kompensasi",
+    "Distribusi Dokumen & Pelaporan"
+  ],
+  "business_rules": [
+    "Presensi mobile hanya valid jika radius pengguna berada dalam batas maksimal 100 meter dari titik koordinat kantor",
+    "Pengajuan cuti tahunan minimal diajukan H-3 sebelum tanggal cuti efektif",
+    "Pengajuan cuti memerlukan persetujuan dari atasan langsung dan notifikasi tembusan ke HR",
+    "Klaim reimbursement di atas ambang batas nominal 2.000.000 memerlukan persetujuan tambahan dari Manajer Keuangan",
+    "Slip gaji PDF dienkripsi menggunakan kombinasi tanggal lahir dan nomor induk karyawan (NIK)"
+  ],
+  "known_states": [
+    "DRAFT",
+    "SUBMITTED",
+    "PENDING_MANAGER_APPROVAL",
+    "PENDING_HR_VERIFICATION",
+    "APPROVED",
+    "REJECTED",
+    "PROCESSED",
+    "PAID"
+  ],
+  "integrations": [
+    "ZKTeco Biometric Fingerprint Device SDK",
+    "Corporate SMTP Mail Server",
+    "AWS S3 / MinIO Encrypted Document Storage",
+    "Google Maps Geocoding API"
+  ],
+  "technology_preferences": [
+    "Laravel / Go backend API",
+    "PostgreSQL relational database",
+    "Flutter untuk mobile ESS",
+    "Vue.js / Tailwind CSS untuk HR Web Portal"
+  ],
+  "operational_constraints": [
+    "Data slip gaji dan kompensasi wajib terenkripsi at-rest (AES-256) pada basis data",
+    "Penyimpanan foto bukti klaim harus dikompresi maksimal 500 KB per berkas tanpa mengurangi keterbacaan teks"
+  ],
+  "additional_notes": "Perhatikan kepatuhan privasi data karyawan dan mekanisme keamanan geofencing presensi mobile."
+}

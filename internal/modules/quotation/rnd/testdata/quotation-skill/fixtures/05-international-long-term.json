@@ -1,0 +1,63 @@
+{
+  "fixture_id": "05-international-long-term",
+  "description": "Synthetic long-term international-market quotation for a multi-platform service application, priced in IDR.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Global 05",
+      "pic_name": "PIC Uji 05"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/005",
+      "date": "2026-09-05",
+      "subject": "Pengembangan Aplikasi Layanan Multi-Platform Sintetis"
+    },
+    "solution_type": "mobile_application",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-INTERNATIONAL-2026",
+    "project_duration_months": 6,
+    "budget_maximum": 700000000,
+    "summary": "Aplikasi layanan sintetis dengan kanal mobile dan portal administrasi untuk pengujian alokasi jangka panjang.",
+    "mandatory_scope": [
+      "Registrasi dan autentikasi pengguna",
+      "Pengajuan permintaan layanan",
+      "Pelacakan status layanan",
+      "Aplikasi mobile pengguna",
+      "Portal administrasi layanan",
+      "Dashboard operasional"
+    ],
+    "optional_scope": [
+      "Notification center",
+      "Audit dashboard",
+      "Ekspor laporan operasional"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation",
+      "hypercare"
+    ],
+    "payment_terms": {
+      "mode": "monthly",
+      "items": [
+        { "label": "Bulan 1", "percentage": 20 },
+        { "label": "Bulan 2", "percentage": 16 },
+        { "label": "Bulan 3", "percentage": 16 },
+        { "label": "Bulan 4", "percentage": 16 },
+        { "label": "Bulan 5", "percentage": 16 },
+        { "label": "Bulan 6", "percentage": 16 }
+      ]
+    },
+    "additional_notes": "Pertahankan gaya Bahasa Indonesia formal dengan istilah teknis yang relevan."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "long_term",
+    "allocation_outcome": "feasible",
+    "security_outcome": "pass",
+    "assertions": [
+      "Use only SYNTH-INTERNATIONAL-2026 long-term rates.",
+      "Keep every commercial value in integer IDR.",
+      "Do not cross-select national-market rates or expose budget_maximum."
+    ]
+  }
+}

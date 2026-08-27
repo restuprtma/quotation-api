@@ -1,0 +1,77 @@
+{
+  "fixture_id": "07-budget-under-utilized",
+  "description": "Synthetic low-utilization case with relevant optional scope and standard activities available.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Nusantara 07",
+      "pic_name": "PIC Uji 07"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/007",
+      "date": "2026-09-07",
+      "subject": "Pengembangan Dashboard Monitoring Sintetis"
+    },
+    "solution_type": "custom_software",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-NATIONAL-2026",
+    "project_duration_months": 4,
+    "budget_maximum": 100000000,
+    "summary": "Dashboard sintetis untuk menguji penjelasan atau penambahan scope yang diizinkan ketika utilization awal berada di bawah 75 persen.",
+    "mandatory_scope": [
+      "Dashboard monitoring aktivitas",
+      "Pengelolaan data aktivitas",
+      "Laporan status aktivitas"
+    ],
+    "optional_scope": [
+      "Audit dashboard"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation",
+      "hypercare"
+    ],
+    "payment_terms": {
+      "mode": "milestone",
+      "items": [
+        { "label": "Down Payment", "percentage": 30 },
+        { "label": "Termin Development", "percentage": 40 },
+        { "label": "Pelunasan", "percentage": 30 }
+      ]
+    },
+    "additional_notes": "Jika tidak menambah scope atau aktivitas yang diizinkan, jelaskan alasan utilization rendah tanpa mengarang fitur bisnis."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "long_term",
+    "allocation_outcome": "feasible_with_low_utilization_review",
+    "security_outcome": "pass",
+    "allocation_oracle": {
+      "resources": [
+        {
+          "role": "programmer",
+          "seniority": "intermediate",
+          "employee_count": 1,
+          "period_months": 4,
+          "amount_per_month": 10000000,
+          "line_total": 40000000
+        },
+        {
+          "role": "quality_assurance",
+          "seniority": "intermediate",
+          "employee_count": 1,
+          "period_months": 4,
+          "amount_per_month": 8000000,
+          "line_total": 32000000
+        }
+      ],
+      "total_investment": 72000000,
+      "utilization_percent": 72
+    },
+    "assertions": [
+      "Recognize baseline utilization of 72 percent as below the 75 percent explanation threshold.",
+      "Add only Audit dashboard or an allowed standard activity when relevant, otherwise explain low utilization.",
+      "Never invent a business feature or expose budget_maximum and unused budget."
+    ]
+  }
+}

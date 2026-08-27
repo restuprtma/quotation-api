@@ -1,0 +1,64 @@
+{
+  "fixture_id": "01-national-short-term",
+  "description": "Synthetic short-term national quotation input for a public website and content management system.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Nusantara 01",
+      "pic_name": "PIC Uji 01"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/001",
+      "date": "2026-09-01",
+      "subject": "Pengembangan Website Informasi Sintetis"
+    },
+    "solution_type": "website",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-NATIONAL-2026",
+    "project_duration_months": 2,
+    "budget_maximum": 60000000,
+    "summary": "Website publik sintetis dengan pengelolaan konten untuk pengujian quotation jangka pendek.",
+    "mandatory_scope": [
+      "Website publik responsif",
+      "Content management system",
+      "Formulir kontak"
+    ],
+    "optional_scope": [
+      "Pencarian konten",
+      "Dashboard statistik konten"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation"
+    ],
+    "payment_terms": {
+      "mode": "milestone",
+      "items": [
+        {
+          "label": "Down Payment",
+          "percentage": 50,
+          "invoice_date": "2026-09-07",
+          "due_date": "2026-09-21"
+        },
+        {
+          "label": "Pelunasan",
+          "percentage": 50,
+          "invoice_date": "2026-10-26",
+          "due_date": "2026-11-09"
+        }
+      ]
+    },
+    "additional_notes": "Gunakan Bahasa Indonesia formal dan ringkas."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "short_term",
+    "allocation_outcome": "feasible",
+    "security_outcome": "pass",
+    "assertions": [
+      "Use only SYNTH-NATIONAL-2026 short-term rates.",
+      "Include every mandatory scope item.",
+      "Do not expose budget_maximum or unused budget in HTML."
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "fixture_id": "03-national-long-term",
+  "description": "Synthetic long-term national quotation for a custom operations portal.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Nusantara 03",
+      "pic_name": "PIC Uji 03"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/003",
+      "date": "2026-09-03",
+      "subject": "Pengembangan Portal Operasional Sintetis"
+    },
+    "solution_type": "custom_software",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-NATIONAL-2026",
+    "project_duration_months": 8,
+    "budget_maximum": 360000000,
+    "summary": "Portal operasional sintetis untuk pengelolaan permintaan kerja dan pemantauan penyelesaian aktivitas.",
+    "mandatory_scope": [
+      "Manajemen pengguna dan akses",
+      "Pencatatan permintaan kerja",
+      "Alur persetujuan permintaan",
+      "Dashboard status operasional",
+      "Laporan penyelesaian aktivitas"
+    ],
+    "optional_scope": [
+      "Notifikasi pengingat",
+      "Audit dashboard"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation",
+      "hypercare"
+    ],
+    "payment_terms": {
+      "mode": "monthly",
+      "items": [
+        { "label": "Bulan 1", "percentage": 13 },
+        { "label": "Bulan 2", "percentage": 13 },
+        { "label": "Bulan 3", "percentage": 13 },
+        { "label": "Bulan 4", "percentage": 13 },
+        { "label": "Bulan 5", "percentage": 12 },
+        { "label": "Bulan 6", "percentage": 12 },
+        { "label": "Bulan 7", "percentage": 12 },
+        { "label": "Bulan 8", "percentage": 12 }
+      ]
+    },
+    "additional_notes": "Gunakan terminologi operasional yang hanya berasal dari scope input."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "long_term",
+    "allocation_outcome": "feasible",
+    "security_outcome": "pass",
+    "assertions": [
+      "Use long-term rates for every resource based on total project duration.",
+      "Select optional scope only when relevant and budget-feasible.",
+      "Do not expose budget_maximum or unused budget in HTML."
+    ]
+  }
+}

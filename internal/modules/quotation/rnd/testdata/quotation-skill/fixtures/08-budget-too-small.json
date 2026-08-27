@@ -1,0 +1,54 @@
+{
+  "fixture_id": "08-budget-too-small",
+  "description": "Synthetic infeasible case where the budget is below the cheapest available short-term monthly resource.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Nusantara 08",
+      "pic_name": "PIC Uji 08"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/008",
+      "date": "2026-09-08",
+      "subject": "Pengembangan Formulir Layanan Sintetis"
+    },
+    "solution_type": "website",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-NATIONAL-2026",
+    "project_duration_months": 1,
+    "budget_maximum": 5000000,
+    "summary": "Kasus sintetis untuk membuktikan penghentian generation ketika tidak ada satu pun resource yang dapat dialokasikan dalam budget.",
+    "mandatory_scope": [
+      "Formulir permintaan layanan",
+      "Daftar permintaan layanan"
+    ],
+    "optional_scope": [],
+    "allowed_standard_activities": [],
+    "payment_terms": {
+      "mode": "milestone",
+      "items": [
+        { "label": "Pembayaran", "percentage": 100 }
+      ]
+    },
+    "additional_notes": "Jangan membuat HTML jika allocation tidak feasible setelah tiga iterasi."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "short_term",
+    "allocation_outcome": "budget_unfeasible",
+    "security_outcome": "pass",
+    "infeasibility_oracle": {
+      "cheapest_role": "quality_assurance",
+      "cheapest_seniority": "associate",
+      "cheapest_amount_per_month": 7200000,
+      "budget_maximum": 5000000,
+      "minimum_excess_amount": 2200000,
+      "maximum_iterations": 3,
+      "html_expected": false
+    },
+    "assertions": [
+      "Reject every allocation because the cheapest valid one-month resource costs 7200000 IDR.",
+      "Return budget_unfeasible after at most three allocation attempts.",
+      "Do not compose HTML or expose budget_maximum in a client-facing artifact."
+    ]
+  }
+}

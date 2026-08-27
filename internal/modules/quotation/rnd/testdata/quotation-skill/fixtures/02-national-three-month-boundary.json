@@ -1,0 +1,72 @@
+{
+  "fixture_id": "02-national-three-month-boundary",
+  "description": "Synthetic national quotation at the three-month long-term boundary for mobile field reporting.",
+  "generation_input": {
+    "client": {
+      "company_name": "PT Sintetis Nusantara 02",
+      "pic_name": "PIC Uji 02"
+    },
+    "quotation": {
+      "number": "SYNTH/QUO/2026/002",
+      "date": "2026-09-02",
+      "subject": "Pengembangan Aplikasi Pelaporan Lapangan Sintetis"
+    },
+    "solution_type": "mobile_application",
+    "commercial_scheme": "dedicated_squad",
+    "rate_card_code": "SYNTH-NATIONAL-2026",
+    "project_duration_months": 3,
+    "budget_maximum": 90000000,
+    "summary": "Aplikasi seluler sintetis untuk pencatatan dan pemantauan laporan kegiatan lapangan.",
+    "mandatory_scope": [
+      "Autentikasi petugas",
+      "Formulir laporan lapangan",
+      "Unggah bukti kegiatan",
+      "Dashboard pemantauan laporan"
+    ],
+    "optional_scope": [
+      "Mode penyimpanan offline",
+      "Notifikasi status laporan"
+    ],
+    "allowed_standard_activities": [
+      "QA",
+      "deployment",
+      "documentation",
+      "hypercare"
+    ],
+    "payment_terms": {
+      "mode": "milestone",
+      "items": [
+        {
+          "label": "Down Payment",
+          "percentage": 40,
+          "invoice_date": "2026-09-08",
+          "due_date": "2026-09-22"
+        },
+        {
+          "label": "Termin Development",
+          "percentage": 40,
+          "invoice_date": "2026-10-20",
+          "due_date": "2026-11-03"
+        },
+        {
+          "label": "Termin Go-Live",
+          "percentage": 20,
+          "invoice_date": "2026-11-24",
+          "due_date": "2026-12-08"
+        }
+      ]
+    },
+    "additional_notes": "Tekankan alur pelaporan tanpa menambahkan fitur bisnis baru."
+  },
+  "expected": {
+    "validation": "valid",
+    "term_type": "long_term",
+    "allocation_outcome": "feasible",
+    "security_outcome": "pass",
+    "assertions": [
+      "Treat exactly three months as long_term.",
+      "Use only SYNTH-NATIONAL-2026 long-term rates.",
+      "Do not expose budget_maximum or unused budget in HTML."
+    ]
+  }
+}

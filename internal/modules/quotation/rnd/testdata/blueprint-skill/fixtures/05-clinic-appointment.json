@@ -1,0 +1,76 @@
+{
+  "source_quotation_revision_id": "REV-2026-MED-005",
+  "source_context": {
+    "subject": "Sistem Reservasi Janji Temu Pasien dan Manajemen Antrean Klinik Rawat Jalan",
+    "solution_type": "custom_software",
+    "summary": "Aplikasi manajemen jadwal praktik dokter, reservasi online pasien rawat jalan, integrasi antrean poli terpadu, konfirmasi kedatangan via WhatsApp, dan pencatatan riwayat kunjungan medis.",
+    "scope": [
+      "Portal reservasi jadwal dokter online untuk pasien mandiri",
+      "Manajemen kuota jadwal dan jam praktik dokter per poliklinik",
+      "Integrasi bot notifikasi dan konfirmasi janji temu WhatsApp H-1",
+      "Check-in mandiri dan cetak karcis antrean poli di loket pendaftaran",
+      "Aplikasi tablet ruang dokter untuk pemanggilan dan input status periksa",
+      "Pencatatan riwayat kunjungan dan integrasi modul farmasi/kasir"
+    ],
+    "timeline": "3 bulan"
+  },
+  "business_goals": [
+    "Mengoptimalkan utilisasi jadwal praktik dokter dan kuota konsultasi pasien",
+    "Mengurangi no-show rate pasien melalui konfirmasi otomatis via pesan instan",
+    "Mempersingkat waktu tunggu pasien di area tunggu poliklinik",
+    "Meningkatkan integrasi data antara loket pendaftaran, ruang konsultasi dokter, dan kasir/farmasi"
+  ],
+  "actors": [
+    "Pasien Rawat Jalan",
+    "Dokter Spesialis / Dokter Umum",
+    "Petugas Resepsionis / Pendaftaran",
+    "Petugas Farmasi & Kasir"
+  ],
+  "channels": [
+    "Web Portal Reservasi Pasien",
+    "WhatsApp Gateway Reminder & Konfirmasi",
+    "Tablet Aplikasi Ruang Dokter",
+    "Desktop Aplikasi Resepsionis & Kasir"
+  ],
+  "business_phases": [
+    "Pemilihan Jadwal & Reservasi Dokter",
+    "Konfirmasi Kehadiran H-1",
+    "Check-in Onsite & Validasi Berkas",
+    "Pemeriksaan Medis di Poli",
+    "Pengambilan Obat di Farmasi",
+    "Pembayaran & Penyelesaian Kunjungan"
+  ],
+  "business_rules": [
+    "Kuota reservasi per dokter per sesi dibatasi maksimal 25 pasien untuk menjaga kualitas layanan",
+    "Pasien yang tidak melakukan konfirmasi H-1 melalui WhatsApp hingga pukul 18.00 akan dialihkan slotnya ke daftar tunggu cadangan",
+    "Dokter dapat menandai pasien sebagai 'Tiba', 'Sedang Diperiksa', atau 'Selesai' melalui aplikasi tablet",
+    "Resep obat elektronik yang diinput dokter otomatis diteruskan ke antrean display farmasi"
+  ],
+  "known_states": [
+    "BOOKED",
+    "CONFIRMED",
+    "CHECKED_IN",
+    "IN_CONSULTATION",
+    "WAITING_PHARMACY",
+    "COMPLETED",
+    "NO_SHOW",
+    "CANCELLED"
+  ],
+  "integrations": [
+    "WhatsApp Official Business API",
+    "SatuSehat Health Data Platform Bridge Placeholder",
+    "Thermal Receipt Printer",
+    "Local Hospital Information System (HIS) Database Link"
+  ],
+  "technology_preferences": [
+    "Node.js / Express or NestJS backend",
+    "PostgreSQL database",
+    "React JS / Tailwind CSS untuk Web Pasien & Backoffice",
+    "React Native / PWA untuk Tablet Dokter"
+  ],
+  "operational_constraints": [
+    "Data rekam riwayat kunjungan pasien bersifat rahasia dan wajib mematuhi standar enkripsi data medis",
+    "Aplikasi tablet dokter harus dapat beroperasi lancar pada jaringan Wi-Fi lokal klinik"
+  ],
+  "additional_notes": "Perhatikan mekanisme reminder konfirmasi WhatsApp dan transisi status resep ke farmasi."
+}

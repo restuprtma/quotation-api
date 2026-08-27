@@ -1,0 +1,78 @@
+{
+  "source_quotation_revision_id": "REV-2026-FLD-008",
+  "source_context": {
+    "subject": "Sistem Manajemen Penugasan Lapangan (Field Service Dispatch & Mobile Operations)",
+    "solution_type": "mobile_application",
+    "summary": "Solusi komprehensif operasi lapangan untuk dispatching teknisi pemeliharaan, pelacakan rute GPS real-time, aplikasi mobile teknisi dengan kapabilitas offline-first, pelaporan inspeksi checklist digital, tanda tangan digital klien, dan integrasi WhatsApp klien.",
+    "scope": [
+      "Web Console Dispatcher dengan peta interaktif penugasan berbasis lokasi terdekat",
+      "Aplikasi mobile teknisi lapangan dengan sinkronisasi data offline-first",
+      "Pelacakan lokasi GPS teknisi saat bertugas secara efisien baterai",
+      "Formulir checklist inspeksi dinamis, unggah foto kondisi, dan tanda tangan digital pelanggan",
+      "Sistem notifikasi estimasi kedatangan (ETA) via WhatsApp / SMS ke pelanggan",
+      "Dashboard analitik produktivitas teknisi dan rekapitulasi pekerjaan harian"
+    ],
+    "timeline": "5 bulan"
+  },
+  "business_goals": [
+    "Mengoptimalkan rute dan jadwal penugasan teknisi untuk menghemat biaya operasional",
+    "Memastikan pencatatan pekerjaan di lapangan tetap berjalan lancar di area tanpa sinyal seluler",
+    "Meningkatkan kepuasan pelanggan melalui transparansi waktu kedatangan teknisi",
+    "Menghasilkan laporan berita acara pekerjaan digital yang valid dan dapat dipertanggungjawabkan"
+  ],
+  "actors": [
+    "Dispatcher Operasional (Admin Kantor)",
+    "Teknisi Lapangan (Field Technician)",
+    "Klien / Pelanggan Onsite",
+    "Supervisor Operasional Lapangan"
+  ],
+  "channels": [
+    "Dispatcher Web Console & Interactive Map",
+    "Mobile App Teknisi (Android Offline-First)",
+    "WhatsApp / SMS Notification Gateway",
+    "Web Portal Verifikasi Berita Acara Klien"
+  ],
+  "business_phases": [
+    "Penerimaan Permintaan & Penjadwalan Tugas",
+    "Penugasan (Dispatching) & Konfirmasi Teknisi",
+    "Perjalanan Menuju Lokasi (En-Route)",
+    "Pelaksanaan Inspeksi & Perbaikan di Lokasi",
+    "Validasi Hasil, Foto Bukti & Tanda Tangan Klien",
+    "Sinkronisasi Data & Penutupan Tugas (Work Order)"
+  ],
+  "business_rules": [
+    "Penugasan tugas baru memprioritaskan teknisi yang berada dalam radius terdekat dan memiliki ketersediaan jadwal aktif",
+    "Teknisi wajib melakukan check-in GPS pada aplikasi mobile saat tiba di radius 50 meter dari titik lokasi klien",
+    "Seluruh checklist inspeksi wajib diisi dan minimal 2 foto bukti pekerjaan diunggah sebelum tanda tangan digital pelanggan dapat diambil",
+    "Data pekerjaan yang dicatat dalam kondisi offline wajib disinkronisasikan ke server pusat secara otomatis saat koneksi internet kembali pulih"
+  ],
+  "known_states": [
+    "UNASSIGNED",
+    "ASSIGNED",
+    "ACCEPTED",
+    "EN_ROUTE",
+    "ON_SITE",
+    "IN_PROGRESS",
+    "PENDING_PARTS",
+    "COMPLETED_OFFLINE",
+    "COMPLETED_SYNCED",
+    "CANCELLED"
+  ],
+  "integrations": [
+    "Google Maps Distance Matrix & Geocoding API",
+    "WhatsApp Gateway untuk notifikasi ETA pelanggan",
+    "Local SQLite Database with Delta Sync Engine on Mobile",
+    "S3-compatible Object Storage untuk foto dokumentasi lapangan"
+  ],
+  "technology_preferences": [
+    "Go backend REST API & WebSocket server",
+    "PostgreSQL dengan ekstensi PostGIS untuk geospasial queries",
+    "Flutter dengan SQLite / WatermelonDB untuk mobile offline-first",
+    "React TypeScript dengan Mapbox / OpenLayers untuk Dispatcher Web Console"
+  ],
+  "operational_constraints": [
+    "Mobile app harus mendukung operasional offline penuh hingga 8 jam tanpa koneksi internet tanpa kehilangan data transaksi lokal",
+    "Pengambilan koordinat GPS di latar belakang harus dioptimasi agar konsumsi daya baterai tidak melebihi 5% per jam saat mode bertugas aktif"
+  ],
+  "additional_notes": "Perhatikan mekanisme delta-sync resolusi konflik pada mode offline dan validasi geofencing onsite check-in."
+}

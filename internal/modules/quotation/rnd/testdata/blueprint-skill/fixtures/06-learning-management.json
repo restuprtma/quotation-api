@@ -1,0 +1,74 @@
+{
+  "source_quotation_revision_id": "REV-2026-EDU-006",
+  "source_context": {
+    "subject": "Platform Learning Management System (LMS) dan Sertifikasi Kompetensi Online",
+    "solution_type": "web_and_mobile_application",
+    "summary": "Platform edukasi daring terpadu untuk pelatihan korporat dan publik, menyediakan modul video interaktif, pelacakan progres belajar, ujian kuis otomatis, forum diskusi kelas, serta penerbitan sertifikat digital terverifikasi QR.",
+    "scope": [
+      "Katalog kursus, silabus interaktif, dan pendaftaran materi belajar",
+      "Pemain video terintegrasi dengan pelacakan persentase tontonan",
+      "Engine kuis interaktif dengan timer dan penilaian skor otomatis",
+      "Forum diskusi per bab kursus dan sesi tanya-jawab instruktur",
+      "Penerbitan otomatis sertifikat digital PDF dengan verifikasi QR code publik",
+      "Dashboard analitik progres siswa untuk instruktur dan pengelola pelatihan"
+    ],
+    "timeline": "4 bulan"
+  },
+  "business_goals": [
+    "Mendukung program pembelajaran mandiri (self-paced learning) berskala ribuan peserta",
+    "Memastikan pemahaman peserta secara terukur melalui kuis bertahap sebelum kelulusan",
+    "Mengotomasi verifikasi dan penerbitan sertifikat kelulusan bebas pemalsuan",
+    "Menyediakan insight komprehensif terkait retensi modul materi dan tingkat kelulusan kursus"
+  ],
+  "actors": [
+    "Siswa / Peserta Pelatihan",
+    "Instruktur / Pengajar Materi",
+    "Admin Akademik & Pengelola Pelatihan"
+  ],
+  "channels": [
+    "Web Portal Siswa LMS",
+    "Mobile App Siswa (Android & iOS)",
+    "Instruktur Backoffice Web Console",
+    "Halaman Publik Verifikasi Sertifikat QR"
+  ],
+  "business_phases": [
+    "Pendaftaran & Onboarding Kursus",
+    "Pembelajaran Materi & Video Streaming",
+    "Evaluasi Kuis & Ujian Kompetensi",
+    "Penilaian & Peninjauan Hasil",
+    "Kelulusan & Penerbitan Sertifikat"
+  ],
+  "business_rules": [
+    "Peserta wajib menyelesaikan minimal 80% durasi video pada suatu modul sebelum modul berikutnya atau kuis terkait dapat diakses",
+    "Passing grade kuis kelulusan minimal bernilai 75 dari 100 poin",
+    "Peserta yang gagal mencapai passing grade diberikan kesempatan remedial maksimal 3 kali dengan jeda waktu 24 jam",
+    "Sertifikat kelulusan diterbitkan secara otomatis dengan kode hash kriptografi unik dan tautan verifikasi publik setelah seluruh modul dan kuis tuntas"
+  ],
+  "known_states": [
+    "ENROLLED",
+    "IN_PROGRESS",
+    "QUIZ_PENDING",
+    "QUIZ_FAILED",
+    "PASSED",
+    "CERTIFIED",
+    "EXPIRED"
+  ],
+  "integrations": [
+    "Cloud Video Streaming & CDN (Cloudflare Stream / AWS CloudFront)",
+    "PDF Certificate Generator with Digital Signature & QR",
+    "Transactional Email Gateway",
+    "Single Sign-On (Google OAuth / Microsoft 365)"
+  ],
+  "technology_preferences": [
+    "Go / Node.js backend",
+    "PostgreSQL untuk relasi data kurikulum dan nilai",
+    "Redis untuk caching sesi kuis dan video progress heartbeat",
+    "Next.js / React untuk web portal responsif",
+    "Flutter untuk aplikasi mobile pembelajaran"
+  ],
+  "operational_constraints": [
+    "Video streaming harus adaptive bitrate (HLS) agar lancar di berbagai kondisi kecepatan internet peserta",
+    "Verifikasi sertifikat via scan QR code harus dapat diakses publik tanpa login dalam waktu muat kurang dari 1 detik"
+  ],
+  "additional_notes": "Fokuskan pada alur state pembukaan materi terkunci, validasi kuis, dan verifikasi sertifikat QR."
+}
