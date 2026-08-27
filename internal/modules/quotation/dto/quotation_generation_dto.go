@@ -3,6 +3,7 @@ package dto
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -97,4 +98,20 @@ type EnrichedAllocation struct {
 	TermType              string             `json:"term_type"`
 	TotalInvestment       int64              `json:"total_investment"`
 	UtilizationPercent    int64              `json:"utilization_percent"`
+}
+
+type SaveDraftRequest struct {
+	RevisionID     uuid.UUID `json:"revision_id"`
+	ContentHTML    string    `json:"content_html"`
+	ContentVersion int       `json:"content_version"`
+}
+
+type SaveDraftResponse struct {
+	QuotationID               uuid.UUID `json:"quotation_id"`
+	RevisionID                uuid.UUID `json:"revision_id"`
+	ContentVersion            int       `json:"content_version"`
+	ContentHTML               string    `json:"content_html"`
+	LegalContentModified      bool      `json:"legal_content_modified"`
+	CommercialContentModified bool      `json:"commercial_content_modified"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 }
