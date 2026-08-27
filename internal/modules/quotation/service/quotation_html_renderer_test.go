@@ -605,3 +605,161 @@ func TestDOMValidator_PaymentExpectationsSatisfiedPasses(t *testing.T) {
 
 	require.NoError(t, err)
 }
+
+func TestDOMValidator_CheckLegalModified_MatchesReturnsFalse(t *testing.T) {
+	v := service.NewDOMValidator()
+	legalSnippet := `<p>Syarat &amp; Ketentuan: Pembayaran 30 hari.</p>`
+	doc := fmt.Sprintf(`<section data-block="legal">%s</section>`, legalSnippet)
+
+	modified, err := v.CheckLegalModified(doc, legalSnippet)
+	require.NoError(t, err)
+	assert.False(t, modified)
+}
+
+func TestDOMValidator_CheckLegalModified_DifferentTextReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	expected := `<p>Syarat &amp; Ketentuan Asli</p>`
+	doc := `<section data-block="legal"><p>Syarat &amp; Ketentuan Diubah oleh BA</p></section>`
+
+	modified, err := v.CheckLegalModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckLegalModified_MissingSectionReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	expected := `<p>Syarat &amp; Ketentuan Asli</p>`
+	doc := `<section data-block="investment"><p>Hanya investment</p></section>`
+
+	modified, err := v.CheckLegalModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckLegalModified_EmptyExpectedReturnsFalse(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment"><p>Hanya investment</p></section>`
+
+	modified, err := v.CheckLegalModified(doc, "")
+	require.NoError(t, err)
+	assert.False(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_MatchesReturnsFalse(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment">
+		<table>
+			<tr data-role="lead_developer_senior"><td data-field="line_total">35.000.000</td></tr>
+			<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
+		</table>
+	</section>
+	<section data-block="payment_schedule">
+		<table><tr><td data-field="payment_percentage">100%</td></tr></table>
+	</section>`
+
+	expected := service.IntegrityExpectations{
+		Currency:        "IDR",
+		TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{
+			{Role: "lead_developer", Seniority: "senior", LineTotal: 35000000},
+		},
+		PaymentItems: []service.ExpectedPayment{
+			{Percentage: 100},
+		},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.False(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_ChangedTotalReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment">
+		<table>
+			<tr data-role="lead_developer_senior"><td data-field="line_total">35.000.000</td></tr>
+			<tr><td data-field="total_investment">Rp 40.000.000</td></tr>
+		</table>
+	</section>`
+
+	expected := service.IntegrityExpectations{
+		Currency:        "IDR",
+		TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{
+			{Role: "lead_developer", Seniority: "senior", LineTotal: 35000000},
+		},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_MissingRowReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment">
+		<table>
+			<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
+		</table>
+	</section>`
+
+	expected := service.IntegrityExpectations{
+		Currency:        "IDR",
+		TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{
+			{Role: "lead_developer", Seniority: "senior", LineTotal: 35000000},
+		},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_PaymentPercentageMismatchReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment">
+		<table>
+			<tr data-role="lead_developer_senior"><td data-field="line_total">35.000.000</td></tr>
+			<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
+		</table>
+	</section>
+	<section data-block="payment_schedule">
+		<table><tr><td data-field="payment_percentage">50%</td></tr></table>
+	</section>`
+
+	expected := service.IntegrityExpectations{
+		Currency:        "IDR",
+		TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{
+			{Role: "lead_developer", Seniority: "senior", LineTotal: 35000000},
+		},
+		PaymentItems: []service.ExpectedPayment{
+			{Percentage: 100},
+		},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_ValidateDocumentSafety_ForbiddenTermsRejects(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<p>Dokumen ini menyebutkan budget internal 50000000.</p>`
+
+	err := v.ValidateDocumentSafety(doc, nil, 0)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_ValidateDocumentSafety_BudgetLeakRejects(t *testing.T) {
+	v := service.NewDOMValidator()
+	budget := int64(100000000)
+	doc := `<p>Biaya proyek adalah 100.000.000 rupiah.</p>`
+
+	err := v.ValidateDocumentSafety(doc, &budget, 50000000)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+

@@ -258,6 +258,9 @@ type IntegrityExpectations struct {
 
 type DOMValidator interface {
 	ValidateIntegrity(documentHTML string, expected IntegrityExpectations) error
+	CheckLegalModified(documentHTML string, expectedLegalHTML string) (bool, error)
+	CheckCommercialModified(documentHTML string, expected IntegrityExpectations) (bool, error)
+	ValidateDocumentSafety(documentHTML string, budgetMaximum *int64, totalInvestment int64) error
 }
 
 type defaultDOMValidator struct{}
@@ -347,6 +350,93 @@ func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected In
 
 	if expected.BudgetMaximum != nil && *expected.BudgetMaximum != expected.TotalInvestment {
 		digits := formatNumber(*expected.BudgetMaximum)
+		for _, n := range nodes {
+			if n.Type == html.TextNode && strings.Contains(n.Data, digits) {
+				return fmt.Errorf("%w: budget maximum %s leaked into document", ErrUnsafeHTML, digits)
+			}
+		}
+	}
+	return nil
+}
+
+func (v *defaultDOMValidator) CheckLegalModified(documentHTML string, expectedLegalHTML string) (bool, error) {
+	if strings.TrimSpace(expectedLegalHTML) == "" {
+		return false, nil
+	}
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
+	}
+	nodes := collectNodes(root)
+	legal, err := findExactlyOne(nodes, "data-block", "legal")
+	if err != nil || legal == nil {
+		return true, nil
+	}
+	renderedLegal, err := innerHTML(legal)
+	if err != nil {
+		return true, err
+	}
+	expectedLegal, err := canonicalizeFragmentHTML(expectedLegalHTML)
+	if err != nil {
+		return true, err
+	}
+	return renderedLegal != expectedLegal, nil
+}
+
+func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expected IntegrityExpectations) (bool, error) {
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
+	}
+	nodes := collectNodes(root)
+
+	// Check total investment
+	totalCell, err := findExactlyOne(nodes, "data-field", "total_investment")
+	if err != nil || totalCell == nil {
+		return true, nil
+	}
+	wantTotal := formatCurrency(expected.TotalInvestment, expected.Currency)
+	if got := nodeText(totalCell); got != wantTotal {
+		return true, nil
+	}
+
+	// Check lines
+	for _, line := range expected.Lines {
+		rowKey := strings.ToLower(line.Role) + "_" + strings.ToLower(line.Seniority)
+		row, err := findExactlyOne(nodes, "data-role", rowKey)
+		if err != nil || row == nil {
+			return true, nil
+		}
+		lineCell, err := findExactlyOne(collectNodes(row), "data-field", "line_total")
+		if err != nil || lineCell == nil {
+			return true, nil
+		}
+		if got := nodeText(lineCell); got != formatNumber(line.LineTotal) {
+			return true, nil
+		}
+	}
+
+	// Check payment schedule if applicable
+	if len(expected.PaymentItems) > 0 {
+		if err := validatePaymentSchedule(nodes, expected.PaymentItems); err != nil {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (v *defaultDOMValidator) ValidateDocumentSafety(documentHTML string, budgetMaximum *int64, totalInvestment int64) error {
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
+	}
+	nodes := collectNodes(root)
+	if err := scanForbiddenTerms(nodes); err != nil {
+		return err
+	}
+	if budgetMaximum != nil && *budgetMaximum != totalInvestment {
+		digits := formatNumber(*budgetMaximum)
 		for _, n := range nodes {
 			if n.Type == html.TextNode && strings.Contains(n.Data, digits) {
 				return fmt.Errorf("%w: budget maximum %s leaked into document", ErrUnsafeHTML, digits)
