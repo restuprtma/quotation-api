@@ -753,6 +753,85 @@ func TestDOMValidator_CheckCommercialModified_PaymentPercentageMismatchReturnsTr
 	assert.True(t, modified)
 }
 
+func TestDOMValidator_CheckCommercialModified_ChangedRenderedResourceFieldReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment"><table><tbody>
+		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>2</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
+		<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
+	</tbody></table></section>`
+	expected := service.IntegrityExpectations{
+		Currency: "IDR", TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{{
+			Role: "lead_developer", Seniority: "senior", EmployeeCount: 1,
+			PeriodMonths: 1, AmountPerMonth: 35000000, LineTotal: 35000000,
+		}},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_ExtraResourceRowReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment"><table><tbody>
+		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>1</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
+		<tr data-role="extra_role_senior"><td>Extra Role</td><td>Senior</td><td>1</td><td>1</td><td>1</td><td data-field="line_total">1</td></tr>
+		<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
+	</tbody></table></section>`
+	expected := service.IntegrityExpectations{
+		Currency: "IDR", TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{{
+			Role: "lead_developer", Seniority: "senior", EmployeeCount: 1,
+			PeriodMonths: 1, AmountPerMonth: 35000000, LineTotal: 35000000,
+		}},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_MarkersOutsideInvestmentReturnTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment"><table><tr data-role="decoy"><td>Changed</td></tr></table></section>
+	<section><table>
+		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>1</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
+		<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
+	</table></section>`
+	expected := service.IntegrityExpectations{
+		Currency: "IDR", TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{{
+			Role: "lead_developer", Seniority: "senior", EmployeeCount: 1,
+			PeriodMonths: 1, AmountPerMonth: 35000000, LineTotal: 35000000,
+		}},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
+func TestDOMValidator_CheckCommercialModified_UnmarkedResourceRowReturnsTrue(t *testing.T) {
+	v := service.NewDOMValidator()
+	doc := `<section data-block="investment"><table><tbody>
+		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>1</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
+		<tr><td>Unmarked Role</td><td>Senior</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+		<tr><td colspan="5">Total</td><td data-field="total_investment">Rp 35.000.000</td></tr>
+	</tbody></table></section>`
+	expected := service.IntegrityExpectations{
+		Currency: "IDR", TotalInvestment: 35000000,
+		Lines: []service.ExpectedLine{{
+			Role: "lead_developer", Seniority: "senior", EmployeeCount: 1,
+			PeriodMonths: 1, AmountPerMonth: 35000000, LineTotal: 35000000,
+		}},
+	}
+
+	modified, err := v.CheckCommercialModified(doc, expected)
+	require.NoError(t, err)
+	assert.True(t, modified)
+}
+
 func TestDOMValidator_ValidateDocumentSafety_ForbiddenTermsRejects(t *testing.T) {
 	v := service.NewDOMValidator()
 	doc := `<p>Dokumen ini menyebutkan budget internal 50000000.</p>`
@@ -768,6 +847,31 @@ func TestDOMValidator_ValidateDocumentSafety_BudgetLeakRejects(t *testing.T) {
 	doc := `<p>Biaya proyek adalah 100.000.000 rupiah.</p>`
 
 	err := v.ValidateDocumentSafety(doc, &budget, 50000000)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestDOMValidator_ValidateDocumentSafety_BudgetLeakVariantsReject(t *testing.T) {
+	v := service.NewDOMValidator()
+	budget := int64(100000000)
+	for _, doc := range []string{
+		`<p>Nilai batas adalah 100000000 rupiah.</p>`,
+		`<p>Nilai batas adalah 100,000,000 rupiah.</p>`,
+		`<p>Nilai batas adalah 100 000 000 rupiah.</p>`,
+		`<p>Nilai batas adalah <strong>100</strong><span>.000.000</span> rupiah.</p>`,
+	} {
+		t.Run(doc, func(t *testing.T) {
+			err := v.ValidateDocumentSafety(doc, &budget, 50000000)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+		})
+	}
+}
+
+func TestDOMValidator_ValidateDocumentSafety_BareTextBudgetLeakRejects(t *testing.T) {
+	v := service.NewDOMValidator()
+	budget := int64(100000000)
+	err := v.ValidateDocumentSafety(`Nilai maksimum 100.000.000 rupiah.`, &budget, 50000000)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
 }

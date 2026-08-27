@@ -238,9 +238,12 @@ func (r *defaultHTMLRenderer) Assemble(criticalHTML, narrativeHTML string) (stri
 }
 
 type ExpectedLine struct {
-	Role      string
-	Seniority string
-	LineTotal int64
+	Role           string
+	Seniority      string
+	EmployeeCount  int64
+	PeriodMonths   int64
+	AmountPerMonth int64
+	LineTotal      int64
 }
 
 type ExpectedPayment struct {
@@ -393,9 +396,14 @@ func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expec
 		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
 	}
 	nodes := collectNodes(root)
+	investment, err := findExactlyOne(nodes, "data-block", "investment")
+	if err != nil || investment == nil {
+		return true, nil
+	}
+	investmentNodes := collectNodes(investment)
 
 	// Check total investment
-	totalCell, err := findExactlyOne(nodes, "data-field", "total_investment")
+	totalCell, err := findExactlyOne(investmentNodes, "data-field", "total_investment")
 	if err != nil || totalCell == nil {
 		return true, nil
 	}
@@ -407,7 +415,7 @@ func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expec
 	// Check lines
 	for _, line := range expected.Lines {
 		rowKey := strings.ToLower(line.Role) + "_" + strings.ToLower(line.Seniority)
-		row, err := findExactlyOne(nodes, "data-role", rowKey)
+		row, err := findExactlyOne(investmentNodes, "data-role", rowKey)
 		if err != nil || row == nil {
 			return true, nil
 		}
@@ -418,6 +426,37 @@ func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expec
 		if got := nodeText(lineCell); got != formatNumber(line.LineTotal) {
 			return true, nil
 		}
+		if line.EmployeeCount > 0 || line.PeriodMonths > 0 || line.AmountPerMonth > 0 {
+			cells := directChildElements(row, "td")
+			if len(cells) != 6 ||
+				nodeText(cells[0]) != humanizeLabel(line.Role) ||
+				nodeText(cells[1]) != humanizeLabel(line.Seniority) ||
+				nodeText(cells[2]) != strconv.FormatInt(line.EmployeeCount, 10) ||
+				nodeText(cells[3]) != strconv.FormatInt(line.PeriodMonths, 10) ||
+				nodeText(cells[4]) != formatNumber(line.AmountPerMonth) {
+				return true, nil
+			}
+		}
+	}
+	resourceRows := make(map[string]struct{}, len(expected.Lines))
+	resourceRowCount := 0
+	validateRowShape := false
+	for _, line := range expected.Lines {
+		if line.EmployeeCount > 0 || line.PeriodMonths > 0 || line.AmountPerMonth > 0 {
+			validateRowShape = true
+			break
+		}
+	}
+	for _, n := range investmentNodes {
+		if key := attributeValue(n, "data-role"); key != "" {
+			resourceRows[key] = struct{}{}
+		}
+		if n.Type == html.ElementNode && n.Data == "tr" && len(directChildElements(n, "td")) == 6 {
+			resourceRowCount++
+		}
+	}
+	if len(resourceRows) != len(expected.Lines) || (validateRowShape && resourceRowCount != len(expected.Lines)) {
+		return true, nil
 	}
 
 	// Check payment schedule if applicable
@@ -440,14 +479,41 @@ func (v *defaultDOMValidator) ValidateDocumentSafety(documentHTML string, budget
 		return err
 	}
 	if budgetMaximum != nil && *budgetMaximum != totalInvestment {
-		digits := formatNumber(*budgetMaximum)
-		for _, n := range nodes {
-			if n.Type == html.TextNode && strings.Contains(n.Data, digits) {
-				return fmt.Errorf("%w: budget maximum %s leaked into document", ErrUnsafeHTML, digits)
-			}
+		digits := strconv.FormatInt(*budgetMaximum, 10)
+		if strings.Contains(decimalDigits(nodeText(root)), digits) {
+			return fmt.Errorf("%w: budget maximum %s leaked into document", ErrUnsafeHTML, digits)
 		}
 	}
 	return nil
+}
+
+func directChildElements(parent *html.Node, tag string) []*html.Node {
+	var children []*html.Node
+	for child := parent.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.ElementNode && child.Data == tag {
+			children = append(children, child)
+		}
+	}
+	return children
+}
+
+func attributeValue(n *html.Node, key string) string {
+	for _, attr := range n.Attr {
+		if attr.Key == key {
+			return attr.Val
+		}
+	}
+	return ""
+}
+
+func decimalDigits(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func collectNodes(root *html.Node) []*html.Node {

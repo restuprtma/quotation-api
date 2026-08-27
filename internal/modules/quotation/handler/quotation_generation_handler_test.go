@@ -773,6 +773,41 @@ func TestSaveDraft_HTTP_UnsafeHTML_Returns422(t *testing.T) {
 	assert.Equal(t, service.ErrCodeUnsafeHTML, detailCode(t, wSave))
 }
 
+func TestSaveDraft_HTTP_ReturnsCanonicalSanitizedHTML(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+	router := newGenerationRouter(pool, &adaptiveAIProvider{}, fx.companyID)
+
+	wGen := doJSON(router, http.MethodPost, "/quotation/v1/quotations/generate", nil, fx.requestBody())
+	require.Equal(t, http.StatusCreated, wGen.Code, wGen.Body.String())
+	var genResp struct {
+		Data struct {
+			QuotationID uuid.UUID `json:"quotation_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+
+	var initialHTML string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_html FROM quotation_revisions WHERE quotation_id = $1
+	`, genResp.Data.QuotationID).Scan(&initialHTML))
+	body, err := json.Marshal(dto.SaveDraftRequest{
+		ContentHTML:    `<script>alert("secret")</script>` + initialHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+
+	wSave := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+genResp.Data.QuotationID.String()+"/draft", nil, body)
+	require.Equal(t, http.StatusOK, wSave.Code, wSave.Body.String())
+	var saveResp struct {
+		Data dto.SaveDraftResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wSave.Body.Bytes(), &saveResp))
+	assert.NotContains(t, saveResp.Data.ContentHTML, "<script")
+	assert.NotContains(t, saveResp.Data.ContentHTML, "alert(")
+	assert.Equal(t, initialHTML, saveResp.Data.ContentHTML)
+}
+
 func TestSaveDraft_HTTP_InvalidPayload_Returns400(t *testing.T) {
 	pool := getHandlerPool(t)
 	fx := seedHTTPFixtures(t, pool)

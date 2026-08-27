@@ -481,11 +481,31 @@ func (s *QuotationGenerationService) SaveDraft(
 
 	// 2. Extract snapshot expectations for comparisons
 	var enriched dto.EnrichedAllocation
-	var totalInvestment int64
-	if len(draft.AllocationSnapshot) > 0 && string(draft.AllocationSnapshot) != "{}" {
-		_ = json.Unmarshal(draft.AllocationSnapshot, &enriched)
-		totalInvestment = enriched.TotalInvestment
+	if err := json.Unmarshal(draft.AllocationSnapshot, &enriched); err != nil ||
+		enriched.TotalInvestment <= 0 || strings.TrimSpace(enriched.Currency) == "" || len(enriched.Resources) == 0 {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot is invalid")
 	}
+	for _, resource := range enriched.Resources {
+		if strings.TrimSpace(resource.Role) == "" || strings.TrimSpace(resource.Seniority) == "" ||
+			resource.EmployeeCount <= 0 || resource.PeriodMonths <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
+			return nil, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot resource is invalid")
+		}
+	}
+	var generationInput dto.GenerateQuotationRequest
+	if err := json.Unmarshal(draft.GenerationInput, &generationInput); err != nil || len(generationInput.PaymentTerms.Items) == 0 {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "generation input snapshot is invalid")
+	}
+	percentageTotal := int64(0)
+	for _, item := range generationInput.PaymentTerms.Items {
+		if item.Percentage <= 0 || item.Percentage > 100 {
+			return nil, newGenerationError(ErrCodeUnsafeHTML, "generation input payment terms are invalid")
+		}
+		percentageTotal += item.Percentage
+	}
+	if percentageTotal != 100 {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "generation input payment terms are invalid")
+	}
+	totalInvestment := enriched.TotalInvestment
 
 	// 3. Validate safety (forbidden terms, budget leak)
 	if verr := s.domValidator.ValidateDocumentSafety(sanitized, draft.BudgetMaximum, totalInvestment); verr != nil {
@@ -493,25 +513,23 @@ func (s *QuotationGenerationService) SaveDraft(
 	}
 
 	// 4. Check Legal Block modification
-	var expectedLegalHTML string
-	if len(draft.LegalTemplateSnapshot) > 0 {
-		var legalSnap struct {
-			Code        string `json:"code"`
-			ContentHTML string `json:"content_html"`
-		}
-		if jerr := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); jerr == nil {
-			expectedLegalHTML = legalSnap.ContentHTML
-			if expectedLegalHTML == "" && legalSnap.Code != "" {
-				if tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code); terr == nil {
-					expectedLegalHTML = tmpl.ContentHTML
-				}
-			}
-		}
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
 	}
+	if err := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); err != nil {
+		return nil, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
 	if expectedLegalHTML == "" {
-		if tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, DefaultLegalTemplateCode); terr == nil {
-			expectedLegalHTML = tmpl.ContentHTML
+		if strings.TrimSpace(legalSnap.Code) == "" {
+			return nil, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
 		}
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
+			return nil, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
+		}
+		expectedLegalHTML = tmpl.ContentHTML
 	}
 
 	legalModified, lerr := s.domValidator.CheckLegalModified(sanitized, expectedLegalHTML)
@@ -529,10 +547,16 @@ func (s *QuotationGenerationService) SaveDraft(
 		}
 		for _, res := range enriched.Resources {
 			expectations.Lines = append(expectations.Lines, ExpectedLine{
-				Role:      res.Role,
-				Seniority: res.Seniority,
-				LineTotal: res.LineTotal,
+				Role:           res.Role,
+				Seniority:      res.Seniority,
+				EmployeeCount:  res.EmployeeCount,
+				PeriodMonths:   res.PeriodMonths,
+				AmountPerMonth: res.AmountPerMonth,
+				LineTotal:      res.LineTotal,
 			})
+		}
+		for _, item := range generationInput.PaymentTerms.Items {
+			expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
 		}
 	}
 	commercialModified, cerr := s.domValidator.CheckCommercialModified(sanitized, expectations)
@@ -927,9 +951,12 @@ func buildIntegrityExpectations(req dto.GenerateQuotationRequest, cfg *generatio
 	}
 	for _, res := range enriched.Resources {
 		expectations.Lines = append(expectations.Lines, ExpectedLine{
-			Role:      res.Role,
-			Seniority: res.Seniority,
-			LineTotal: res.LineTotal,
+			Role:           res.Role,
+			Seniority:      res.Seniority,
+			EmployeeCount:  res.EmployeeCount,
+			PeriodMonths:   res.PeriodMonths,
+			AmountPerMonth: res.AmountPerMonth,
+			LineTotal:      res.LineTotal,
 		})
 	}
 	for _, item := range req.PaymentTerms.Items {

@@ -145,6 +145,63 @@ func TestUpdateDraft_NonDraftStatus_ReturnsErrRevisionConflict(t *testing.T) {
 	assert.ErrorIs(t, err, repository.ErrRevisionConflict)
 }
 
+func TestUpdateDraft_NonCurrentRevision_ReturnsErrRevisionConflict(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	fx := seedRegenDraft(t, pool)
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO quotation_revisions (
+			id, company_id, quotation_id, revision_number, publication_status,
+			generation_status, generation_input, content_version
+		) VALUES ($1, $2, $3, 2, 'superseded', 'completed', '{}', 1)
+	`, uuid.New(), fx.companyID, fx.quotationID)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE quotations SET current_revision = 2 WHERE id = $1`, fx.quotationID)
+	require.NoError(t, err)
+
+	_, err = repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      fx.revisionID,
+		ExpectedVersion: 1,
+		ContentHTML:     "<p>Must not update an old revision</p>",
+	})
+	assert.ErrorIs(t, err, repository.ErrRevisionConflict)
+}
+
+func TestUpdateDraft_ConcurrentCurrentRevisionSwitch_ReturnsErrRevisionConflict(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	fx := seedRegenDraft(t, pool)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	_, err = tx.Exec(ctx, `SELECT id FROM quotations WHERE id = $1 FOR UPDATE`, fx.quotationID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO quotation_revisions (
+			id, company_id, quotation_id, revision_number, publication_status,
+			generation_status, generation_input, content_version
+		) VALUES ($1, $2, $3, 2, 'superseded', 'completed', '{}', 1)
+	`, uuid.New(), fx.companyID, fx.quotationID)
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() {
+		_, updateErr := repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+			RevisionID: fx.revisionID, ExpectedVersion: 1, ContentHTML: "<p>stale revision</p>",
+		})
+		result <- updateErr
+	}()
+
+	_, err = tx.Exec(ctx, `UPDATE quotations SET current_revision = 2 WHERE id = $1`, fx.quotationID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	assert.ErrorIs(t, <-result, repository.ErrRevisionConflict)
+}
+
 func TestUpdateDraft_ConcurrentSaves_OnlyOneWins(t *testing.T) {
 	pool := getTestPool(t)
 	ctx := context.Background()
@@ -157,11 +214,13 @@ func TestUpdateDraft_ConcurrentSaves_OnlyOneWins(t *testing.T) {
 
 	var successCount int64
 	var conflictCount int64
+	start := make(chan struct{})
 
 	for i := 0; i < concurrency; i++ {
 		workerID := i
 		go func() {
 			defer wg.Done()
+			<-start
 			_, uerr := repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
 				RevisionID:      fx.revisionID,
 				ExpectedVersion: 1,
@@ -175,6 +234,7 @@ func TestUpdateDraft_ConcurrentSaves_OnlyOneWins(t *testing.T) {
 		}()
 	}
 
+	close(start)
 	wg.Wait()
 	assert.Equal(t, int64(1), successCount, "Exactly 1 concurrent save must succeed")
 	assert.Equal(t, int64(concurrency-1), conflictCount, "All other concurrent saves must receive ErrRevisionConflict")

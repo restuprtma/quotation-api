@@ -495,6 +495,7 @@ type DraftRevisionForSave struct {
 	AllocationSnapshot        json.RawMessage
 	RateCardSnapshot          json.RawMessage
 	LegalTemplateSnapshot     json.RawMessage
+	GenerationInput           json.RawMessage
 	LegalContentModified      bool
 	CommercialContentModified bool
 }
@@ -531,6 +532,7 @@ func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, com
 	err := r.db.QueryRow(ctx, `
 		SELECT r.id, r.quotation_id, r.revision_number, r.publication_status, r.generation_status,
 		       r.content_version, r.budget_maximum, r.allocation_snapshot, r.rate_card_snapshot, r.legal_template_snapshot,
+		       r.generation_input,
 		       r.legal_content_modified, r.commercial_content_modified
 		FROM quotation_revisions r
 		JOIN quotations q ON q.id = r.quotation_id
@@ -539,6 +541,7 @@ func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, com
 	`, quotationID, companyID).Scan(
 		&d.RevisionID, &d.QuotationID, &d.RevisionNumber, &d.PublicationStatus, &d.GenerationStatus,
 		&d.ContentVersion, &d.BudgetMaximum, &d.AllocationSnapshot, &d.RateCardSnapshot, &d.LegalTemplateSnapshot,
+		&d.GenerationInput,
 		&d.LegalContentModified, &d.CommercialContentModified,
 	)
 	if err != nil {
@@ -559,6 +562,12 @@ func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, com
 // If the row was modified or published in the meantime, 0 rows match and ErrRevisionConflict is returned.
 func (r *GenerationRepository) UpdateDraft(ctx context.Context, q Execer, companyID, quotationID uuid.UUID, params UpdateDraftParams) (*SaveDraftResult, error) {
 	query := `
+		WITH current_quotation AS (
+			SELECT current_revision
+			FROM quotations
+			WHERE id = $10 AND company_id = $11 AND deleted_at IS NULL
+			FOR UPDATE
+		)
 		UPDATE quotation_revisions SET
 			content_html = $1,
 			content_hash = $2,
@@ -573,6 +582,7 @@ func (r *GenerationRepository) UpdateDraft(ctx context.Context, q Execer, compan
 		WHERE id = $9 AND quotation_id = $10 AND company_id = $11
 		  AND publication_status = $12
 		  AND content_version = $13
+		  AND revision_number = (SELECT current_revision FROM current_quotation)
 		RETURNING content_version, updated_at
 	`
 	res := &SaveDraftResult{

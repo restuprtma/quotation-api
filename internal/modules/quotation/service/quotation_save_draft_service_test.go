@@ -109,6 +109,85 @@ func TestSaveDraft_CommercialModified_SetsFlag(t *testing.T) {
 	assert.True(t, res.CommercialContentModified)
 }
 
+func TestSaveDraft_PaymentModified_SetsCommercialFlag(t *testing.T) {
+	pool := getTestPool(t)
+	qid, _, fx := generateOnce(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	modifiedHTML := strings.Replace(snap.html, `data-field="payment_percentage">50%`, `data-field="payment_percentage">60%`, 1)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	res, err := svc.SaveDraft(context.Background(), fx.companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML: modifiedHTML, ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.True(t, res.CommercialContentModified)
+}
+
+func TestSaveDraft_MalformedSnapshots_RejectsWithoutUpdating(t *testing.T) {
+	for _, column := range []string{"allocation_snapshot", "legal_template_snapshot"} {
+		t.Run(column, func(t *testing.T) {
+			pool := getTestPool(t)
+			qid, _, fx := generateOnce(t, pool)
+			before := captureSnapshot(t, pool, qid)
+			_, err := pool.Exec(context.Background(), fmt.Sprintf(
+				`UPDATE quotation_revisions SET %s = 'null'::jsonb WHERE quotation_id = $1`, column,
+			), qid)
+			require.NoError(t, err)
+
+			svc, _ := newSvc(pool, &scriptedAIProvider{})
+			_, err = svc.SaveDraft(context.Background(), fx.companyID, qid, nil, dto.SaveDraftRequest{
+				ContentHTML: before.html, ContentVersion: before.version,
+			})
+			require.Error(t, err)
+			assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+			after := captureSnapshot(t, pool, qid)
+			assert.Equal(t, before.version, after.version)
+			assert.Equal(t, before.html, after.html)
+		})
+	}
+}
+
+func TestSaveDraft_StructurallyInvalidSnapshots_RejectsWithoutUpdating(t *testing.T) {
+	tests := []struct {
+		name   string
+		column string
+		value  string
+	}{
+		{
+			name: "allocation resource is incomplete", column: "allocation_snapshot",
+			value: `{"total_investment":63000000,"currency":"IDR","resources":[{"role":"","seniority":"","employee_count":0,"period_months":0,"amount_per_month":0,"line_total":0}]}`,
+		},
+		{
+			name: "payment percentage is invalid", column: "generation_input",
+			value: `{"payment_terms":{"mode":"milestone","items":[{"percentage":0}]}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := getTestPool(t)
+			qid, _, fx := generateOnce(t, pool)
+			before := captureSnapshot(t, pool, qid)
+			_, err := pool.Exec(context.Background(), fmt.Sprintf(
+				`UPDATE quotation_revisions SET %s = $1::jsonb WHERE quotation_id = $2`, tt.column,
+			), tt.value, qid)
+			require.NoError(t, err)
+
+			svc, _ := newSvc(pool, &scriptedAIProvider{})
+			_, err = svc.SaveDraft(context.Background(), fx.companyID, qid, nil, dto.SaveDraftRequest{
+				ContentHTML: before.html, ContentVersion: before.version,
+			})
+			require.Error(t, err)
+			assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+			after := captureSnapshot(t, pool, qid)
+			assert.Equal(t, before.version, after.version)
+			assert.Equal(t, before.html, after.html)
+		})
+	}
+}
+
 func TestSaveDraft_StaleVersion_FailsWithConflict(t *testing.T) {
 	pool := getTestPool(t)
 	qid, _, fx := generateOnce(t, pool)
