@@ -18,6 +18,7 @@ type DBPool interface {
 type RateCardRepo interface {
 	GetActiveRateCard(ctx context.Context, companyID, market string) (*domain.RateCard, error)
 	Create(ctx context.Context, q repository.Execer, rc *domain.RateCard) error
+	CreateItem(ctx context.Context, q repository.Execer, item *domain.RateCardItem) error
 }
 
 type LegalTemplateRepo interface {
@@ -115,6 +116,24 @@ func (s *SettingsService) EnsureDefaultAIAssets(ctx context.Context, companyID s
 		}
 		if err := s.rateCardRepo.Create(ctx, tx, rc); err != nil {
 			return err
+		}
+
+		// Seed standard roles
+		roles := []string{"System Architect", "Frontend Engineer", "Backend Engineer", "UI/UX", "PM"}
+		amounts := []int64{25000000, 15000000, 15000000, 12000000, 18000000}
+		for i, roleName := range roles {
+			item := &domain.RateCardItem{
+				ID:             uuid.New(),
+				CompanyID:      companyUUID,
+				RateCardID:     rc.ID,
+				Role:           roleName,
+				Seniority:      "Middle",
+				TermType:       "monthly",
+				AmountPerMonth: amounts[i],
+			}
+			if err := s.rateCardRepo.CreateItem(ctx, tx, item); err != nil {
+				return err
+			}
 		}
 	} else if err != nil && !errors.Is(err, repository.ErrRateCardNotFound) {
 		return err

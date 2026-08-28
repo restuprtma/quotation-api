@@ -31,6 +31,18 @@ func (r *RateCardRepository) Create(ctx context.Context, q Execer, rc *domain.Ra
 	).Scan(&rc.CreatedAt, &rc.UpdatedAt)
 }
 
+func (r *RateCardRepository) CreateItem(ctx context.Context, q Execer, item *domain.RateCardItem) error {
+	query := `
+		INSERT INTO rate_card_items (
+			id, company_id, rate_card_id, role, seniority, term_type, amount_per_month
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING created_at, updated_at
+	`
+	return q.QueryRow(ctx, query,
+		item.ID, item.CompanyID, item.RateCardID, item.Role, item.Seniority, item.TermType, item.AmountPerMonth,
+	).Scan(&item.CreatedAt, &item.UpdatedAt)
+}
+
 func (r *RateCardRepository) Get(ctx context.Context, id, companyID string) (*domain.RateCard, error) {
 	query := `
 		SELECT id, company_id, code, name, market, currency, effective_from, effective_until, is_active, created_by, created_at, updated_at

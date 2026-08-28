@@ -62,6 +62,11 @@ func (m *MockRateCardRepo) Create(ctx context.Context, q repository.Execer, rc *
 	return args.Error(0)
 }
 
+func (m *MockRateCardRepo) CreateItem(ctx context.Context, q repository.Execer, item *domain.RateCardItem) error {
+	args := m.Called(ctx, q, item)
+	return args.Error(0)
+}
+
 type MockLegalTemplateRepo struct {
 	mock.Mock
 }
@@ -107,6 +112,7 @@ func TestSettingsService_EnsureDefaultAIAssets_Idempotent(t *testing.T) {
 	// Assert create was never called since they exist
 	skillRepo.AssertNotCalled(t, "Create")
 	rcRepo.AssertNotCalled(t, "Create")
+	rcRepo.AssertNotCalled(t, "CreateItem")
 	legalRepo.AssertNotCalled(t, "Create")
 }
 
@@ -132,6 +138,7 @@ func TestSettingsService_EnsureDefaultAIAssets_CreateAll(t *testing.T) {
 
 	rcRepo.On("GetActiveRateCard", mock.Anything, companyID, "DEFAULT").Return(nil, repository.ErrRateCardNotFound)
 	rcRepo.On("Create", mock.Anything, tx, mock.AnythingOfType("*domain.RateCard")).Return(nil)
+	rcRepo.On("CreateItem", mock.Anything, tx, mock.AnythingOfType("*domain.RateCardItem")).Return(nil).Times(5)
 
 	legalRepo.On("GetActiveTemplate", mock.Anything, companyID, "QUOTATION_TERMS").Return(nil, repository.ErrLegalTemplateNotFound)
 	legalRepo.On("Create", mock.Anything, tx, mock.AnythingOfType("*domain.LegalTemplate")).Return(nil)
