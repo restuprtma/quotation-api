@@ -6,10 +6,10 @@ migrate -path internal/database/migrations/quotation -database "$dbUrl&x-migrati
 migrate -path internal/database/migrations/contract -database "$dbUrl&x-migrations-table=schema_migrations_contract" up
 
 Write-Host "Running core seeders..."
-$seeders = Get-ChildItem -Path internal\database\seeders\core -Filter *.sql
+$seeders = Get-ChildItem -Path internal\database\seeders\core -Filter *.sql | Sort-Object Name
+$env:PGPASSWORD="postgres"
 foreach ($seeder in $seeders) {
     Write-Host "Running seeder: $($seeder.Name)"
-    $env:PGPASSWORD="postgres"
     psql -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d tuai -f $seeder.FullName
 }
 Write-Host "✅ Database setup completed for Windows!"
