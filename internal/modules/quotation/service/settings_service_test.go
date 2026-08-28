@@ -138,7 +138,7 @@ func TestSettingsService_EnsureDefaultAIAssets_CreateAll(t *testing.T) {
 
 	rcRepo.On("GetActiveRateCard", mock.Anything, companyID, "DEFAULT").Return(nil, repository.ErrRateCardNotFound)
 	rcRepo.On("Create", mock.Anything, tx, mock.AnythingOfType("*domain.RateCard")).Return(nil)
-	rcRepo.On("CreateItem", mock.Anything, tx, mock.AnythingOfType("*domain.RateCardItem")).Return(nil).Times(5)
+	rcRepo.On("CreateItem", mock.Anything, tx, mock.AnythingOfType("*domain.RateCardItem")).Return(nil).Times(10)
 
 	legalRepo.On("GetActiveTemplate", mock.Anything, companyID, "QUOTATION_TERMS").Return(nil, repository.ErrLegalTemplateNotFound)
 	legalRepo.On("Create", mock.Anything, tx, mock.AnythingOfType("*domain.LegalTemplate")).Return(nil)

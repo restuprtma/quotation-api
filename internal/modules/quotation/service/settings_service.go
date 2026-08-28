@@ -118,21 +118,24 @@ func (s *SettingsService) EnsureDefaultAIAssets(ctx context.Context, companyID s
 			return err
 		}
 
-		// Seed standard roles
+		// Seed standard roles for long_term and short_term
 		roles := []string{"System Architect", "Frontend Engineer", "Backend Engineer", "UI/UX", "PM"}
 		amounts := []int64{25000000, 15000000, 15000000, 12000000, 18000000}
-		for i, roleName := range roles {
-			item := &domain.RateCardItem{
-				ID:             uuid.New(),
-				CompanyID:      companyUUID,
-				RateCardID:     rc.ID,
-				Role:           roleName,
-				Seniority:      "Middle",
-				TermType:       "monthly",
-				AmountPerMonth: amounts[i],
-			}
-			if err := s.rateCardRepo.CreateItem(ctx, tx, item); err != nil {
-				return err
+		termTypes := []string{"long_term", "short_term"}
+		for _, termType := range termTypes {
+			for i, roleName := range roles {
+				item := &domain.RateCardItem{
+					ID:             uuid.New(),
+					CompanyID:      companyUUID,
+					RateCardID:     rc.ID,
+					Role:           roleName,
+					Seniority:      "Middle",
+					TermType:       termType,
+					AmountPerMonth: amounts[i],
+				}
+				if err := s.rateCardRepo.CreateItem(ctx, tx, item); err != nil {
+					return err
+				}
 			}
 		}
 	} else if err != nil && !errors.Is(err, repository.ErrRateCardNotFound) {
