@@ -34,7 +34,7 @@ func NewQuotationGenerationHandler(genSvc *service.QuotationGenerationService, g
 func (h *QuotationGenerationHandler) Generate(c *gin.Context) {
 	var req dto.GenerateQuotationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
 		return
 	}
 
