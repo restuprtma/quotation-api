@@ -643,16 +643,21 @@ func (r *GenerationRepository) GetGenerationState(ctx context.Context, companyID
 
 // QuotationGenerationDetail is the safe read model behind GET /quotations/:id
 // for AI-first drafts. Budget figures and internal snapshots are deliberately
-// excluded from this API view.
+// excluded from this API view, except for legal_template_snapshot which is
+// safely exposed to support the frontend "Restore Official Template" action.
 type QuotationGenerationDetail struct {
-	QuotationID     uuid.UUID `json:"quotation_id"`
-	CompanyID       uuid.UUID `json:"company_id"`
-	ClientID        uuid.UUID `json:"client_id"`
-	QuotationNumber string    `json:"quotation_number"`
-	Subject         string    `json:"subject"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	QuotationID               uuid.UUID       `json:"quotation_id"`
+	CompanyID                 uuid.UUID       `json:"company_id"`
+	ClientID                  uuid.UUID       `json:"client_id"`
+	QuotationNumber           string          `json:"quotation_number"`
+	Subject                   string          `json:"subject"`
+	Status                    string          `json:"status"`
+	RevisionID                uuid.UUID       `json:"revision_id"`
+	LegalTemplateSnapshot     json.RawMessage `json:"legal_template_snapshot,omitempty"`
+	LegalContentModified      bool            `json:"legal_content_modified"`
+	CommercialContentModified bool            `json:"commercial_content_modified"`
+	CreatedAt                 time.Time       `json:"created_at"`
+	UpdatedAt                 time.Time       `json:"updated_at"`
 
 	GenerationState
 }
@@ -665,14 +670,20 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 	err := r.db.QueryRow(ctx, `
 		SELECT q.id, q.company_id, q.client_id, q.quotation_number,
 		       COALESCE(q.subject, ''), q.status, q.created_at, q.updated_at,
-		       r.generation_status, r.content_version, COALESCE(r.content_html, ''), r.generated_at, r.updated_at
+		       r.id, r.generation_status, r.content_version, COALESCE(r.content_html, ''),
+		       COALESCE(r.legal_template_snapshot, '{}'::jsonb),
+		       r.legal_content_modified, r.commercial_content_modified,
+		       r.generated_at, r.updated_at
 		FROM quotations q
 		JOIN quotation_revisions r ON r.quotation_id = q.id AND r.revision_number = q.current_revision
 		WHERE q.id = $1 AND q.company_id = $2 AND q.deleted_at IS NULL
 	`, quotationID, companyID).Scan(
 		&d.QuotationID, &d.CompanyID, &d.ClientID, &d.QuotationNumber,
 		&d.Subject, &d.Status, &d.CreatedAt, &d.UpdatedAt,
-		&d.GenerationStatus, &d.ContentVersion, &d.ContentHTML, &d.GeneratedAt, &d.UpdatedAt,
+		&d.RevisionID, &d.GenerationStatus, &d.ContentVersion, &d.ContentHTML,
+		&d.LegalTemplateSnapshot,
+		&d.LegalContentModified, &d.CommercialContentModified,
+		&d.GeneratedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

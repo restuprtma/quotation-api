@@ -600,6 +600,29 @@ func TestHTTP_GetGenerationStatus_ExposesStateWithoutBudgetLeak(t *testing.T) {
 	}
 }
 
+func TestHTTP_GetByID_ExposesLegalSnapshotAndRevisionID(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+	router := newGenerationRouter(pool, &adaptiveAIProvider{}, fx.companyID)
+	qid := generateViaHTTP(t, router, fx)
+
+	w := doJSON(router, http.MethodGet, "/quotation/v1/quotations/"+qid.String(), nil, nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	body := w.Body.String()
+	assert.Contains(t, body, `"quotation_id":`+fmt.Sprintf("%q", qid.String()))
+	assert.Contains(t, body, `"revision_id":`)
+	assert.Contains(t, body, `"legal_template_snapshot":`)
+	assert.Contains(t, body, `"legal_content_modified":false`)
+	assert.Contains(t, body, `"commercial_content_modified":false`)
+	assert.Contains(t, body, `"content_version":1`)
+
+	// Ensure sensitive internal figures/snapshots are NOT leaked in detail
+	for _, forbidden := range []string{"budget_maximum", "allocation_snapshot", "rate_card_snapshot", "skill_snapshot"} {
+		assert.NotContains(t, body, forbidden)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task: wiring verification — request HTTP nyata harus mengalir sampai
 // pipeline asli (handler → service → repo/renderer/sanitizer/DOM validator);
