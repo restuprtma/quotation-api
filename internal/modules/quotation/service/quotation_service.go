@@ -173,7 +173,7 @@ func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.Crede
 		ID:                   cred.ID,
 		CompanyID:            cred.CompanyID,
 		Provider:             cred.Provider,
-		Model:                "", // Model not currently stored in cred entity
+		Model:                cred.Model,
 		KeyHint:              cred.KeyHint,
 		IsActive:             cred.IsActive,
 		CredentialConfigured: true,
@@ -208,6 +208,7 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 	}
 
 	cred.Provider = req.ProviderType
+	cred.Model = req.Model
 
 	if req.APIKey != "" {
 		encKey, err := s.credentialCipher.Encrypt(req.APIKey)
@@ -238,7 +239,7 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 		ID:                   cred.ID,
 		CompanyID:            cred.CompanyID,
 		Provider:             cred.Provider,
-		Model:                "", // Not mapped to cred yet
+		Model:                cred.Model,
 		KeyHint:              cred.KeyHint,
 		IsActive:             cred.IsActive,
 		CredentialConfigured: true,
