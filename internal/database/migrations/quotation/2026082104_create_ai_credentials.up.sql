@@ -1,4 +1,4 @@
-CREATE TABLE ai_credentials (
+CREATE TABLE IF NOT EXISTS ai_credentials (
     company_id UUID NOT NULL,
     provider VARCHAR(50) NOT NULL,
     encrypted_api_key TEXT NOT NULL,
@@ -10,4 +10,5 @@ CREATE TABLE ai_credentials (
     CONSTRAINT uq_company_provider UNIQUE (company_id, provider)
 );
 
-CREATE INDEX idx_ai_credentials_company_active ON ai_credentials (company_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_ai_credentials_company_active ON ai_credentials (company_id, is_active);
+
