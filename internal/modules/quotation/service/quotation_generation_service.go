@@ -25,7 +25,7 @@ import (
 // generate request can never hang indefinitely.
 const (
 	MaxProposalAttempts    = 3
-	DefaultAttemptTimeout  = 45 * time.Second
+	DefaultAttemptTimeout  = 180 * time.Second
 	SafetyEnvelopeFileName = "quotation_safety_v1.txt"
 	SafetyEnvelopeVersion  = "quotation_safety_v1"
 	// DefaultLegalTemplateCode selects the company's standard legal template.
@@ -115,6 +115,7 @@ func (s *DBCredentialProviderSource) ProviderForCompany(ctx context.Context, com
 // mapProviderError converts provider-layer failures into safe codes. It is
 // the single classification point for every AI call failure.
 func mapProviderError(err error) *GenerationError {
+	logger.Error("AI Provider failed", logger.Err(err))
 	var perr *ProviderError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -749,6 +750,9 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 }
 
 func buildAllocationPayload(req dto.GenerateQuotationRequest, cfg *generationConfig, feedback *retryFeedback) allocationPromptPayload {
+	allowedRoles := getAvailableRolesForTerm(cfg.rateCardItems, cfg.termType)
+	allowedSeniorities := getAvailableSenioritiesForTerm(cfg.rateCardItems, cfg.termType)
+
 	return allocationPromptPayload{
 		GenerationInput: allocationPromptInput{
 			Subject:                   strings.TrimSpace(req.Subject),
@@ -763,10 +767,36 @@ func buildAllocationPayload(req dto.GenerateQuotationRequest, cfg *generationCon
 			AdditionalNotes:           req.AdditionalNotes,
 		},
 		TermType:           cfg.termType,
-		AllowedRoles:       append([]string(nil), validRoles...),
-		AllowedSeniorities: append([]string(nil), validSeniorities...),
+		AllowedRoles:       allowedRoles,
+		AllowedSeniorities: allowedSeniorities,
 		RetryFeedback:      feedback,
 	}
+}
+
+func getAvailableRolesForTerm(items []domain.RateCardItem, termType string) []string {
+	var roles []string
+	for _, item := range items {
+		if item.TermType == termType && containsString(validRoles, item.Role) && !containsString(roles, item.Role) {
+			roles = append(roles, item.Role)
+		}
+	}
+	if len(roles) == 0 {
+		return append([]string(nil), validRoles...)
+	}
+	return roles
+}
+
+func getAvailableSenioritiesForTerm(items []domain.RateCardItem, termType string) []string {
+	var seniorities []string
+	for _, item := range items {
+		if item.TermType == termType && containsString(validSeniorities, item.Seniority) && !containsString(seniorities, item.Seniority) {
+			seniorities = append(seniorities, item.Seniority)
+		}
+	}
+	if len(seniorities) == 0 {
+		return append([]string(nil), validSeniorities...)
+	}
+	return seniorities
 }
 
 func buildAllocationPrompt(envelope, instruction string, payload allocationPromptPayload) string {
@@ -795,8 +825,11 @@ Rules: every mandatory_scope item must appear in at least one resource scope_ref
 
 var narrativeOutputContract = []string{
 	"Output ONLY an HTML fragment, no markdown fences, no explanations.",
-	"Allowed tags: p, strong, em, ul, ol, li, h1, h2, h3, br.",
-	"Never output attributes, data-* markers, tables, script, style, links or images.",
+	"You MUST wrap the opening paragraph in <section data-block-type=\"opening\">.</section>",
+	"You MUST wrap the scope list and its heading in <section data-block-type=\"scope\">.</section>",
+	"You MUST wrap the closing paragraph in <section data-block-type=\"closing\">.</section>",
+	"Allowed tags: section, p, strong, em, ul, ol, li, h1, h2, h3, br.",
+	"Never output tables, script, style, links or images.",
 	"Never mention prices, totals, budgets, payment terms or legal clauses.",
 	"Use Bahasa Indonesia formal.",
 }
