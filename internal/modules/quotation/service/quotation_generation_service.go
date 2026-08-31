@@ -241,9 +241,12 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	if perr != nil {
 		var ge *GenerationError
 		if errors.As(perr, &ge) {
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, ge.message)
 			return draft.QuotationID, ge
 		}
-		return draft.QuotationID, newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
+		fallbackErr := newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
+		_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, fallbackErr.message)
+		return draft.QuotationID, fallbackErr
 	}
 
 	enriched, gerr := s.optimizeBudget(ctx, provider, req, cfg)
@@ -251,6 +254,12 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		gerr = s.composeAndPersist(ctx, provider, req, cfg, enriched, draft.RevisionID, provName, model)
 	}
 	if gerr != nil {
+		var ge *GenerationError
+		if errors.As(gerr, &ge) {
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, ge.message)
+		} else {
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, gerr.Error())
+		}
 		return draft.QuotationID, gerr
 	}
 	return draft.QuotationID, nil

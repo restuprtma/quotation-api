@@ -21,8 +21,10 @@ import (
 // revision starts as `pending` until the pipeline persists a result.
 const (
 	QuotationStatusQueued     = "queued"
+	QuotationStatusFailed     = "failed"
 	GenerationStatusPending   = "pending"
 	GenerationStatusCompleted = "completed"
+	GenerationStatusFailed    = "failed"
 
 	PublicationStatusDraft = "draft"
 
@@ -297,28 +299,35 @@ func (r *GenerationRepository) FindByIdempotencyKey(ctx context.Context, company
 // the pool directly.
 func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Execer, companyID, revisionID uuid.UUID, res UpdateGenerationResultParams) error {
 	query := `
-		UPDATE quotation_revisions SET
-			content_html = $1,
-			allocation_snapshot = $2,
-			rate_card_snapshot = $3,
-			legal_template_snapshot = $4,
-			skill_snapshot = $5,
-			ai_provider = $6,
-			ai_model = $7,
-			content_hash = $8,
-			generation_status = $9,
-			generated_at = NOW(),
-			updated_at = NOW(),
-			safety_envelope_version = $12
-		WHERE id = $10 AND company_id = $11
-		RETURNING updated_at
+		WITH updated_rev AS (
+			UPDATE quotation_revisions SET
+				content_html = $1,
+				allocation_snapshot = $2,
+				rate_card_snapshot = $3,
+				legal_template_snapshot = $4,
+				skill_snapshot = $5,
+				ai_provider = $6,
+				ai_model = $7,
+				content_hash = $8,
+				generation_status = $9,
+				generated_at = NOW(),
+				updated_at = NOW(),
+				safety_envelope_version = $12
+			WHERE id = $10 AND company_id = $11
+			RETURNING quotation_id, updated_at
+		)
+		UPDATE quotations q SET
+			status = $13
+		FROM updated_rev r
+		WHERE q.id = r.quotation_id
+		RETURNING r.updated_at
 	`
 	var updatedAt time.Time
 	err := q.QueryRow(ctx, query,
 		res.ContentHTML, res.AllocationSnapshot, res.RateCardSnapshot, res.LegalTemplateSnapshot,
 		res.SkillSnapshot, res.AiProvider, res.AiModel, res.ContentHash,
 		GenerationStatusCompleted, revisionID, companyID,
-		res.SafetyEnvelopeVersion,
+		res.SafetyEnvelopeVersion, PublicationStatusDraft,
 	).Scan(&updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -326,6 +335,34 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 		}
 		logger.Error("Failed to update generation result", logger.Err(err))
 		return err
+	}
+	return nil
+}
+
+// UpdateGenerationFailure atomically records a generation failure, storing
+// the error message in the revision and marking the quotation as failed.
+func (r *GenerationRepository) UpdateGenerationFailure(ctx context.Context, q Execer, companyID, revisionID uuid.UUID, failureReason string) error {
+	query := `
+		WITH updated_rev AS (
+			UPDATE quotation_revisions SET
+				generation_status = $1,
+				generation_error = $2,
+				updated_at = NOW()
+			WHERE id = $3 AND company_id = $4
+			RETURNING quotation_id
+		)
+		UPDATE quotations q SET
+			status = $5
+		FROM updated_rev r
+		WHERE q.id = r.quotation_id
+	`
+	res, err := q.Exec(ctx, query, GenerationStatusFailed, failureReason, revisionID, companyID, QuotationStatusFailed)
+	if err != nil {
+		logger.Error("Failed to update generation failure", logger.Err(err))
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrRevisionNotFound
 	}
 	return nil
 }
