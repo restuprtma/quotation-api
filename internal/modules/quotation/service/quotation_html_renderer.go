@@ -72,6 +72,7 @@ func (r *defaultHTMLRenderer) RenderCriticalBlocks(in CriticalBlocksInput) (stri
 	b.WriteString(r.renderInvestmentTable(in.Allocation))
 	b.WriteString(r.renderPaymentSchedule(in.Payment))
 	b.WriteString(r.renderLegalBlock(in.LegalHTML))
+	b.WriteString(r.renderSignatureBlock())
 	return b.String(), nil
 }
 
@@ -97,14 +98,15 @@ func validatePaymentTerms(p dto.PaymentTermsInput) error {
 
 func (r *defaultHTMLRenderer) renderMetadata(m QuotationMetadata) string {
 	var b strings.Builder
-	b.WriteString(`<div class="qtr-block qtr-metadata" data-block="metadata">`)
+	b.WriteString(`<section data-block-type="metadata">`)
+	b.WriteString("<h1>PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD</h1>")
 	b.WriteString("<p><strong>Nomor Quotation:</strong> " + htmlEscape(m.QuotationNumber) + "</p>")
 	b.WriteString("<p><strong>Subjek:</strong> " + htmlEscape(m.Subject) + "</p>")
 	b.WriteString("<p><strong>Klien:</strong> " + htmlEscape(m.ClientName) + "</p>")
 	if m.IssueDate != "" {
 		b.WriteString("<p><strong>Tanggal:</strong> " + htmlEscape(m.IssueDate) + "</p>")
 	}
-	b.WriteString("</div>")
+	b.WriteString("</section>")
 	return b.String()
 }
 
@@ -122,35 +124,32 @@ func validateResourceLabels(resources []dto.EnrichedResource) error {
 
 func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) string {
 	var b strings.Builder
-	b.WriteString(`<div class="qtr-block qtr-investment" data-block="investment">`)
+	b.WriteString(`<section data-block-type="commercial">`)
+	b.WriteString(`<h2>Development Investment</h2>`)
 	b.WriteString(`<table>`)
 	b.WriteString(`<thead><tr><th>Peran</th><th>Senioritas</th><th>Jumlah SDM</th><th>Durasi (bulan)</th><th>Tarif/Bulan</th><th>Total</th></tr></thead>`)
 	b.WriteString(`<tbody>`)
 	for _, res := range a.Resources {
 		rowKey := strings.ToLower(res.Role) + "_" + strings.ToLower(res.Seniority)
-		fmt.Fprintf(&b, `<tr data-role="%s">`, htmlEscape(rowKey))
+		b.WriteString(`<tr data-role="` + htmlEscape(rowKey) + `">`)
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Role)) + "</td>")
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Seniority)) + "</td>")
-		fmt.Fprintf(&b, "<td>%d</td>", res.EmployeeCount)
-		fmt.Fprintf(&b, "<td>%d</td>", res.PeriodMonths)
+		b.WriteString(fmt.Sprintf("<td>%d</td>", res.EmployeeCount))
+		b.WriteString(fmt.Sprintf("<td>%d</td>", res.PeriodMonths))
 		b.WriteString("<td>" + formatNumber(res.AmountPerMonth) + "</td>")
-		fmt.Fprintf(&b, `<td data-field="line_total">%s</td>`, formatNumber(res.LineTotal))
+		b.WriteString(`<td data-field="line_total">` + formatNumber(res.LineTotal) + "</td>")
 		b.WriteString("</tr>")
 	}
-	totalRow := fmt.Sprintf(
-		`<tr class="qtr-total-row"><td colspan="5"><strong>Total Investasi</strong></td>`+
-			`<td data-field="total_investment"><strong>%s</strong></td></tr>`,
-		formatCurrency(a.TotalInvestment, a.Currency),
-	)
-	b.WriteString(totalRow)
+	b.WriteString(`<tr><td colspan="5"><strong>Total Investment</strong></td><td data-field="total_investment"><strong>` + formatCurrency(a.TotalInvestment, a.Currency) + `</strong></td></tr>`)
 	b.WriteString(`</tbody></table>`)
-	b.WriteString("</div>")
+	b.WriteString(`</section>`)
 	return b.String()
 }
 
 func (r *defaultHTMLRenderer) renderPaymentSchedule(p dto.PaymentTermsInput) string {
 	var b strings.Builder
-	b.WriteString(`<div class="qtr-block qtr-payment" data-block="payment_schedule">`)
+	b.WriteString(`<section data-block-type="payment">`)
+	b.WriteString(`<h2>Jadwal Pembayaran</h2>`)
 	b.WriteString(`<table><thead><tr><th>Milestone</th><th>Persentase</th><th>Keterangan</th></tr></thead><tbody>`)
 	for _, item := range p.Items {
 		b.WriteString("<tr>")
@@ -159,12 +158,24 @@ func (r *defaultHTMLRenderer) renderPaymentSchedule(p dto.PaymentTermsInput) str
 		b.WriteString("<td>" + htmlEscape(item.Description) + "</td>")
 		b.WriteString("</tr>")
 	}
-	b.WriteString(`</tbody></table></div>`)
+	b.WriteString(`</tbody></table>`)
+	b.WriteString(`</section>`)
 	return b.String()
 }
 
 func (r *defaultHTMLRenderer) renderLegalBlock(legalHTML string) string {
-	return `<div class="qtr-block qtr-legal" data-block="legal">` + legalHTML + `</div><!-- /qtr-legal -->`
+	return `<section data-block-type="legal">` + legalHTML + `</section>`
+}
+
+func (r *defaultHTMLRenderer) renderSignatureBlock() string {
+	return `<section data-block-type="signature">
+  <h2>Persetujuan</h2>
+  <table>
+    <tbody>
+      <tr><td>Perwakilan Vendor</td><td>Perwakilan Klien</td></tr>
+    </tbody>
+  </table>
+</section>`
 }
 
 func htmlEscape(s string) string {
@@ -221,19 +232,47 @@ func (r *defaultHTMLRenderer) Assemble(criticalHTML, narrativeHTML string) (stri
 	if strings.TrimSpace(narrativeHTML) == "" {
 		return "", fmt.Errorf("%w: narrative is empty", ErrUnsafeHTML)
 	}
-	lower := strings.ToLower(narrativeHTML)
-	compacted := whitespaceRemoved.Replace(lower)
-	for _, marker := range []string{"data-block=", "data-field=", "data-role="} {
-		if strings.Contains(compacted, marker) {
-			return "", fmt.Errorf("%w: narrative contains protected block marker %q", ErrUnsafeHTML, marker)
+
+	criticalNode, err := html.Parse(strings.NewReader(criticalHTML))
+	if err != nil {
+		return "", err
+	}
+	narrativeNode, err := html.Parse(strings.NewReader(narrativeHTML))
+	if err != nil {
+		return "", err
+	}
+
+	criticalNodes := collectNodes(criticalNode)
+	narrativeNodes := collectNodes(narrativeNode)
+
+	sections := map[string]*html.Node{}
+	for _, node := range criticalNodes {
+		if node.Type == html.ElementNode && node.Data == "section" {
+			for _, attr := range node.Attr {
+				if attr.Key == "data-block-type" {
+					sections[attr.Val] = node
+				}
+			}
+		}
+	}
+	for _, node := range narrativeNodes {
+		if node.Type == html.ElementNode && node.Data == "section" {
+			for _, attr := range node.Attr {
+				if attr.Key == "data-block-type" {
+					sections[attr.Val] = node
+				}
+			}
 		}
 	}
 
+	order := []string{"metadata", "opening", "commercial", "scope", "payment", "legal", "closing", "signature"}
 	var b strings.Builder
-	b.WriteString(`<div class="quotation-document">`)
-	b.WriteString(`<div class="qtr-narrative">` + narrativeHTML + `</div>`)
-	b.WriteString(criticalHTML)
-	b.WriteString(`</div>`)
+	for _, blockType := range order {
+		if node, ok := sections[blockType]; ok {
+			html.Render(&b, node)
+		}
+	}
+
 	return b.String(), nil
 }
 
@@ -272,6 +311,7 @@ func NewDOMValidator() DOMValidator {
 	return &defaultDOMValidator{}
 }
 
+
 func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected IntegrityExpectations) error {
 	root, err := html.Parse(strings.NewReader(documentHTML))
 	if err != nil {
@@ -279,8 +319,8 @@ func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected In
 	}
 	nodes := collectNodes(root)
 
-	for _, requiredBlock := range []string{"metadata", "investment", "payment_schedule"} {
-		block, err := findExactlyOne(nodes, "data-block", requiredBlock)
+	for _, requiredBlock := range []string{"metadata", "commercial", "payment"} {
+		block, err := findExactlyOne(nodes, "data-block-type", requiredBlock)
 		if err != nil {
 			return err
 		}
@@ -371,7 +411,7 @@ func (v *defaultDOMValidator) CheckLegalModified(documentHTML string, expectedLe
 		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
 	}
 	nodes := collectNodes(root)
-	legal, err := findExactlyOne(nodes, "data-block", "legal")
+	legal, err := findExactlyOne(nodes, "data-block-type", "legal")
 	if err != nil || legal == nil {
 		return true, nil
 	}
@@ -396,7 +436,7 @@ func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expec
 		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
 	}
 	nodes := collectNodes(root)
-	investment, err := findExactlyOne(nodes, "data-block", "investment")
+	investment, err := findExactlyOne(nodes, "data-block-type", "commercial")
 	if err != nil || investment == nil {
 		return true, nil
 	}
