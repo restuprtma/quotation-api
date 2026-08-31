@@ -101,7 +101,44 @@ func (s *Service) List(
 	companyID, search, status string,
 	page, limit int,
 ) (*dto.QuotationListResponse, error) {
-	return nil, errors.New("not implemented")
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	offset := (page - 1) * limit
+
+	quots, total, err := s.repo.ListQuotations(ctx, companyID, search, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &dto.QuotationListResponse{
+		Items: make([]dto.QuotationResponse, 0, len(quots)),
+		Total: total,
+	}
+
+	for _, q := range quots {
+		res.Items = append(res.Items, dto.QuotationResponse{
+			ID:                        q.ID,
+			CompanyID:                 q.CompanyID,
+			ClientID:                  q.ClientID,
+			ClientName:                q.ClientName,
+			QuotationNumber:           q.QuotationNumber,
+			Subject:                   q.Subject,
+			SolutionType:              q.SolutionType,
+			CommercialScheme:          q.CommercialScheme,
+			BudgetMaximum:             q.BudgetMaximum,
+			Status:                    q.Status,
+			ActivePublishedRevisionID: q.ActivePublishedRevisionID,
+			CreatedBy:                 q.CreatedBy,
+			CreatedAt:                 q.CreatedAt,
+			UpdatedAt:                 q.UpdatedAt,
+		})
+	}
+
+	return res, nil
 }
 
 // generateQuotationNumber derives the next sequential number
@@ -174,6 +211,7 @@ func (s *Service) GetSettings(ctx context.Context, companyID string) (*dto.Crede
 		CompanyID:            cred.CompanyID,
 		Provider:             cred.Provider,
 		Model:                cred.Model,
+		BaseURL:              cred.BaseURL,
 		KeyHint:              cred.KeyHint,
 		IsActive:             cred.IsActive,
 		CredentialConfigured: true,
@@ -209,6 +247,7 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 
 	cred.Provider = req.ProviderType
 	cred.Model = req.Model
+	cred.BaseURL = req.BaseURL
 
 	if req.APIKey != "" {
 		encKey, err := s.credentialCipher.Encrypt(req.APIKey)
@@ -240,6 +279,7 @@ func (s *Service) UpdateSettings(ctx context.Context, companyID string, req *dto
 		CompanyID:            cred.CompanyID,
 		Provider:             cred.Provider,
 		Model:                cred.Model,
+		BaseURL:              cred.BaseURL,
 		KeyHint:              cred.KeyHint,
 		IsActive:             cred.IsActive,
 		CredentialConfigured: true,
@@ -273,6 +313,7 @@ func (s *Service) TestSettingsConnection(ctx context.Context, companyID string, 
 		ProviderName:    req.ProviderType,
 		DecryptedAPIKey: apiKey,
 		Model:           req.Model,
+		BaseURL:         req.BaseURL,
 	}
 
 	provider, err := s.aiFactory.New(ctx, cfg)

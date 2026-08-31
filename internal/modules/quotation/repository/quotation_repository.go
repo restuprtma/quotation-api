@@ -78,9 +78,11 @@ func (r *Repository) GetQuotationByID(ctx context.Context, id, companyID string)
 			q.solution_type, q.commercial_scheme, q.status, q.current_revision,
 			q.public_token, q.active_published_revision_id, q.created_by,
 			q.created_at, q.updated_at, q.deleted_at,
-			c.name as client_name
+			c.name as client_name,
+			qr.budget_maximum
 		FROM quotations q
 		LEFT JOIN core.clients c ON q.client_id = c.id
+		LEFT JOIN quotation_revisions qr ON qr.quotation_id = q.id AND qr.revision_number = q.current_revision
 		WHERE q.id = $1 AND q.company_id = $2 AND q.deleted_at IS NULL
 	`
 	return scanQuotation(r.db.QueryRow(ctx, query, id, companyID))
@@ -94,6 +96,7 @@ func (r *Repository) ListQuotations(
 	baseQuery := `
 		FROM quotations q
 		LEFT JOIN core.clients c ON q.client_id = c.id
+		LEFT JOIN quotation_revisions qr ON qr.quotation_id = q.id AND qr.revision_number = q.current_revision
 		WHERE q.company_id = $1 AND q.deleted_at IS NULL
 	`
 	args := []any{companyID}
@@ -123,7 +126,8 @@ func (r *Repository) ListQuotations(
 			q.solution_type, q.commercial_scheme, q.status, q.current_revision,
 			q.public_token, q.active_published_revision_id, q.created_by,
 			q.created_at, q.updated_at, q.deleted_at,
-			c.name as client_name
+			c.name as client_name,
+			qr.budget_maximum
 	` + baseQuery + fmt.Sprintf(` ORDER BY q.created_at DESC LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
@@ -181,6 +185,7 @@ func scanQuotationRow(scanner rowScanner) (*domain.Quotation, error) {
 		&q.PublicToken, &q.ActivePublishedRevisionID, &q.CreatedBy,
 		&q.CreatedAt, &q.UpdatedAt, &q.DeletedAt,
 		&q.ClientName,
+		&q.BudgetMaximum,
 	)
 	if err != nil {
 		return nil, err

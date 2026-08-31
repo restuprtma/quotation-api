@@ -21,8 +21,9 @@ type Quotation struct {
 	PublicToken               uuid.UUID  `json:"public_token" db:"public_token"`
 	ActivePublishedRevisionID *uuid.UUID `json:"active_published_revision_id" db:"active_published_revision_id"`
 	// ClientName is populated by JOIN with core.clients for display (list/detail).
-	ClientName *string    `json:"client_name,omitempty" db:"client_name"`
-	CreatedBy  *uuid.UUID `json:"created_by" db:"created_by"`
+	ClientName    *string    `json:"client_name,omitempty" db:"client_name"`
+	BudgetMaximum *int64     `json:"budget_maximum,omitempty" db:"budget_maximum"`
+	CreatedBy     *uuid.UUID `json:"created_by" db:"created_by"`
 	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
 	DeletedAt  *time.Time `json:"deleted_at" db:"deleted_at"`
