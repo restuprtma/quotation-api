@@ -21,12 +21,13 @@ type Quotation struct {
 	PublicToken               uuid.UUID  `json:"public_token" db:"public_token"`
 	ActivePublishedRevisionID *uuid.UUID `json:"active_published_revision_id" db:"active_published_revision_id"`
 	// ClientName is populated by JOIN with core.clients for display (list/detail).
-	ClientName    *string    `json:"client_name,omitempty" db:"client_name"`
-	BudgetMaximum *int64     `json:"budget_maximum,omitempty" db:"budget_maximum"`
-	CreatedBy     *uuid.UUID `json:"created_by" db:"created_by"`
-	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
-	DeletedAt  *time.Time `json:"deleted_at" db:"deleted_at"`
+	ClientName         *string    `json:"client_name,omitempty" db:"client_name"`
+	ClientNameSnapshot *string    `json:"client_name_snapshot,omitempty" db:"client_name_snapshot"`
+	BudgetMaximum      *int64     `json:"budget_maximum,omitempty" db:"budget_maximum"`
+	CreatedBy          *uuid.UUID `json:"created_by" db:"created_by"`
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
+	DeletedAt          *time.Time `json:"deleted_at" db:"deleted_at"`
 }
 
 type QuotationRevision struct {
@@ -37,6 +38,7 @@ type QuotationRevision struct {
 	IdempotencyKey    *string   `json:"idempotency_key" db:"idempotency_key"`
 	PublicationStatus string    `json:"publication_status" db:"publication_status"`
 	GenerationStatus  string    `json:"generation_status" db:"generation_status"`
+	GenerationError   *string   `json:"generation_error,omitempty" db:"generation_error"`
 
 	GenerationInput       json.RawMessage `json:"generation_input" db:"generation_input"`
 	BudgetMaximum         *int64          `json:"budget_maximum" db:"budget_maximum"`
