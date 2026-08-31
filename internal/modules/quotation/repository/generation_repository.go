@@ -49,7 +49,8 @@ func NewGenerationRepository(db *pgxpool.Pool) *GenerationRepository {
 // quotation master plus its Draft Revision 1.
 type CreateDraftParams struct {
 	CompanyID             uuid.UUID
-	ClientID              uuid.UUID
+	ClientID              *uuid.UUID
+	ClientName            string
 	QuotationNumber       string
 	Subject               string
 	SolutionType          string
@@ -149,10 +150,30 @@ func (r *GenerationRepository) tryCreateDraft(ctx context.Context, params Create
 		}
 	}()
 
+	var clientID uuid.UUID
+	if params.ClientID != nil && *params.ClientID != uuid.Nil {
+		clientID = *params.ClientID
+	} else if params.ClientName != "" {
+		repo := NewRepository(r.db)
+		idStr, err := repo.FindClientByName(ctx, tx, params.ClientName)
+		if err != nil {
+			return nil, err
+		}
+		if idStr != nil {
+			clientID = uuid.MustParse(*idStr)
+		} else {
+			newIDStr, err := repo.CreateClientByName(ctx, tx, params.ClientName, params.CreatedBy)
+			if err != nil {
+				return nil, err
+			}
+			clientID = uuid.MustParse(newIDStr)
+		}
+	}
+
 	quotation := &domain.Quotation{
 		ID:               uuid.New(),
 		CompanyID:        params.CompanyID,
-		ClientID:         params.ClientID,
+		ClientID:         clientID,
 		QuotationNumber:  params.QuotationNumber,
 		Subject:          &params.Subject,
 		SolutionType:     params.SolutionType,
@@ -217,8 +238,8 @@ func validateCreateDraftParams(params CreateDraftParams) error {
 	switch {
 	case params.CompanyID == uuid.Nil:
 		return fmt.Errorf("company_id is required")
-	case params.ClientID == uuid.Nil:
-		return fmt.Errorf("client_id is required")
+	case (params.ClientID == nil || *params.ClientID == uuid.Nil) && params.ClientName == "":
+		return fmt.Errorf("client_id or client_name is required")
 	case params.QuotationNumber == "":
 		return fmt.Errorf("quotation_number is required")
 	case params.SolutionType == "":

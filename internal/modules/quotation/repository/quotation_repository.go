@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -191,4 +194,49 @@ func scanQuotationRow(scanner rowScanner) (*domain.Quotation, error) {
 		return nil, err
 	}
 	return q, nil
+}
+
+func (r *Repository) FindClientByName(ctx context.Context, q Execer, name string) (*string, error) {
+	var id string
+	err := q.QueryRow(ctx,
+		`SELECT id::text FROM core.clients WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND deleted_at IS NULL LIMIT 1`,
+		name,
+	).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (r *Repository) CreateClientByName(ctx context.Context, q Execer, name string, createdBy *uuid.UUID) (string, error) {
+	newID := uuid.New()
+	
+	reg := regexp.MustCompile(`[^a-z0-9]+`)
+	base := reg.ReplaceAllString(strings.ToLower(name), "-")
+	base = strings.Trim(base, "-")
+	
+	suffix := newID.String()[:8]
+	if base == "" {
+		base = "client"
+	}
+	
+	maxBaseLen := 63 - 1 - len(suffix)
+	if len(base) > maxBaseLen {
+		base = base[:maxBaseLen]
+		base = strings.TrimRight(base, "-")
+	}
+	
+	slug := base + "-" + suffix
+
+	_, err := q.Exec(ctx,
+		`INSERT INTO core.clients (id, slug, name, is_active, created_by) VALUES ($1, $2, $3, true, $4)`,
+		newID, slug, name, createdBy,
+	)
+	if err != nil {
+		return "", err
+	}
+	return newID.String(), nil
 }

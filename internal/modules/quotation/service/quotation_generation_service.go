@@ -220,6 +220,7 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	draft, err := s.genRepo.CreateDraftTransaction(ctx, repository.CreateDraftParams{
 		CompanyID:             companyID,
 		ClientID:              req.ClientID,
+		ClientName:            strings.TrimSpace(req.ClientName),
 		QuotationNumber:       cfg.quotationNumber,
 		Subject:               strings.TrimSpace(req.Subject),
 		SolutionType:          req.SolutionType,
@@ -662,11 +663,16 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	}
 	cfg.legal = legal
 
-	clientName, cerr := s.genRepo.GetClientName(ctx, req.ClientID)
-	if cerr != nil {
-		// Display-only field; a lookup outage must not block generation.
-		logger.Error("Failed to resolve client name", logger.Err(cerr))
-		clientName = ""
+	var clientName string
+	if req.ClientID != nil && *req.ClientID != uuid.Nil {
+		var cerr error
+		clientName, cerr = s.genRepo.GetClientName(ctx, *req.ClientID)
+		if cerr != nil {
+			logger.Error("Failed to resolve client name", logger.Err(cerr))
+			clientName = ""
+		}
+	} else if req.ClientName != "" {
+		clientName = strings.TrimSpace(req.ClientName)
 	}
 	cfg.clientName = clientName
 
