@@ -232,6 +232,13 @@ func (r *defaultHTMLRenderer) Assemble(criticalHTML, narrativeHTML string) (stri
 	if strings.TrimSpace(narrativeHTML) == "" {
 		return "", fmt.Errorf("%w: narrative is empty", ErrUnsafeHTML)
 	}
+	lower := strings.ToLower(narrativeHTML)
+	compacted := whitespaceRemoved.Replace(lower)
+	for _, marker := range []string{"data-block-type=\"commercial\"", "data-field=", "data-role="} {
+		if strings.Contains(compacted, marker) {
+			return "", fmt.Errorf("%w: narrative contains protected block marker %q", ErrUnsafeHTML, marker)
+		}
+	}
 
 	criticalNode, err := html.Parse(strings.NewReader(criticalHTML))
 	if err != nil {
@@ -362,7 +369,7 @@ func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected In
 		}
 	}
 
-	legal, err := findExactlyOne(nodes, "data-block", "legal")
+	legal, err := findExactlyOne(nodes, "data-block-type", "legal")
 	if err != nil {
 		return err
 	}
@@ -596,7 +603,7 @@ func findAllOrdered(nodes []*html.Node, key, val string) []*html.Node {
 }
 
 func validatePaymentSchedule(nodes []*html.Node, items []ExpectedPayment) error {
-	block, err := findExactlyOne(nodes, "data-block", "payment_schedule")
+	block, err := findExactlyOne(nodes, "data-block-type", "payment")
 	if err != nil {
 		return err
 	}

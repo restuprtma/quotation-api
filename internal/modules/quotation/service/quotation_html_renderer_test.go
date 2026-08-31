@@ -68,7 +68,7 @@ func TestRenderCriticalBlocks_Metadata(t *testing.T) {
 	out, err := r.RenderCriticalBlocks(sampleCriticalInput())
 	require.NoError(t, err)
 
-	assert.Contains(t, out, `data-block="metadata"`)
+	assert.Contains(t, out, `data-block-type="metadata"`)
 	assert.Contains(t, out, "QTN/2026/08/0001")
 	assert.Contains(t, out, "PT Contoh Jaya")
 	assert.Contains(t, out, "26 Agustus 2026")
@@ -95,7 +95,7 @@ func TestRenderCriticalBlocks_InvestmentTableMatchesEnrichedLines(t *testing.T) 
 	out, err := r.RenderCriticalBlocks(sampleCriticalInput())
 	require.NoError(t, err)
 
-	assert.Contains(t, out, `data-block="investment"`)
+	assert.Contains(t, out, `data-block-type="commercial"`)
 	assert.Contains(t, out, `data-role="programmer_senior"`)
 	assert.Contains(t, out, `data-role="quality_assurance_intermediate"`)
 
@@ -128,7 +128,7 @@ func TestRenderCriticalBlocks_PaymentSchedule(t *testing.T) {
 	out, err := r.RenderCriticalBlocks(sampleCriticalInput())
 	require.NoError(t, err)
 
-	assert.Contains(t, out, `data-block="payment_schedule"`)
+	assert.Contains(t, out, `data-block-type="payment"`)
 	assert.Contains(t, out, "DP")
 	assert.Contains(t, out, "Pelunasan")
 	assert.Contains(t, out, ">30%<")
@@ -167,10 +167,10 @@ func TestRenderCriticalBlocks_LegalVerbatim(t *testing.T) {
 	out, err := r.RenderCriticalBlocks(sampleCriticalInput())
 	require.NoError(t, err)
 
-	start := strings.Index(out, `data-block="legal">`)
+	start := strings.Index(out, `data-block-type="legal">`)
 	require.Greater(t, start, -1)
-	rest := out[start+len(`data-block="legal">`):]
-	end := strings.Index(rest, `</div><!-- /qtr-legal -->`)
+	rest := out[start+len(`data-block-type="legal">`):]
+	end := strings.Index(rest, `</section>`)
 	require.Greater(t, end, -1)
 	rendered := rest[:end]
 
@@ -209,7 +209,7 @@ func assembleForTest(t *testing.T) (string, service.IntegrityExpectations) {
 	critical, err := r.RenderCriticalBlocks(in)
 	require.NoError(t, err)
 
-	full, err := r.Assemble(critical, `<p>Terima kasih atas kepercayaan Bapak/Ibu.</p>`)
+	full, err := r.Assemble(critical, `<section data-block-type="opening"><p>Terima kasih atas kepercayaan Bapak/Ibu.</p></section>`)
 	require.NoError(t, err)
 
 	lines := make([]service.ExpectedLine, 0, len(in.Allocation.Resources))
@@ -231,15 +231,16 @@ func TestAssemble_DocumentStructure(t *testing.T) {
 	critical, err := r.RenderCriticalBlocks(sampleCriticalInput())
 	require.NoError(t, err)
 
-	full, err := r.Assemble(critical, `<p>Naratif pembuka.</p>`)
+	full, err := r.Assemble(critical, `<section data-block-type="opening"><p>Naratif pembuka.</p></section>`)
 	require.NoError(t, err)
 
-	assert.Contains(t, full, `class="quotation-document"`)
-	assert.Contains(t, full, `class="qtr-narrative"`)
-	assert.Contains(t, full, "<p>Naratif pembuka.</p>")
-	assert.Less(t, strings.Index(full, "qtr-narrative"), strings.Index(full, `data-block="investment"`))
-	assert.Less(t, strings.Index(full, `data-block="investment"`), strings.Index(full, `data-block="payment_schedule"`))
-	assert.Less(t, strings.Index(full, `data-block="payment_schedule"`), strings.Index(full, `data-block="legal"`))
+	assert.Contains(t, full, `data-block-type="metadata"`)
+	assert.Contains(t, full, `data-block-type="opening"`)
+	assert.Contains(t, full, `data-block-type="commercial"`)
+	assert.Less(t, strings.Index(full, `data-block-type="metadata"`), strings.Index(full, `data-block-type="opening"`))
+	assert.Less(t, strings.Index(full, `data-block-type="opening"`), strings.Index(full, `data-block-type="commercial"`))
+	assert.Less(t, strings.Index(full, `data-block-type="commercial"`), strings.Index(full, `data-block-type="payment"`))
+	assert.Less(t, strings.Index(full, `data-block-type="payment"`), strings.Index(full, `data-block-type="legal"`))
 }
 
 func TestAssemble_EmptyCriticalRejected(t *testing.T) {
@@ -291,7 +292,7 @@ func TestDOMValidator_DetectsModifiedTotalInvestment(t *testing.T) {
 
 func TestDOMValidator_DetectsRemovedTotalRow(t *testing.T) {
 	doc, exp := assembleForTest(t)
-	removedIdx := strings.Index(doc, `<tr class="qtr-total-row">`)
+	removedIdx := strings.Index(doc, `<tr><td colspan="5"><strong>Total Investment</strong></td>`)
 	endIdx := strings.Index(doc[removedIdx:], "</tr>") + removedIdx + len("</tr>")
 	tampered := doc[:removedIdx] + doc[endIdx:]
 	v := service.NewDOMValidator()
@@ -315,8 +316,8 @@ func TestDOMValidator_DetectsModifiedLineTotal(t *testing.T) {
 
 func TestDOMValidator_DetectsMissingLegalBlock(t *testing.T) {
 	doc, exp := assembleForTest(t)
-	start := strings.Index(doc, `<div class="qtr-block qtr-legal"`)
-	end := strings.Index(doc[start:], "</div>") + start + len("</div>")
+	start := strings.Index(doc, `<section data-block-type="legal"`)
+	end := strings.Index(doc[start:], "</section>") + start + len("</section>")
 	tampered := doc[:start] + doc[end:]
 	v := service.NewDOMValidator()
 
@@ -468,9 +469,9 @@ func TestAssemble_RejectsWhitespaceSeparatedMarkerInNarrative(t *testing.T) {
 
 func TestDOMValidator_DetectsRemovedMetadataBlock(t *testing.T) {
 	doc, exp := assembleForTest(t)
-	start := strings.Index(doc, `<div class="qtr-block qtr-metadata"`)
+	start := strings.Index(doc, `<section data-block-type="metadata"`)
 	require.Greater(t, start, -1)
-	end := strings.Index(doc[start:], `26 Agustus 2026</p></div>`) + start + len(`26 Agustus 2026</p></div>`)
+	end := strings.Index(doc[start:], `</section>`) + start + len(`</section>`)
 	tampered := doc[:start] + doc[end:]
 	v := service.NewDOMValidator()
 
@@ -482,9 +483,9 @@ func TestDOMValidator_DetectsRemovedMetadataBlock(t *testing.T) {
 
 func TestDOMValidator_DetectsRemovedInvestmentBlock(t *testing.T) {
 	doc, exp := assembleForTest(t)
-	start := strings.Index(doc, `<div class="qtr-block qtr-investment"`)
+	start := strings.Index(doc, `<section data-block-type="commercial"`)
 	require.Greater(t, start, -1)
-	end := strings.Index(doc[start:], `</tbody></table></div>`) + start + len(`</tbody></table></div>`)
+	end := strings.Index(doc[start:], `</section>`) + start + len(`</section>`)
 	tampered := doc[:start] + doc[end:]
 	v := service.NewDOMValidator()
 
@@ -609,7 +610,7 @@ func TestDOMValidator_PaymentExpectationsSatisfiedPasses(t *testing.T) {
 func TestDOMValidator_CheckLegalModified_MatchesReturnsFalse(t *testing.T) {
 	v := service.NewDOMValidator()
 	legalSnippet := `<p>Syarat &amp; Ketentuan: Pembayaran 30 hari.</p>`
-	doc := fmt.Sprintf(`<section data-block="legal">%s</section>`, legalSnippet)
+	doc := fmt.Sprintf(`<section data-block-type="legal">%s</section>`, legalSnippet)
 
 	modified, err := v.CheckLegalModified(doc, legalSnippet)
 	require.NoError(t, err)
@@ -619,7 +620,7 @@ func TestDOMValidator_CheckLegalModified_MatchesReturnsFalse(t *testing.T) {
 func TestDOMValidator_CheckLegalModified_DifferentTextReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
 	expected := `<p>Syarat &amp; Ketentuan Asli</p>`
-	doc := `<section data-block="legal"><p>Syarat &amp; Ketentuan Diubah oleh BA</p></section>`
+	doc := `<section data-block-type="legal"><p>Syarat &amp; Ketentuan Diubah oleh BA</p></section>`
 
 	modified, err := v.CheckLegalModified(doc, expected)
 	require.NoError(t, err)
@@ -629,7 +630,7 @@ func TestDOMValidator_CheckLegalModified_DifferentTextReturnsTrue(t *testing.T) 
 func TestDOMValidator_CheckLegalModified_MissingSectionReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
 	expected := `<p>Syarat &amp; Ketentuan Asli</p>`
-	doc := `<section data-block="investment"><p>Hanya investment</p></section>`
+	doc := `<section data-block-type="commercial"><p>Hanya investment</p></section>`
 
 	modified, err := v.CheckLegalModified(doc, expected)
 	require.NoError(t, err)
@@ -638,7 +639,7 @@ func TestDOMValidator_CheckLegalModified_MissingSectionReturnsTrue(t *testing.T)
 
 func TestDOMValidator_CheckLegalModified_EmptyExpectedReturnsFalse(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment"><p>Hanya investment</p></section>`
+	doc := `<section data-block-type="commercial"><p>Hanya investment</p></section>`
 
 	modified, err := v.CheckLegalModified(doc, "")
 	require.NoError(t, err)
@@ -647,13 +648,13 @@ func TestDOMValidator_CheckLegalModified_EmptyExpectedReturnsFalse(t *testing.T)
 
 func TestDOMValidator_CheckCommercialModified_MatchesReturnsFalse(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment">
+	doc := `<section data-block-type="commercial">
 		<table>
 			<tr data-role="lead_developer_senior"><td data-field="line_total">35.000.000</td></tr>
 			<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
 		</table>
 	</section>
-	<section data-block="payment_schedule">
+	<section data-block-type="payment">
 		<table><tr><td data-field="payment_percentage">100%</td></tr></table>
 	</section>`
 
@@ -675,7 +676,7 @@ func TestDOMValidator_CheckCommercialModified_MatchesReturnsFalse(t *testing.T) 
 
 func TestDOMValidator_CheckCommercialModified_EmptyExpectationsReturnsFalse(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment"><p>Any text</p></section>`
+	doc := `<section data-block-type="commercial"><p>Any text</p></section>`
 
 	modified, err := v.CheckCommercialModified(doc, service.IntegrityExpectations{})
 	require.NoError(t, err)
@@ -684,7 +685,7 @@ func TestDOMValidator_CheckCommercialModified_EmptyExpectationsReturnsFalse(t *t
 
 func TestDOMValidator_CheckCommercialModified_ChangedTotalReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment">
+	doc := `<section data-block-type="commercial">
 		<table>
 			<tr data-role="lead_developer_senior"><td data-field="line_total">35.000.000</td></tr>
 			<tr><td data-field="total_investment">Rp 40.000.000</td></tr>
@@ -706,7 +707,7 @@ func TestDOMValidator_CheckCommercialModified_ChangedTotalReturnsTrue(t *testing
 
 func TestDOMValidator_CheckCommercialModified_MissingRowReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment">
+	doc := `<section data-block-type="commercial">
 		<table>
 			<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
 		</table>
@@ -727,13 +728,13 @@ func TestDOMValidator_CheckCommercialModified_MissingRowReturnsTrue(t *testing.T
 
 func TestDOMValidator_CheckCommercialModified_PaymentPercentageMismatchReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment">
+	doc := `<section data-block-type="commercial">
 		<table>
 			<tr data-role="lead_developer_senior"><td data-field="line_total">35.000.000</td></tr>
 			<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
 		</table>
 	</section>
-	<section data-block="payment_schedule">
+	<section data-block-type="payment">
 		<table><tr><td data-field="payment_percentage">50%</td></tr></table>
 	</section>`
 
@@ -755,7 +756,7 @@ func TestDOMValidator_CheckCommercialModified_PaymentPercentageMismatchReturnsTr
 
 func TestDOMValidator_CheckCommercialModified_ChangedRenderedResourceFieldReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment"><table><tbody>
+	doc := `<section data-block-type="commercial"><table><tbody>
 		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>2</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
 		<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
 	</tbody></table></section>`
@@ -774,7 +775,7 @@ func TestDOMValidator_CheckCommercialModified_ChangedRenderedResourceFieldReturn
 
 func TestDOMValidator_CheckCommercialModified_ExtraResourceRowReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment"><table><tbody>
+	doc := `<section data-block-type="commercial"><table><tbody>
 		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>1</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
 		<tr data-role="extra_role_senior"><td>Extra Role</td><td>Senior</td><td>1</td><td>1</td><td>1</td><td data-field="line_total">1</td></tr>
 		<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
@@ -794,7 +795,7 @@ func TestDOMValidator_CheckCommercialModified_ExtraResourceRowReturnsTrue(t *tes
 
 func TestDOMValidator_CheckCommercialModified_MarkersOutsideInvestmentReturnTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment"><table><tr data-role="decoy"><td>Changed</td></tr></table></section>
+	doc := `<section data-block-type="commercial"><table><tr data-role="decoy"><td>Changed</td></tr></table></section>
 	<section><table>
 		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>1</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
 		<tr><td data-field="total_investment">Rp 35.000.000</td></tr>
@@ -814,7 +815,7 @@ func TestDOMValidator_CheckCommercialModified_MarkersOutsideInvestmentReturnTrue
 
 func TestDOMValidator_CheckCommercialModified_UnmarkedResourceRowReturnsTrue(t *testing.T) {
 	v := service.NewDOMValidator()
-	doc := `<section data-block="investment"><table><tbody>
+	doc := `<section data-block-type="commercial"><table><tbody>
 		<tr data-role="lead_developer_senior"><td>Lead Developer</td><td>Senior</td><td>1</td><td>1</td><td>35.000.000</td><td data-field="line_total">35.000.000</td></tr>
 		<tr><td>Unmarked Role</td><td>Senior</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
 		<tr><td colspan="5">Total</td><td data-field="total_investment">Rp 35.000.000</td></tr>
