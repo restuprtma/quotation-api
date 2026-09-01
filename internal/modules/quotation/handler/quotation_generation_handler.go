@@ -222,13 +222,23 @@ func (h *QuotationGenerationHandler) mapRegenerateError(c *gin.Context, err erro
 }
 
 // mapGenerationError translates *service.GenerationError into HTTP responses.
-// Every code maps to a static message; errors.detail carries ONLY the safe
+// Every code maps to a static message and errors.detail carries ONLY the safe
 // code itself (GenerationError.Error() == code), so no provider payload,
-// stack trace, budget figure or internal note can ever reach the client.
+// stack trace or internal note reaches the client.
+//
+// SANCTIONED EXCEPTION: budget_unfeasible may carry a Summary (last allocation
+// attempt: stable roles + rate-card-derived total + budget excess). These are
+// figures the client already sees in the rendered document — explicitly
+// permitted per service.GenerationError documentation.
 func (h *QuotationGenerationHandler) mapGenerationError(c *gin.Context, err error) {
 	var ge *service.GenerationError
 	if !errors.As(err, &ge) {
 		response.Error(c, http.StatusInternalServerError, "Internal server error", "")
+		return
+	}
+
+	if ge.Code == service.ErrCodeBudgetUnfeasible && ge.Summary != "" {
+		response.Error(c, http.StatusUnprocessableEntity, ge.Summary, ge.Error())
 		return
 	}
 

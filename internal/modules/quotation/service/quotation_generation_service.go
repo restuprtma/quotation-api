@@ -37,8 +37,16 @@ const (
 )
 
 // Safe error codes surfaced to callers. Values match the roadmap error list;
-// messages are STATIC — they never embed prompts, provider payloads, keys,
-// budget figures, or rate card internals.
+// messages are STATIC — they never embed prompts, provider payloads, keys
+// or rate card internals.
+//
+// SANCTIONED EXCEPTION: budget_unfeasible carries a Summary built from the
+// LAST allocation attempt (role composition, rate-card-derived total, budget
+// maximum and excess). Those figures already appear in rendered documents, so
+// they are not internal; the summary is written to the HTTP message and the
+// generation_error column. It must still never embed prompts, provider
+// payloads, keys, or internal-only terms (budget/utilization wording stays
+// out of rendered documents regardless).
 const (
 	ErrCodeSettingsIncomplete  = "settings_incomplete"
 	ErrCodeInvalidClient       = "invalid_client"
@@ -66,6 +74,10 @@ const (
 // just the code, so even accidental logging of the error stays safe.
 type GenerationError struct {
 	Code    string
+	// Summary is only populated for budget_unfeasible; it carries the last
+	// attempt's allocation composition total and the budget maximum/excess so
+	// the client sees WHY instead of a bare code. Stable role names only.
+	Summary string
 	message string
 }
 
@@ -73,6 +85,46 @@ func (e *GenerationError) Error() string { return e.Code }
 
 func newGenerationError(code, safeMessage string) *GenerationError {
 	return &GenerationError{Code: code, message: safeMessage}
+}
+
+func newGenerationErrorWithSummary(code, safeMessage, summary string) *GenerationError {
+	return &GenerationError{Code: code, message: safeMessage, Summary: summary}
+}
+
+// buildBudgetSummary renders the last attempt's allocation so budget_unfeasible
+// answers WHY: stable role/seniority names, durations in months derived from
+// the stored quarter units, and amounts formatted exactly like the rendered
+// document. It only contains rate-card-derived figures the client already sees,
+// never prompts, provider payloads, or keys.
+func buildBudgetSummary(enriched dto.EnrichedAllocation, finalTotal, budgetMaximum int64) string {
+	if len(enriched.Resources) == 0 {
+		return ""
+	}
+	rows := make([]string, 0, len(enriched.Resources))
+	for _, res := range enriched.Resources {
+		rows = append(rows, fmt.Sprintf("%d %s %s %s", res.EmployeeCount, res.Role, res.Seniority, quarterDurationLabel(res.PeriodQuarters)))
+	}
+	excess := finalTotal - budgetMaximum
+	return fmt.Sprintf(
+		"Setelah %d percobaan, alokasi minimum layak (%s) total %s, masih %s di atas batas %s.",
+		MaxProposalAttempts,
+		strings.Join(rows, ", "),
+		formatCurrency(finalTotal, enriched.Currency),
+		formatCurrency(excess, enriched.Currency),
+		formatCurrency(budgetMaximum, enriched.Currency),
+	)
+}
+
+// quarterDurationLabel converts integer quarter-months to an Indonesian month
+// label (4 quarters = 1 bln), keeping integer-only money/time math.
+func quarterDurationLabel(quarters int64) string {
+	fractional := map[int64]string{1: "25", 2: "5", 3: "75"}
+	whole := quarters / 4
+	rem := quarters % 4
+	if rem == 0 {
+		return fmt.Sprintf("%d bln", whole)
+	}
+	return fmt.Sprintf("%d,%s bln", whole, fractional[rem])
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +314,14 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	if gerr != nil {
 		var ge *GenerationError
 		if errors.As(gerr, &ge) {
-			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, ge.message)
+			// budget_unfeasible carries the sanctioned allocation summary;
+			// persist that instead of the generic static message so the DB
+			// records WHY the run failed.
+			reason := ge.message
+			if ge.Summary != "" {
+				reason = ge.Summary
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
 		} else {
 			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, gerr.Error())
 		}
@@ -742,6 +801,10 @@ type retryFeedback struct {
 func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provider AIProvider, req dto.GenerateQuotationRequest, cfg *generationConfig) (dto.EnrichedAllocation, error) {
 	envelope := GetSafetyEnvelope(SafetyEnvelopeFileName)
 	var feedback *retryFeedback
+	// The client already sees the allocation lines and rate card figures in
+	// rendered documents, so a summary of the LAST aborted attempt is carried
+	// alongside budget_unfeasible (see GenerationError doc).
+	var lastSummary string
 
 	for attempt := 1; attempt <= MaxProposalAttempts; attempt++ {
 		text, gerr := s.callProvider(ctx, provider, buildAllocationPrompt(envelope, cfg.skill.ContentInstruction, buildAllocationPayload(req, cfg, feedback)))
@@ -781,9 +844,14 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 			finalTotal = discount.FinalTotal
 		}
 
+		// The client already sees the allocation lines and rate-card figures in
+		// the rendered document, so a summary of the last aborted attempt can be
+		// safely carried alongside budget_unfeasible (see GenerationError doc).
+		lastSummary = buildBudgetSummary(enriched, finalTotal, req.BudgetMaximum)
+
 		if req.BudgetMaximum > 0 && finalTotal > req.BudgetMaximum {
 			if attempt == MaxProposalAttempts {
-				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
+				return dto.EnrichedAllocation{}, newGenerationErrorWithSummary(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation", lastSummary)
 			}
 			excess, xerr := checkedAdd(finalTotal, -req.BudgetMaximum)
 			if xerr != nil {
@@ -807,7 +875,7 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 		return enriched, nil
 	}
 	// Defensive: unreachable while every iteration either returns or continues.
-	return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
+	return dto.EnrichedAllocation{}, newGenerationErrorWithSummary(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation", lastSummary)
 }
 
 func buildAllocationPayload(req dto.GenerateQuotationRequest, cfg *generationConfig, feedback *retryFeedback) allocationPromptPayload {
