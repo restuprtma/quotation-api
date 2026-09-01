@@ -55,6 +55,11 @@ const (
 	// Session 5 regeneration-specific safe codes.
 	ErrCodeRegenerateRateLimited = "regenerate_rate_limited"
 	ErrCodeRevisionConflict      = "revision_conflict"
+
+	// Discount credential/config error, separate from budget_unfeasible: a
+	// discount configured above the raw total is a BA configuration mistake
+	// and must be surfaced distinctly from a genuinely unaffordable scope.
+	ErrCodeInvalidDiscountTarget = "invalid_discount_target"
 )
 
 // GenerationError is the ONLY error type returned by Generate. Error() prints
@@ -498,7 +503,7 @@ func (s *QuotationGenerationService) SaveDraft(
 	}
 	for _, resource := range enriched.Resources {
 		if strings.TrimSpace(resource.Role) == "" || strings.TrimSpace(resource.Seniority) == "" ||
-			resource.EmployeeCount <= 0 || resource.PeriodMonths <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
+			resource.EmployeeCount <= 0 || resource.PeriodQuarters <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
 			return nil, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot resource is invalid")
 		}
 	}
@@ -561,10 +566,17 @@ func (s *QuotationGenerationService) SaveDraft(
 				Role:           res.Role,
 				Seniority:      res.Seniority,
 				EmployeeCount:  res.EmployeeCount,
-				PeriodMonths:   res.PeriodMonths,
+				PeriodQuarters: res.PeriodQuarters,
 				AmountPerMonth: res.AmountPerMonth,
 				LineTotal:      res.LineTotal,
 			})
+		}
+		if enriched.Discount != nil {
+			expectations.Discount = &ExpectedDiscount{
+				Name:       enriched.Discount.Name,
+				Amount:     enriched.Discount.Amount,
+				FinalTotal: enriched.Discount.FinalTotal,
+			}
 		}
 		for _, item := range generationInput.PaymentTerms.Items {
 			expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
@@ -716,10 +728,17 @@ type retryFeedback struct {
 	BudgetExcessAmount int64 `json:"budget_excess_amount"`
 }
 
-// optimizeBudget drives the allocation stage: propose -> validate -> enrich,
-// feeding the excess amount back to the provider on overbudget proposals.
-// Validation failures are fatal; only budget overruns trigger a retry, and
-// mandatory scope coverage is re-enforced by the validator on EVERY attempt.
+// optimizeBudget runs the allocation stage: propose -> validate -> enrich per
+// attempt. A document discount (when present) is recalculated on EVERY attempt
+// from that attempt's fresh raw total, never cached across attempts, and the
+// client budget is compared against the FINAL (post-discount) total — the
+// amount the client will actually pay. The budget value comes from the same
+// req.BudgetMaximum consumed by every layer of this pipeline; there is no
+// re-fetch within a request.
+//
+// Only genuine budget overruns trigger a retry. Validation failures are fatal,
+// as is any discount that resolves above the raw total (a BA configuration
+// error, surfaced as invalid_discount_target rather than budget_unfeasible).
 func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provider AIProvider, req dto.GenerateQuotationRequest, cfg *generationConfig) (dto.EnrichedAllocation, error) {
 	envelope := GetSafetyEnvelope(SafetyEnvelopeFileName)
 	var feedback *retryFeedback
@@ -738,27 +757,54 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeAllocationInvalid, "allocation proposal is invalid")
 		}
 
-		enriched, aerr := s.allocator.Calculate(proposal, cfg.rateCardItems, req.ProjectDurationMonths, req.BudgetMaximum, cfg.rateCard.Currency)
-		if aerr == nil {
-			return enriched, nil
+		enriched, aerr := s.allocator.CalculateRaw(proposal, cfg.rateCardItems, req.ProjectDurationMonths, cfg.rateCard.Currency)
+		if aerr != nil {
+			if errors.Is(aerr, dto.ErrMissingRateItem) {
+				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeRateItemMissing, "rate item is missing for the proposed allocation")
+			}
+			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
 		}
 
-		var exceeded *dto.BudgetExceededError
-		if errors.As(aerr, &exceeded) {
+		// Discount is always recomputed for this attempt's raw total. nil means
+		// discount_type "none" — final total then equals the raw total, keeping
+		// the no-discount path byte-identical to the historical behavior.
+		discount, derr := CalculateDiscount(enriched.TotalInvestment, req)
+		if derr != nil {
+			if errors.Is(derr, dto.ErrDiscountInvalid) {
+				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeInvalidDiscountTarget, "discount exceeds the raw investment total")
+			}
+			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "discount calculation failed")
+		}
+
+		finalTotal := enriched.TotalInvestment
+		if discount != nil {
+			finalTotal = discount.FinalTotal
+		}
+
+		if req.BudgetMaximum > 0 && finalTotal > req.BudgetMaximum {
 			if attempt == MaxProposalAttempts {
 				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
+			}
+			excess, xerr := checkedAdd(finalTotal, -req.BudgetMaximum)
+			if xerr != nil {
+				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "budget excess calculation failed")
 			}
 			feedback = &retryFeedback{
 				AttemptNumber:      attempt + 1,
 				MaximumAttempts:    MaxProposalAttempts,
-				BudgetExcessAmount: exceeded.Excess,
+				BudgetExcessAmount: excess,
 			}
 			continue
 		}
-		if errors.Is(aerr, dto.ErrMissingRateItem) {
-			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeRateItemMissing, "rate item is missing for the proposed allocation")
+
+		enriched.Discount = discount
+		if req.BudgetMaximum > 0 {
+			utilizationNumerator, uerr := checkedMul(finalTotal, 100)
+			if uerr == nil {
+				enriched.UtilizationPercent = utilizationNumerator / req.BudgetMaximum
+			}
 		}
-		return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
+		return enriched, nil
 	}
 	// Defensive: unreachable while every iteration either returns or continues.
 	return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
@@ -831,8 +877,15 @@ func buildAllocationPrompt(envelope, instruction string, payload allocationPromp
 }
 
 const allocationTaskSchema = `Return exactly ONE JSON object and nothing else. Schema:
-{"resources":[{"role":"<one of allowed_roles>","seniority":"<one of allowed_seniorities>","employee_count":<integer >= 1>,"period_months":<integer >= 1>,"scope_references":["<exact scope strings from generation_input>"],"reason":"<short reason>"}],"selected_optional_scope":["<subset of optional_scope>"],"standard_activities":["<subset of allowed_standard_activities>"]}
-Rules: every mandatory_scope item must appear in at least one resource scope_references; never invent roles, seniorities or business features; NEVER output rates, amounts, prices, discounts or totals.`
+{"resources":[{"role":"<one of allowed_roles>","seniority":"<one of allowed_seniorities>","employee_count":<integer >= 1>,"period_quarters":<integer >= 1>,"scope_references":["<exact scope strings from generation_input>"],"reason":"<short reason>"}],"selected_optional_scope":["<subset of optional_scope>"],"standard_activities":["<subset of allowed_standard_activities>"]}
+Rules: every mandatory_scope item must appear in at least one resource scope_references; never invent roles, seniorities or business features; NEVER output rates, amounts, prices, discounts or totals.
+period_quarters rules: period_quarters is an INTEGER count of quarter-months THAT role is actively engaged, not the total project length. 1 quarter-month = 0.25 bulan, so 2 = 0.5 month, 3 = 0.75 month, 4 = one full month, 5 = 1.25 months. It must be between 1 and project_duration_months * 4 (compute the cap; e.g. a 6-month project caps at 24 quarters, a 2-month project at 8 quarters). Allocate each role only for the phases where its work actually happens, following a realistic software delivery lifecycle: business_analyst is front-loaded (requirements & design, first part of the project only, never the whole duration); ui_ux_designer is front-loaded on design and tapers off once development is underway; programmer is the core build role and usually the ONLY role legitimately active across most of the project duration; quality_assurance is back-loaded (testing and stabilization near the end); devops is concentrated around initial setup and final release/hardening. Use the reason field to justify every chosen period_quarters (which phase, roughly how many months). Every role assigned the full cap must explicitly justify it.
+HARD CONSTRAINT - Do NOT default every role to the full project duration: a non-programmer role carrying the full duration is idle capacity the client pays for. The server sums your proposed lines into a raw total and checks it against budget_maximum; a proposal above budget is rejected as budget_unfeasible and there are at most 3 attempts, so never spend an attempt on a proposal whose untrimmed non-programmer durations are an obvious cost driver. Assigning full duration to a non-programmer role while the proposal is at or above budget_maximum is a ladder violation and wastes the attempt.
+LOW-BUDGET MANDATORY PRIORITY LADDER - when the budget is tight relative to team size (especially project_duration_months <= 2), you MUST apply the four levels strictly in order, escalating only when the previous level demonstrably cannot bring the raw total under budget_maximum. Short projects are where budgets are tightest, so structural phasing applies MORE here, never less:
+LEVEL 1 - TRIM NON-CORE DURATIONS to their real phase footprint, expressed in quarter units. Reference pattern for a 2-month project (cap 8 quarters): ui_ux_designer 1-2 quarters (design up front, execution belongs to programmers), business_analyst 2 quarters (requirements & design up front), devops 1 quarter (setup at start, deploy at end), quality_assurance 1-2 quarters (testing at the end), programmer at or near the full 8 quarters - the only role that may span the whole timeline. Scale the same way for 3 months: support roles stay at 1-4 quarters each.
+LEVEL 2 - CONSOLIDATE OVERLAPPING ROLES: drop a resource row entirely and expand the surviving row's scope_references to cover its scope. Never invent merged role names - every role must still come from allowed_roles. Allowed consolidation: business_analyst absorbing ui_ux_designer work (both are front-loaded product/design work). Never consolidate a programmer row with a non-programmer row, and never merge quality_assurance with devops.
+LEVEL 3 - REDUCE SCOPE, NOT WORK QUALITY: exclude optional_scope items and drop standard_activities that are not essential, trimming the affected rows' scope_references accordingly. Keep the quality of every retained role's work intact.
+LEVEL 4 - LAST RESORT: if levels 1-3 combined still leave the raw total above budget_maximum, still return your most aggressively reduced proposal (minimum viable team, non-core roles at 1-2 quarters, core programmer dominant) and state in the surviving reason fields exactly what was already stripped (e.g. "minimum viable team: support roles at 0.25 month of a 2-month project"). Never return a proposal where every role carries the full project duration.`
 
 // ---------------------------------------------------------------------------
 // Narrative composition
@@ -1002,10 +1055,17 @@ func buildIntegrityExpectations(req dto.GenerateQuotationRequest, cfg *generatio
 			Role:           res.Role,
 			Seniority:      res.Seniority,
 			EmployeeCount:  res.EmployeeCount,
-			PeriodMonths:   res.PeriodMonths,
+			PeriodQuarters: res.PeriodQuarters,
 			AmountPerMonth: res.AmountPerMonth,
 			LineTotal:      res.LineTotal,
 		})
+	}
+	if enriched.Discount != nil {
+		expectations.Discount = &ExpectedDiscount{
+			Name:       enriched.Discount.Name,
+			Amount:     enriched.Discount.Amount,
+			FinalTotal: enriched.Discount.FinalTotal,
+		}
 	}
 	for _, item := range req.PaymentTerms.Items {
 		expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
@@ -1040,6 +1100,9 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 	}
 	if err := validatePaymentTerms(req.PaymentTerms); err != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "payment terms are invalid")
+	}
+	if err := ValidateDiscountRequest(req); err != nil {
+		return newGenerationError(ErrCodeInvalidDiscountTarget, "discount is invalid")
 	}
 	return nil
 }
