@@ -49,6 +49,7 @@ type GenerateQuotationRequest struct {
 	SkillID                   uuid.UUID         `json:"skill_id"`
 	ClientID                  *uuid.UUID        `json:"client_id,omitempty"`
 	ClientName                string            `json:"client_name,omitempty"`
+	ClientCompanyName         string            `json:"client_company_name,omitempty"`
 	Subject                   string            `json:"subject"`
 	SolutionType              string            `json:"solution_type"`
 	CommercialScheme          string            `json:"commercial_scheme"`
@@ -68,7 +69,8 @@ type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`
 	EmployeeCount   int64    `json:"employee_count"`
-	PeriodMonths    int64    `json:"period_months"`
+	PeriodQuarters  int64    `json:"period_quarters,omitempty"`
+	PeriodMonths    int64    `json:"period_months,omitempty"`
 	ScopeReferences []string `json:"scope_references"`
 	Reason          string   `json:"reason"`
 }
@@ -84,6 +86,7 @@ type EnrichedResource struct {
 	Seniority       string   `json:"seniority"`
 	TermType        string   `json:"term_type"`
 	EmployeeCount   int64    `json:"employee_count"`
+	PeriodQuarters  int64    `json:"period_quarters"`
 	PeriodMonths    int64    `json:"period_months"`
 	AmountPerMonth  int64    `json:"amount_per_month"`
 	LineTotal       int64    `json:"line_total"`

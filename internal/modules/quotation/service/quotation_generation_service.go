@@ -37,16 +37,8 @@ const (
 )
 
 // Safe error codes surfaced to callers. Values match the roadmap error list;
-// messages are STATIC — they never embed prompts, provider payloads, keys
-// or rate card internals.
-//
-// SANCTIONED EXCEPTION: budget_unfeasible carries a Summary built from the
-// LAST allocation attempt (role composition, rate-card-derived total, budget
-// maximum and excess). Those figures already appear in rendered documents, so
-// they are not internal; the summary is written to the HTTP message and the
-// generation_error column. It must still never embed prompts, provider
-// payloads, keys, or internal-only terms (budget/utilization wording stays
-// out of rendered documents regardless).
+// messages are STATIC — they never embed prompts, provider payloads, keys,
+// budget figures, or rate card internals.
 const (
 	ErrCodeSettingsIncomplete  = "settings_incomplete"
 	ErrCodeInvalidClient       = "invalid_client"
@@ -63,11 +55,6 @@ const (
 	// Session 5 regeneration-specific safe codes.
 	ErrCodeRegenerateRateLimited = "regenerate_rate_limited"
 	ErrCodeRevisionConflict      = "revision_conflict"
-
-	// Discount credential/config error, separate from budget_unfeasible: a
-	// discount configured above the raw total is a BA configuration mistake
-	// and must be surfaced distinctly from a genuinely unaffordable scope.
-	ErrCodeInvalidDiscountTarget = "invalid_discount_target"
 )
 
 // GenerationError is the ONLY error type returned by Generate. Error() prints
@@ -89,42 +76,6 @@ func newGenerationError(code, safeMessage string) *GenerationError {
 
 func newGenerationErrorWithSummary(code, safeMessage, summary string) *GenerationError {
 	return &GenerationError{Code: code, message: safeMessage, Summary: summary}
-}
-
-// buildBudgetSummary renders the last attempt's allocation so budget_unfeasible
-// answers WHY: stable role/seniority names, durations in months derived from
-// the stored quarter units, and amounts formatted exactly like the rendered
-// document. It only contains rate-card-derived figures the client already sees,
-// never prompts, provider payloads, or keys.
-func buildBudgetSummary(enriched dto.EnrichedAllocation, finalTotal, budgetMaximum int64) string {
-	if len(enriched.Resources) == 0 {
-		return ""
-	}
-	rows := make([]string, 0, len(enriched.Resources))
-	for _, res := range enriched.Resources {
-		rows = append(rows, fmt.Sprintf("%d %s %s %s", res.EmployeeCount, res.Role, res.Seniority, quarterDurationLabel(res.PeriodQuarters)))
-	}
-	excess := finalTotal - budgetMaximum
-	return fmt.Sprintf(
-		"Setelah %d percobaan, alokasi minimum layak (%s) total %s, masih %s di atas batas %s.",
-		MaxProposalAttempts,
-		strings.Join(rows, ", "),
-		formatCurrency(finalTotal, enriched.Currency),
-		formatCurrency(excess, enriched.Currency),
-		formatCurrency(budgetMaximum, enriched.Currency),
-	)
-}
-
-// quarterDurationLabel converts integer quarter-months to an Indonesian month
-// label (4 quarters = 1 bln), keeping integer-only money/time math.
-func quarterDurationLabel(quarters int64) string {
-	fractional := map[int64]string{1: "25", 2: "5", 3: "75"}
-	whole := quarters / 4
-	rem := quarters % 4
-	if rem == 0 {
-		return fmt.Sprintf("%d bln", whole)
-	}
-	return fmt.Sprintf("%d,%s bln", whole, fractional[rem])
 }
 
 // ---------------------------------------------------------------------------
@@ -314,11 +265,8 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	if gerr != nil {
 		var ge *GenerationError
 		if errors.As(gerr, &ge) {
-			// budget_unfeasible carries the sanctioned allocation summary;
-			// persist that instead of the generic static message so the DB
-			// records WHY the run failed.
 			reason := ge.message
-			if ge.Summary != "" {
+			if ge.Code == ErrCodeBudgetUnfeasible && ge.Summary != "" {
 				reason = ge.Summary
 			}
 			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
@@ -377,10 +325,11 @@ func (s *QuotationGenerationService) runComposition(
 ) (string, error) {
 	critical, rerr := s.renderer.RenderCriticalBlocks(CriticalBlocksInput{
 		Metadata: QuotationMetadata{
-			QuotationNumber: cfg.quotationNumber,
-			Subject:         strings.TrimSpace(req.Subject),
-			ClientName:      cfg.clientName,
-			IssueDate:       indonesianDate(time.Now()),
+			QuotationNumber:   cfg.quotationNumber,
+			Subject:           strings.TrimSpace(req.Subject),
+			ClientName:        cfg.clientName,
+			ClientCompanyName: cfg.clientCompanyName,
+			IssueDate:         indonesianDate(time.Now()),
 		},
 		Allocation: enriched,
 		Payment:    req.PaymentTerms,
@@ -562,7 +511,7 @@ func (s *QuotationGenerationService) SaveDraft(
 	}
 	for _, resource := range enriched.Resources {
 		if strings.TrimSpace(resource.Role) == "" || strings.TrimSpace(resource.Seniority) == "" ||
-			resource.EmployeeCount <= 0 || resource.PeriodQuarters <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
+			resource.EmployeeCount <= 0 || resource.PeriodMonths <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
 			return nil, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot resource is invalid")
 		}
 	}
@@ -625,17 +574,10 @@ func (s *QuotationGenerationService) SaveDraft(
 				Role:           res.Role,
 				Seniority:      res.Seniority,
 				EmployeeCount:  res.EmployeeCount,
-				PeriodQuarters: res.PeriodQuarters,
+				PeriodMonths:   res.PeriodMonths,
 				AmountPerMonth: res.AmountPerMonth,
 				LineTotal:      res.LineTotal,
 			})
-		}
-		if enriched.Discount != nil {
-			expectations.Discount = &ExpectedDiscount{
-				Name:       enriched.Discount.Name,
-				Amount:     enriched.Discount.Amount,
-				FinalTotal: enriched.Discount.FinalTotal,
-			}
 		}
 		for _, item := range generationInput.PaymentTerms.Items {
 			expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
@@ -691,9 +633,10 @@ type generationConfig struct {
 	skill            *domain.Skill
 	rateCard         *domain.RateCard
 	rateCardItems    []domain.RateCardItem
-	legal            *domain.LegalTemplate
-	clientName       string
-	quotationNumber  string
+	legal             *domain.LegalTemplate
+	clientName        string
+	clientCompanyName string
+	quotationNumber   string
 	termType         string
 	rateCardSnapshot json.RawMessage
 	legalSnapshot    json.RawMessage
@@ -735,17 +678,26 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	cfg.legal = legal
 
 	var clientName string
+	var clientCompanyName string
 	if req.ClientID != nil && *req.ClientID != uuid.Nil {
 		var cerr error
-		clientName, cerr = s.genRepo.GetClientName(ctx, *req.ClientID)
+		resolvedName, cerr := s.genRepo.GetClientName(ctx, *req.ClientID)
 		if cerr != nil {
 			logger.Error("Failed to resolve client name", logger.Err(cerr))
-			clientName = ""
+		} else {
+			clientCompanyName = resolvedName
 		}
-	} else if req.ClientName != "" {
+	}
+	if req.ClientName != "" {
 		clientName = strings.TrimSpace(req.ClientName)
+	} else if clientCompanyName != "" {
+		clientName = clientCompanyName
+	}
+	if req.ClientCompanyName != "" {
+		clientCompanyName = strings.TrimSpace(req.ClientCompanyName)
 	}
 	cfg.clientName = clientName
+	cfg.clientCompanyName = clientCompanyName
 
 	number, err := s.genRepo.NextQuotationNumber(ctx, companyID)
 	if err != nil {
@@ -787,17 +739,10 @@ type retryFeedback struct {
 	BudgetExcessAmount int64 `json:"budget_excess_amount"`
 }
 
-// optimizeBudget runs the allocation stage: propose -> validate -> enrich per
-// attempt. A document discount (when present) is recalculated on EVERY attempt
-// from that attempt's fresh raw total, never cached across attempts, and the
-// client budget is compared against the FINAL (post-discount) total — the
-// amount the client will actually pay. The budget value comes from the same
-// req.BudgetMaximum consumed by every layer of this pipeline; there is no
-// re-fetch within a request.
-//
-// Only genuine budget overruns trigger a retry. Validation failures are fatal,
-// as is any discount that resolves above the raw total (a BA configuration
-// error, surfaced as invalid_discount_target rather than budget_unfeasible).
+// optimizeBudget drives the allocation stage: propose -> validate -> enrich,
+// feeding the excess amount back to the provider on overbudget proposals.
+// Validation failures are fatal; only budget overruns trigger a retry, and
+// mandatory scope coverage is re-enforced by the validator on EVERY attempt.
 func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provider AIProvider, req dto.GenerateQuotationRequest, cfg *generationConfig) (dto.EnrichedAllocation, error) {
 	envelope := GetSafetyEnvelope(SafetyEnvelopeFileName)
 	var feedback *retryFeedback
@@ -828,25 +773,7 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
 		}
 
-		// Discount is always recomputed for this attempt's raw total. nil means
-		// discount_type "none" — final total then equals the raw total, keeping
-		// the no-discount path byte-identical to the historical behavior.
-		discount, derr := CalculateDiscount(enriched.TotalInvestment, req)
-		if derr != nil {
-			if errors.Is(derr, dto.ErrDiscountInvalid) {
-				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeInvalidDiscountTarget, "discount exceeds the raw investment total")
-			}
-			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "discount calculation failed")
-		}
-
 		finalTotal := enriched.TotalInvestment
-		if discount != nil {
-			finalTotal = discount.FinalTotal
-		}
-
-		// The client already sees the allocation lines and rate-card figures in
-		// the rendered document, so a summary of the last aborted attempt can be
-		// safely carried alongside budget_unfeasible (see GenerationError doc).
 		lastSummary = buildBudgetSummary(enriched, finalTotal, req.BudgetMaximum)
 
 		if req.BudgetMaximum > 0 && finalTotal > req.BudgetMaximum {
@@ -865,7 +792,6 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 			continue
 		}
 
-		enriched.Discount = discount
 		if req.BudgetMaximum > 0 {
 			utilizationNumerator, uerr := checkedMul(finalTotal, 100)
 			if uerr == nil {
@@ -876,6 +802,46 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 	}
 	// Defensive: unreachable while every iteration either returns or continues.
 	return dto.EnrichedAllocation{}, newGenerationErrorWithSummary(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation", lastSummary)
+}
+
+// buildBudgetSummary renders the last attempt's allocation so budget_unfeasible
+// answers WHY: stable role/seniority names, durations in months derived from
+// the stored quarter units, and amounts formatted exactly like the rendered
+// document. It only contains rate-card-derived figures the client already sees,
+// never prompts, provider payloads, or keys.
+func buildBudgetSummary(enriched dto.EnrichedAllocation, finalTotal, budgetMaximum int64) string {
+	if len(enriched.Resources) == 0 {
+		return ""
+	}
+	rows := make([]string, 0, len(enriched.Resources))
+	for _, res := range enriched.Resources {
+		dur := res.PeriodQuarters
+		if dur <= 0 && res.PeriodMonths > 0 {
+			dur = res.PeriodMonths * 4
+		}
+		rows = append(rows, fmt.Sprintf("%d %s %s %s", res.EmployeeCount, res.Role, res.Seniority, quarterDurationLabel(dur)))
+	}
+	excess := finalTotal - budgetMaximum
+	return fmt.Sprintf(
+		"Setelah %d percobaan, alokasi minimum layak (%s) total %s, masih %s di atas batas %s.",
+		MaxProposalAttempts,
+		strings.Join(rows, ", "),
+		formatCurrency(finalTotal, enriched.Currency),
+		formatCurrency(excess, enriched.Currency),
+		formatCurrency(budgetMaximum, enriched.Currency),
+	)
+}
+
+// quarterDurationLabel converts integer quarter-months to an Indonesian month
+// label (4 quarters = 1 bln), keeping integer-only money/time math.
+func quarterDurationLabel(quarters int64) string {
+	fractional := map[int64]string{1: "25", 2: "5", 3: "75"}
+	whole := quarters / 4
+	rem := quarters % 4
+	if rem == 0 {
+		return fmt.Sprintf("%d bln", whole)
+	}
+	return fmt.Sprintf("%d,%s bln", whole, fractional[rem])
 }
 
 func buildAllocationPayload(req dto.GenerateQuotationRequest, cfg *generationConfig, feedback *retryFeedback) allocationPromptPayload {
@@ -962,12 +928,15 @@ LEVEL 4 - LAST RESORT: if levels 1-3 combined still leave the raw total above bu
 var narrativeOutputContract = []string{
 	"Output ONLY an HTML fragment, no markdown fences, no explanations.",
 	"You MUST wrap the opening paragraph in <section data-block-type=\"opening\">.</section>",
-	"You MUST wrap the scope list and its heading in <section data-block-type=\"scope\">.</section>",
+	"The opening paragraph MUST begin with: 'Melalui penawaran ini, kami menegaskan kesiapan tim IT Profesional kami yang berjumlah lebih dari 100 orang untuk mendukung layanan dan keberhasilan proyek. Dokumen ini memuat ruang lingkup pekerjaan, output, timeline, dan rincian biaya sebagai acuan kesepakatan bersama kedua belah pihak.'",
+	"You MUST wrap the scope section in <section data-block-type=\"scope\">.</section>",
+	"The scope section MUST have heading <h2>Lingkup Pekerjaan &amp; Timeline</h2>.",
+	"For each scope_items entry, output a <strong> title followed by a <ul> with 2-4 <li> items describing specific technical deliverables or activities for that scope area. Write in Bahasa Indonesia formal with English technical terms inline.",
 	"You MUST wrap the closing paragraph in <section data-block-type=\"closing\">.</section>",
 	"Allowed tags: section, p, strong, em, ul, ol, li, h1, h2, h3, br.",
 	"Never output tables, script, style, links or images.",
 	"Never mention prices, totals, budgets, payment terms or legal clauses.",
-	"Use Bahasa Indonesia formal.",
+	"Use Bahasa Indonesia formal with English IT/software engineering terms.",
 }
 
 func (s *QuotationGenerationService) composeNarrative(ctx context.Context, provider AIProvider, req dto.GenerateQuotationRequest, cfg *generationConfig, enriched dto.EnrichedAllocation) (string, error) {
@@ -1014,7 +983,11 @@ func (s *QuotationGenerationService) composeNarrative(ctx context.Context, provi
 	return narrative, nil
 }
 
-const narrativeTaskSchema = `Compose the narrative section of a business quotation: an opening paragraph, a "Ruang Lingkup dan Timeline" heading followed by one list item per scope_items entry, and a closing courtesy paragraph.`
+const narrativeTaskSchema = `Compose the narrative section of a Venturo Pro Solusindo business quotation document:
+1. An opening paragraph that affirms the company's readiness with 100+ IT professionals to support the project.
+2. A "Lingkup Pekerjaan & Timeline" section: for each scope_items entry, write a descriptive subsection with the scope name in <strong> tags, followed by a <ul> list of 2-4 specific technical activities or deliverables. Group related scope items by project phase (e.g., Requirement Analysis & System Design, Development, SIT/UAT & Go-Live) when the scope naturally fits those phases.
+3. A brief closing courtesy paragraph.
+The tone is formal Indonesian (Bahasa Indonesia) with English IT terminology inline.`
 
 type allocationPromptInput struct {
 	Subject                   string   `json:"subject"`
@@ -1124,16 +1097,10 @@ func buildIntegrityExpectations(req dto.GenerateQuotationRequest, cfg *generatio
 			Seniority:      res.Seniority,
 			EmployeeCount:  res.EmployeeCount,
 			PeriodQuarters: res.PeriodQuarters,
+			PeriodMonths:   res.PeriodMonths,
 			AmountPerMonth: res.AmountPerMonth,
 			LineTotal:      res.LineTotal,
 		})
-	}
-	if enriched.Discount != nil {
-		expectations.Discount = &ExpectedDiscount{
-			Name:       enriched.Discount.Name,
-			Amount:     enriched.Discount.Amount,
-			FinalTotal: enriched.Discount.FinalTotal,
-		}
 	}
 	for _, item := range req.PaymentTerms.Items {
 		expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
@@ -1168,9 +1135,6 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 	}
 	if err := validatePaymentTerms(req.PaymentTerms); err != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "payment terms are invalid")
-	}
-	if err := ValidateDiscountRequest(req); err != nil {
-		return newGenerationError(ErrCodeInvalidDiscountTarget, "discount is invalid")
 	}
 	return nil
 }

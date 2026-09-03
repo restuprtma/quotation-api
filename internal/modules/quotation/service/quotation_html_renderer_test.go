@@ -22,6 +22,7 @@ func sampleEnrichedAllocation() dto.EnrichedAllocation {
 				Seniority:      "senior",
 				TermType:       "long_term",
 				EmployeeCount:  1,
+				PeriodQuarters: 12,
 				PeriodMonths:   3,
 				AmountPerMonth: 12_000_000,
 				LineTotal:      36_000_000,
@@ -31,6 +32,7 @@ func sampleEnrichedAllocation() dto.EnrichedAllocation {
 				Seniority:      "intermediate",
 				TermType:       "long_term",
 				EmployeeCount:  2,
+				PeriodQuarters: 12,
 				PeriodMonths:   3,
 				AmountPerMonth: 8_000_000,
 				LineTotal:      48_000_000,
@@ -74,6 +76,21 @@ func TestRenderCriticalBlocks_Metadata(t *testing.T) {
 	assert.Contains(t, out, "26 Agustus 2026")
 }
 
+func TestRenderCriticalBlocks_MetadataWithClientCompanyName(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	in := sampleCriticalInput()
+	in.Metadata.ClientName = "Bpk. Budi Santoso"
+	in.Metadata.ClientCompanyName = "PT Maju Bersama Digital"
+
+	out, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, `data-block-type="metadata"`)
+	assert.Contains(t, out, "Bpk. Budi Santoso")
+	assert.Contains(t, out, "PT Maju Bersama Digital")
+	assert.Contains(t, out, "<p><strong>Perusahaan:</strong> PT Maju Bersama Digital</p>")
+}
+
 func TestRenderCriticalBlocks_MetadataEscapesInjectedHTML(t *testing.T) {
 	in := sampleCriticalInput()
 	in.Metadata.Subject = `<script>alert('meta')</script>`
@@ -101,7 +118,10 @@ func TestRenderCriticalBlocks_InvestmentTableMatchesEnrichedLines(t *testing.T) 
 
 	for _, res := range allocation.Resources {
 		assert.Contains(t, out, fmt.Sprintf(`data-role="%s_%s"`, res.Role, res.Seniority))
+		assert.Contains(t, out, "<td>3 bln</td>")
 	}
+	assert.Contains(t, out, "<th>Durasi (bulan)</th>")
+	assert.NotContains(t, out, "<th>Durasi (kuartal)</th>")
 	assert.Contains(t, out, "12.000.000")
 	assert.Contains(t, out, "8.000.000")
 	assert.Contains(t, out, "36.000.000")
@@ -292,7 +312,7 @@ func TestDOMValidator_DetectsModifiedTotalInvestment(t *testing.T) {
 
 func TestDOMValidator_DetectsRemovedTotalRow(t *testing.T) {
 	doc, exp := assembleForTest(t)
-	removedIdx := strings.Index(doc, `<tr><td colspan="5"><strong>Total Investment</strong></td>`)
+	removedIdx := strings.Index(doc, `<tr><td colspan="5"><strong>TOTAL INVESTMENT</strong></td>`)
 	endIdx := strings.Index(doc[removedIdx:], "</tr>") + removedIdx + len("</tr>")
 	tampered := doc[:removedIdx] + doc[endIdx:]
 	v := service.NewDOMValidator()
@@ -875,4 +895,65 @@ func TestDOMValidator_ValidateDocumentSafety_BareTextBudgetLeakRejects(t *testin
 	err := v.ValidateDocumentSafety(`Nilai maksimum 100.000.000 rupiah.`, &budget, 50000000)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestRenderCriticalBlocks_InvestmentTableQuarterDurations(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	v := service.NewDOMValidator()
+
+	testCases := []struct {
+		quarters      int64
+		expectedLabel string
+	}{
+		{1, "0,25 bln"},
+		{2, "0,5 bln"},
+		{3, "0,75 bln"},
+		{4, "1 bln"},
+		{6, "1,5 bln"},
+		{8, "2 bln"},
+		{12, "3 bln"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.expectedLabel, func(t *testing.T) {
+			input := sampleCriticalInput()
+			input.Allocation.Resources = []dto.EnrichedResource{
+				{
+					Role:           "programmer",
+					Seniority:      "senior",
+					TermType:       "long_term",
+					EmployeeCount:  1,
+					PeriodQuarters: tc.quarters,
+					PeriodMonths:   (tc.quarters + 3) / 4,
+					AmountPerMonth: 12_000_000,
+					LineTotal:      (12_000_000 * 1 * tc.quarters) / 4,
+				},
+			}
+			input.Allocation.TotalInvestment = input.Allocation.Resources[0].LineTotal
+
+			out, err := r.RenderCriticalBlocks(input)
+			require.NoError(t, err)
+			assert.Contains(t, out, fmt.Sprintf("<td>%s</td>", tc.expectedLabel))
+
+			expected := service.IntegrityExpectations{
+				Currency:        "IDR",
+				TotalInvestment: input.Allocation.TotalInvestment,
+				Lines: []service.ExpectedLine{
+					{
+						Role:           "programmer",
+						Seniority:      "senior",
+						EmployeeCount:  1,
+						PeriodQuarters: tc.quarters,
+						PeriodMonths:   (tc.quarters + 3) / 4,
+						AmountPerMonth: 12_000_000,
+						LineTotal:      input.Allocation.Resources[0].LineTotal,
+					},
+				},
+			}
+
+			modified, err := v.CheckCommercialModified(out, expected)
+			require.NoError(t, err)
+			assert.False(t, modified, "quarter duration %s must not be flagged as modified", tc.expectedLabel)
+		})
+	}
 }

@@ -390,9 +390,6 @@ func TestGenerate_ThreeTimesOverbudget_BudgetUnfeasible(t *testing.T) {
 	require.ErrorAs(t, err, &ge)
 	assert.Equal(t, "budget_unfeasible", ge.Code)
 	assert.Len(t, ge.Error(), len("budget_unfeasible")) // redaksi: Error() == kode saja
-	// Exception sanctionne: untuk budget_unfeasible, ringkasan alokasi percobaan
-	// terakhir (role + total + selisih) boleh ikut dalam Summary/pesan HTTP —
-	// angka turunan rate card yang memang sudah terlihat di dokumen.
 	require.NotEmpty(t, ge.Summary, "budget_unfeasible harus membawa ringkasan alokasi terakhir")
 	assert.Contains(t, ge.Summary, "programmer", "ringkasan menyebut komposisi role")
 	assert.Contains(t, ge.Summary, "business_analyst")

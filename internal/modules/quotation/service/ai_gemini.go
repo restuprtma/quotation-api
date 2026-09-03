@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -23,7 +24,11 @@ func NewGeminiProvider(cfg ProviderConfig) *GeminiProvider {
 }
 
 func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
-	endpoint := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(p.cfg.Model) + ":generateContent"
+	baseURL := "https://generativelanguage.googleapis.com/v1beta"
+	if p.cfg.BaseURL != "" {
+		baseURL = strings.TrimRight(p.cfg.BaseURL, "/")
+	}
+	endpoint := baseURL + "/models/" + url.PathEscape(p.cfg.Model) + ":generateContent"
 
 	body, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{

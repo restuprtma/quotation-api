@@ -29,10 +29,11 @@ var (
 )
 
 type QuotationMetadata struct {
-	QuotationNumber string
-	Subject         string
-	ClientName      string
-	IssueDate       string
+	QuotationNumber   string
+	Subject           string
+	ClientName        string
+	ClientCompanyName string
+	IssueDate         string
 }
 
 type CriticalBlocksInput struct {
@@ -103,6 +104,9 @@ func (r *defaultHTMLRenderer) renderMetadata(m QuotationMetadata) string {
 	b.WriteString("<p><strong>Nomor Quotation:</strong> " + htmlEscape(m.QuotationNumber) + "</p>")
 	b.WriteString("<p><strong>Subjek:</strong> " + htmlEscape(m.Subject) + "</p>")
 	b.WriteString("<p><strong>Klien:</strong> " + htmlEscape(m.ClientName) + "</p>")
+	if m.ClientCompanyName != "" {
+		b.WriteString("<p><strong>Perusahaan:</strong> " + htmlEscape(m.ClientCompanyName) + "</p>")
+	}
 	if m.IssueDate != "" {
 		b.WriteString("<p><strong>Tanggal:</strong> " + htmlEscape(m.IssueDate) + "</p>")
 	}
@@ -135,12 +139,12 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Role)) + "</td>")
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Seniority)) + "</td>")
 		b.WriteString(fmt.Sprintf("<td>%d</td>", res.EmployeeCount))
-		b.WriteString(fmt.Sprintf("<td>%d</td>", res.PeriodMonths))
+		b.WriteString("<td>" + formatQuarterDuration(res.PeriodQuarters, res.PeriodMonths) + "</td>")
 		b.WriteString("<td>" + formatNumber(res.AmountPerMonth) + "</td>")
 		b.WriteString(`<td data-field="line_total">` + formatNumber(res.LineTotal) + "</td>")
 		b.WriteString("</tr>")
 	}
-	b.WriteString(`<tr><td colspan="5"><strong>Total Investment</strong></td><td data-field="total_investment"><strong>` + formatCurrency(a.TotalInvestment, a.Currency) + `</strong></td></tr>`)
+	b.WriteString(`<tr><td colspan="5"><strong>TOTAL INVESTMENT</strong></td><td data-field="total_investment"><strong>` + formatCurrency(a.TotalInvestment, a.Currency) + `</strong></td></tr>`)
 	b.WriteString(`</tbody></table>`)
 	b.WriteString(`</section>`)
 	return b.String()
@@ -149,8 +153,8 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 func (r *defaultHTMLRenderer) renderPaymentSchedule(p dto.PaymentTermsInput) string {
 	var b strings.Builder
 	b.WriteString(`<section data-block-type="payment">`)
-	b.WriteString(`<h2>Jadwal Pembayaran</h2>`)
-	b.WriteString(`<table><thead><tr><th>Milestone</th><th>Persentase</th><th>Keterangan</th></tr></thead><tbody>`)
+	b.WriteString(`<h2>Ketentuan Pembayaran</h2>`)
+	b.WriteString(`<table><thead><tr><th>Terms</th><th>Persentase (%)</th><th>Keterangan</th></tr></thead><tbody>`)
 	for _, item := range p.Items {
 		b.WriteString("<tr>")
 		b.WriteString("<td>" + htmlEscape(item.MilestoneName) + "</td>")
@@ -170,9 +174,20 @@ func (r *defaultHTMLRenderer) renderLegalBlock(legalHTML string) string {
 func (r *defaultHTMLRenderer) renderSignatureBlock() string {
 	return `<section data-block-type="signature">
   <h2>Persetujuan</h2>
-  <table>
+  <table class="signature-table">
     <tbody>
-      <tr><td>Perwakilan Vendor</td><td>Perwakilan Klien</td></tr>
+      <tr>
+        <td class="signature-cell">
+          <p>Hormat Kami,</p>
+          <br><br><br><br>
+          <p><strong>PT Venturo Pro Solusindo</strong></p>
+        </td>
+        <td class="signature-cell">
+          <p>Disetujui Oleh,</p>
+          <br><br><br><br>
+          <p><strong>(Nama Klien)</strong></p>
+        </td>
+      </tr>
     </tbody>
   </table>
 </section>`
@@ -287,9 +302,66 @@ type ExpectedLine struct {
 	Role           string
 	Seniority      string
 	EmployeeCount  int64
+	PeriodQuarters int64
 	PeriodMonths   int64
 	AmountPerMonth int64
 	LineTotal      int64
+}
+
+// formatQuarterDuration converts integer quarter-months to human-friendly Indonesian label
+// e.g. 1 quarter = 0,25 bln, 2 = 0,5 bln, 4 = 1 bln, 6 = 1,5 bln, 8 = 2 bln, 12 = 3 bln
+func formatQuarterDuration(quarters, months int64) string {
+	if quarters <= 0 && months > 0 {
+		quarters = months * 4
+	}
+	if quarters <= 0 {
+		return "0 bln"
+	}
+	whole := quarters / 4
+	rem := quarters % 4
+	fractional := map[int64]string{1: "25", 2: "5", 3: "75"}
+	if rem == 0 {
+		return fmt.Sprintf("%d bln", whole)
+	}
+	return fmt.Sprintf("%d,%s bln", whole, fractional[rem])
+}
+
+func isMatchingDuration(got string, quarters, months int64) bool {
+	if quarters <= 0 && months > 0 {
+		quarters = months * 4
+	}
+	if months <= 0 && quarters > 0 {
+		months = (quarters + 3) / 4
+	}
+
+	formatted := formatQuarterDuration(quarters, months)
+	gotTrimmed := strings.TrimSpace(got)
+	if gotTrimmed == formatted {
+		return true
+	}
+
+	// Also accept without " bln" suffix, e.g. "0,25", "0,5", "1", "1,5", "2"
+	bare := strings.TrimSuffix(gotTrimmed, " bln")
+	bare = strings.TrimSuffix(bare, " bl")
+	bare = strings.TrimSuffix(bare, " bulan")
+	bare = strings.TrimSpace(bare)
+
+	formattedBare := strings.TrimSuffix(formatted, " bln")
+	if bare == formattedBare {
+		return true
+	}
+
+	// Also accept dot instead of comma: "0.25", "0.5", "1.5"
+	if strings.ReplaceAll(bare, ".", ",") == formattedBare {
+		return true
+	}
+
+	// Also accept integer months or quarters representation
+	if bare == strconv.FormatInt(months, 10) || bare == strconv.FormatInt(quarters, 10) {
+		return true
+	}
+
+	return false
 }
 
 type ExpectedPayment struct {
@@ -473,13 +545,13 @@ func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expec
 		if got := nodeText(lineCell); got != formatNumber(line.LineTotal) {
 			return true, nil
 		}
-		if line.EmployeeCount > 0 || line.PeriodMonths > 0 || line.AmountPerMonth > 0 {
+		if line.EmployeeCount > 0 || line.PeriodQuarters > 0 || line.PeriodMonths > 0 || line.AmountPerMonth > 0 {
 			cells := directChildElements(row, "td")
 			if len(cells) != 6 ||
 				nodeText(cells[0]) != humanizeLabel(line.Role) ||
 				nodeText(cells[1]) != humanizeLabel(line.Seniority) ||
 				nodeText(cells[2]) != strconv.FormatInt(line.EmployeeCount, 10) ||
-				nodeText(cells[3]) != strconv.FormatInt(line.PeriodMonths, 10) ||
+				!isMatchingDuration(nodeText(cells[3]), line.PeriodQuarters, line.PeriodMonths) ||
 				nodeText(cells[4]) != formatNumber(line.AmountPerMonth) {
 				return true, nil
 			}
@@ -489,7 +561,7 @@ func (v *defaultDOMValidator) CheckCommercialModified(documentHTML string, expec
 	resourceRowCount := 0
 	validateRowShape := false
 	for _, line := range expected.Lines {
-		if line.EmployeeCount > 0 || line.PeriodMonths > 0 || line.AmountPerMonth > 0 {
+		if line.EmployeeCount > 0 || line.PeriodQuarters > 0 || line.PeriodMonths > 0 || line.AmountPerMonth > 0 {
 			validateRowShape = true
 			break
 		}

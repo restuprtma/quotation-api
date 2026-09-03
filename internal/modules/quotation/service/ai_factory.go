@@ -27,6 +27,8 @@ func (f *ProviderFactory) New(ctx context.Context, cfg ProviderConfig) (AIProvid
 	switch cfg.ProviderName {
 	case "ollama":
 		return NewOllamaProvider(cfg), nil
+	case "openai", "agentrouter":
+		return NewOpenAIProvider(cfg), nil
 	case "gemini", "":
 		return NewGeminiProvider(cfg), nil
 	default:

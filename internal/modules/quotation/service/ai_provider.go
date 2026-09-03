@@ -58,6 +58,8 @@ func InstantiateProvider(
 		ProviderName:    cred.Provider,
 		DecryptedAPIKey: decryptedKey,
 		Model:           cred.Model,
+		BaseURL:         cred.BaseURL,
+		Timeout:         DefaultAttemptTimeout,
 	}
 
 	return factory.New(ctx, cfg)
