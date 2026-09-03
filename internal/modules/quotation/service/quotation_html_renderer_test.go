@@ -74,6 +74,21 @@ func TestRenderCriticalBlocks_Metadata(t *testing.T) {
 	assert.Contains(t, out, "26 Agustus 2026")
 }
 
+func TestRenderCriticalBlocks_MetadataWithClientCompanyName(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	in := sampleCriticalInput()
+	in.Metadata.ClientName = "Bpk. Budi Santoso"
+	in.Metadata.ClientCompanyName = "PT Maju Bersama Digital"
+
+	out, err := r.RenderCriticalBlocks(in)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, `data-block-type="metadata"`)
+	assert.Contains(t, out, "Bpk. Budi Santoso")
+	assert.Contains(t, out, "PT Maju Bersama Digital")
+	assert.Contains(t, out, "<p><strong>Perusahaan:</strong> PT Maju Bersama Digital</p>")
+}
+
 func TestRenderCriticalBlocks_MetadataEscapesInjectedHTML(t *testing.T) {
 	in := sampleCriticalInput()
 	in.Metadata.Subject = `<script>alert('meta')</script>`

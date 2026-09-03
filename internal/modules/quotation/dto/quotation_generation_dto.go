@@ -49,6 +49,7 @@ type GenerateQuotationRequest struct {
 	SkillID                   uuid.UUID         `json:"skill_id"`
 	ClientID                  *uuid.UUID        `json:"client_id,omitempty"`
 	ClientName                string            `json:"client_name,omitempty"`
+	ClientCompanyName         string            `json:"client_company_name,omitempty"`
 	Subject                   string            `json:"subject"`
 	SolutionType              string            `json:"solution_type"`
 	CommercialScheme          string            `json:"commercial_scheme"`

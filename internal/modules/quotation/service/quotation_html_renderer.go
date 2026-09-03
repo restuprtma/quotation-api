@@ -29,10 +29,11 @@ var (
 )
 
 type QuotationMetadata struct {
-	QuotationNumber string
-	Subject         string
-	ClientName      string
-	IssueDate       string
+	QuotationNumber   string
+	Subject           string
+	ClientName        string
+	ClientCompanyName string
+	IssueDate         string
 }
 
 type CriticalBlocksInput struct {
@@ -103,6 +104,9 @@ func (r *defaultHTMLRenderer) renderMetadata(m QuotationMetadata) string {
 	b.WriteString("<p><strong>Nomor Quotation:</strong> " + htmlEscape(m.QuotationNumber) + "</p>")
 	b.WriteString("<p><strong>Subjek:</strong> " + htmlEscape(m.Subject) + "</p>")
 	b.WriteString("<p><strong>Klien:</strong> " + htmlEscape(m.ClientName) + "</p>")
+	if m.ClientCompanyName != "" {
+		b.WriteString("<p><strong>Perusahaan:</strong> " + htmlEscape(m.ClientCompanyName) + "</p>")
+	}
 	if m.IssueDate != "" {
 		b.WriteString("<p><strong>Tanggal:</strong> " + htmlEscape(m.IssueDate) + "</p>")
 	}

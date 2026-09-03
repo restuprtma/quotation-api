@@ -313,10 +313,11 @@ func (s *QuotationGenerationService) runComposition(
 ) (string, error) {
 	critical, rerr := s.renderer.RenderCriticalBlocks(CriticalBlocksInput{
 		Metadata: QuotationMetadata{
-			QuotationNumber: cfg.quotationNumber,
-			Subject:         strings.TrimSpace(req.Subject),
-			ClientName:      cfg.clientName,
-			IssueDate:       indonesianDate(time.Now()),
+			QuotationNumber:   cfg.quotationNumber,
+			Subject:           strings.TrimSpace(req.Subject),
+			ClientName:        cfg.clientName,
+			ClientCompanyName: cfg.clientCompanyName,
+			IssueDate:         indonesianDate(time.Now()),
 		},
 		Allocation: enriched,
 		Payment:    req.PaymentTerms,
@@ -620,9 +621,10 @@ type generationConfig struct {
 	skill            *domain.Skill
 	rateCard         *domain.RateCard
 	rateCardItems    []domain.RateCardItem
-	legal            *domain.LegalTemplate
-	clientName       string
-	quotationNumber  string
+	legal             *domain.LegalTemplate
+	clientName        string
+	clientCompanyName string
+	quotationNumber   string
 	termType         string
 	rateCardSnapshot json.RawMessage
 	legalSnapshot    json.RawMessage
@@ -664,17 +666,26 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	cfg.legal = legal
 
 	var clientName string
+	var clientCompanyName string
 	if req.ClientID != nil && *req.ClientID != uuid.Nil {
 		var cerr error
-		clientName, cerr = s.genRepo.GetClientName(ctx, *req.ClientID)
+		resolvedName, cerr := s.genRepo.GetClientName(ctx, *req.ClientID)
 		if cerr != nil {
 			logger.Error("Failed to resolve client name", logger.Err(cerr))
-			clientName = ""
+		} else {
+			clientCompanyName = resolvedName
 		}
-	} else if req.ClientName != "" {
+	}
+	if req.ClientName != "" {
 		clientName = strings.TrimSpace(req.ClientName)
+	} else if clientCompanyName != "" {
+		clientName = clientCompanyName
+	}
+	if req.ClientCompanyName != "" {
+		clientCompanyName = strings.TrimSpace(req.ClientCompanyName)
 	}
 	cfg.clientName = clientName
+	cfg.clientCompanyName = clientCompanyName
 
 	number, err := s.genRepo.NextQuotationNumber(ctx, companyID)
 	if err != nil {
