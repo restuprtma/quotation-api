@@ -86,7 +86,6 @@ type EnrichedResource struct {
 	TermType        string   `json:"term_type"`
 	EmployeeCount   int64    `json:"employee_count"`
 	PeriodMonths    int64    `json:"period_months"`
-	PeriodQuarters  int64    `json:"period_quarters"`
 	AmountPerMonth  int64    `json:"amount_per_month"`
 	LineTotal       int64    `json:"line_total"`
 	ScopeReferences []string `json:"scope_references"`

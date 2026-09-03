@@ -22,24 +22,24 @@ func NewCredentialRepository(db *pgxpool.Pool) *CredentialRepository {
 func (r *CredentialRepository) Create(ctx context.Context, q Execer, cred *domain.Credential) error {
 	query := `
 		INSERT INTO ai_credentials (
-			id, company_id, provider, model, encrypted_api_key, key_hint, is_active, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			id, company_id, provider, model, encrypted_api_key, base_url, key_hint, is_active, created_by
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at, updated_at
 	`
 	return q.QueryRow(ctx, query,
-		cred.ID, cred.CompanyID, cred.Provider, cred.Model, cred.EncryptedAPIKey, cred.KeyHint, cred.IsActive, cred.CreatedBy,
+		cred.ID, cred.CompanyID, cred.Provider, cred.Model, cred.EncryptedAPIKey, cred.BaseURL, cred.KeyHint, cred.IsActive, cred.CreatedBy,
 	).Scan(&cred.CreatedAt, &cred.UpdatedAt)
 }
 
 func (r *CredentialRepository) Get(ctx context.Context, id, companyID string) (*domain.Credential, error) {
 	query := `
-		SELECT id, company_id, provider, model, encrypted_api_key, key_hint, is_active, created_by, created_at, updated_at
+		SELECT id, company_id, provider, model, encrypted_api_key, COALESCE(base_url, ''), key_hint, is_active, created_by, created_at, updated_at
 		FROM ai_credentials
 		WHERE id = $1 AND company_id = $2
 	`
 	cred := &domain.Credential{}
 	err := r.db.QueryRow(ctx, query, id, companyID).Scan(
-		&cred.ID, &cred.CompanyID, &cred.Provider, &cred.Model, &cred.EncryptedAPIKey, &cred.KeyHint, &cred.IsActive, &cred.CreatedBy, &cred.CreatedAt, &cred.UpdatedAt,
+		&cred.ID, &cred.CompanyID, &cred.Provider, &cred.Model, &cred.EncryptedAPIKey, &cred.BaseURL, &cred.KeyHint, &cred.IsActive, &cred.CreatedBy, &cred.CreatedAt, &cred.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrCredentialNotFound
@@ -50,11 +50,11 @@ func (r *CredentialRepository) Get(ctx context.Context, id, companyID string) (*
 func (r *CredentialRepository) Update(ctx context.Context, q Execer, cred *domain.Credential) error {
 	query := `
 		UPDATE ai_credentials
-		SET provider = $1, model = $2, encrypted_api_key = $3, key_hint = $4, is_active = $5, updated_at = NOW()
-		WHERE id = $6 AND company_id = $7
+		SET provider = $1, model = $2, encrypted_api_key = $3, base_url = $4, key_hint = $5, is_active = $6, updated_at = NOW()
+		WHERE id = $7 AND company_id = $8
 		RETURNING updated_at
 	`
-	err := q.QueryRow(ctx, query, cred.Provider, cred.Model, cred.EncryptedAPIKey, cred.KeyHint, cred.IsActive, cred.ID, cred.CompanyID).Scan(&cred.UpdatedAt)
+	err := q.QueryRow(ctx, query, cred.Provider, cred.Model, cred.EncryptedAPIKey, cred.BaseURL, cred.KeyHint, cred.IsActive, cred.ID, cred.CompanyID).Scan(&cred.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrCredentialNotFound
 	}
@@ -78,14 +78,14 @@ func (r *CredentialRepository) Delete(ctx context.Context, q Execer, id, company
 
 func (r *CredentialRepository) GetActiveCredential(ctx context.Context, companyID string) (*domain.Credential, error) {
 	query := `
-		SELECT id, company_id, provider, model, encrypted_api_key, key_hint, is_active, created_by, created_at, updated_at
+		SELECT id, company_id, provider, model, encrypted_api_key, COALESCE(base_url, ''), key_hint, is_active, created_by, created_at, updated_at
 		FROM ai_credentials
 		WHERE company_id = $1 AND is_active = true
 		LIMIT 1
 	`
 	cred := &domain.Credential{}
 	err := r.db.QueryRow(ctx, query, companyID).Scan(
-		&cred.ID, &cred.CompanyID, &cred.Provider, &cred.Model, &cred.EncryptedAPIKey, &cred.KeyHint, &cred.IsActive, &cred.CreatedBy, &cred.CreatedAt, &cred.UpdatedAt,
+		&cred.ID, &cred.CompanyID, &cred.Provider, &cred.Model, &cred.EncryptedAPIKey, &cred.BaseURL, &cred.KeyHint, &cred.IsActive, &cred.CreatedBy, &cred.CreatedAt, &cred.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrCredentialNotFound

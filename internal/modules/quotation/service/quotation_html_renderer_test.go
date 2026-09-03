@@ -116,7 +116,10 @@ func TestRenderCriticalBlocks_InvestmentTableMatchesEnrichedLines(t *testing.T) 
 
 	for _, res := range allocation.Resources {
 		assert.Contains(t, out, fmt.Sprintf(`data-role="%s_%s"`, res.Role, res.Seniority))
+		assert.Contains(t, out, fmt.Sprintf("<td>%d</td>", res.PeriodMonths))
 	}
+	assert.Contains(t, out, "<th>Durasi (bulan)</th>")
+	assert.NotContains(t, out, "<th>Durasi (kuartal)</th>")
 	assert.Contains(t, out, "12.000.000")
 	assert.Contains(t, out, "8.000.000")
 	assert.Contains(t, out, "36.000.000")

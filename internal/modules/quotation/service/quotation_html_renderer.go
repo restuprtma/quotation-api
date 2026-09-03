@@ -131,7 +131,7 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 	b.WriteString(`<section data-block-type="commercial">`)
 	b.WriteString(`<h2>Development Investment</h2>`)
 	b.WriteString(`<table>`)
-	b.WriteString(`<thead><tr><th>Peran</th><th>Senioritas</th><th>Jumlah SDM</th><th>Durasi (kuartal)</th><th>Tarif/Bulan</th><th>Total</th></tr></thead>`)
+	b.WriteString(`<thead><tr><th>Peran</th><th>Senioritas</th><th>Jumlah SDM</th><th>Durasi (bulan)</th><th>Tarif/Bulan</th><th>Total</th></tr></thead>`)
 	b.WriteString(`<tbody>`)
 	for _, res := range a.Resources {
 		rowKey := strings.ToLower(res.Role) + "_" + strings.ToLower(res.Seniority)
@@ -139,7 +139,7 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Role)) + "</td>")
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Seniority)) + "</td>")
 		b.WriteString(fmt.Sprintf("<td>%d</td>", res.EmployeeCount))
-		b.WriteString(fmt.Sprintf("<td>%d</td>", res.PeriodQuarters))
+		b.WriteString(fmt.Sprintf("<td>%d</td>", res.PeriodMonths))
 		b.WriteString("<td>" + formatNumber(res.AmountPerMonth) + "</td>")
 		b.WriteString(`<td data-field="line_total">` + formatNumber(res.LineTotal) + "</td>")
 		b.WriteString("</tr>")
@@ -303,7 +303,6 @@ type ExpectedLine struct {
 	Seniority      string
 	EmployeeCount  int64
 	PeriodMonths   int64
-	PeriodQuarters int64
 	AmountPerMonth int64
 	LineTotal      int64
 }
