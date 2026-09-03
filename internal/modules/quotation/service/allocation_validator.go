@@ -45,6 +45,15 @@ func (v *defaultAllocationValidator) DecodeAllocationJSON(raw []byte) (dto.Alloc
 		return dto.AllocationProposal{}, fmt.Errorf("%w: decode allocation: trailing data after JSON value: %v", dto.ErrAllocationInvalid, err)
 	}
 
+	for i := range proposal.Resources {
+		if proposal.Resources[i].PeriodQuarters <= 0 && proposal.Resources[i].PeriodMonths > 0 {
+			proposal.Resources[i].PeriodQuarters = proposal.Resources[i].PeriodMonths * 4
+		}
+		if proposal.Resources[i].PeriodMonths <= 0 && proposal.Resources[i].PeriodQuarters > 0 {
+			proposal.Resources[i].PeriodMonths = (proposal.Resources[i].PeriodQuarters + 3) / 4
+		}
+	}
+
 	return proposal, nil
 }
 
@@ -79,7 +88,15 @@ func (v *defaultAllocationValidator) ValidateProposal(input dto.GenerateQuotatio
 
 	coveredMandatory := make(map[string]struct{}, len(input.MandatoryScope))
 
-	for i, res := range proposal.Resources {
+	for i := range proposal.Resources {
+		res := &proposal.Resources[i]
+		if res.PeriodQuarters <= 0 && res.PeriodMonths > 0 {
+			res.PeriodQuarters = res.PeriodMonths * 4
+		}
+		if res.PeriodMonths <= 0 && res.PeriodQuarters > 0 {
+			res.PeriodMonths = (res.PeriodQuarters + 3) / 4
+		}
+
 		if !containsString(validRoles, res.Role) {
 			return fmt.Errorf("%w: resources[%d].role %q is invalid", dto.ErrAllocationInvalid, i, res.Role)
 		}
@@ -89,11 +106,12 @@ func (v *defaultAllocationValidator) ValidateProposal(input dto.GenerateQuotatio
 		if res.EmployeeCount < 1 || res.EmployeeCount > 10 {
 			return fmt.Errorf("%w: resources[%d].employee_count must be between 1 and 10", dto.ErrAllocationInvalid, i)
 		}
-		if res.PeriodMonths < 1 || res.PeriodMonths > 24 {
-			return fmt.Errorf("%w: resources[%d].period_months must be between 1 and 24", dto.ErrAllocationInvalid, i)
+		maxQuarters := input.ProjectDurationMonths * 4
+		if res.PeriodQuarters < 1 {
+			return fmt.Errorf("%w: resources[%d].period_quarters (or period_months) must be between 1 and %d", dto.ErrAllocationInvalid, i, maxQuarters)
 		}
-		if res.PeriodMonths > input.ProjectDurationMonths {
-			return fmt.Errorf("%w: resources[%d].period_months must not exceed project_duration_months", dto.ErrAllocationInvalid, i)
+		if res.PeriodQuarters > maxQuarters {
+			return fmt.Errorf("%w: resources[%d].period_quarters must not exceed project_duration_months * 4", dto.ErrAllocationInvalid, i)
 		}
 		if len(res.ScopeReferences) < 1 || len(res.ScopeReferences) > 50 {
 			return fmt.Errorf("%w: resources[%d].scope_references must contain between 1 and 50 items", dto.ErrAllocationInvalid, i)

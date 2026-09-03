@@ -404,3 +404,40 @@ func TestRateAllocator_Calculate_NationalVsInternationalNotMixed(t *testing.T) {
 	assert.Equal(t, int64(36_000_000), enriched.TotalInvestment)
 	assert.Equal(t, int64(12_000_000), enriched.Resources[0].AmountPerMonth)
 }
+
+func TestRateAllocator_Calculate_QuarterMonthsPhasing(t *testing.T) {
+	allocator := service.NewRateAllocator()
+
+	rateCardItems := []domain.RateCardItem{
+		{Role: "programmer", Seniority: "intermediate", TermType: "short_term", AmountPerMonth: 12_000_000},
+		{Role: "business_analyst", Seniority: "associate", TermType: "short_term", AmountPerMonth: 8_400_000},
+		{Role: "ui_ux_designer", Seniority: "associate", TermType: "short_term", AmountPerMonth: 7_800_000},
+		{Role: "quality_assurance", Seniority: "associate", TermType: "short_term", AmountPerMonth: 7_200_000},
+		{Role: "devops", Seniority: "associate", TermType: "short_term", AmountPerMonth: 10_200_000},
+	}
+
+	proposal := dto.AllocationProposal{
+		Resources: []dto.AllocationResource{
+			{Role: "programmer", Seniority: "intermediate", EmployeeCount: 1, PeriodQuarters: 8, Reason: "Full 2 mo"},
+			{Role: "business_analyst", Seniority: "associate", EmployeeCount: 1, PeriodQuarters: 2, Reason: "0.5 mo"},
+			{Role: "ui_ux_designer", Seniority: "associate", EmployeeCount: 1, PeriodQuarters: 1, Reason: "0.25 mo"},
+			{Role: "quality_assurance", Seniority: "associate", EmployeeCount: 1, PeriodQuarters: 2, Reason: "0.5 mo"},
+			{Role: "devops", Seniority: "associate", EmployeeCount: 1, PeriodQuarters: 1, Reason: "0.25 mo"},
+		},
+	}
+
+	// CalculateRaw test
+	raw, err := allocator.CalculateRaw(proposal, rateCardItems, 2, "IDR")
+	require.NoError(t, err)
+	assert.Equal(t, int64(24_000_000), raw.Resources[0].LineTotal) // 12M * 8 / 4
+	assert.Equal(t, int64(4_200_000), raw.Resources[1].LineTotal)  // 8.4M * 2 / 4
+	assert.Equal(t, int64(1_950_000), raw.Resources[2].LineTotal)  // 7.8M * 1 / 4
+	assert.Equal(t, int64(3_600_000), raw.Resources[3].LineTotal)  // 7.2M * 2 / 4
+	assert.Equal(t, int64(2_550_000), raw.Resources[4].LineTotal)  // 10.2M * 1 / 4
+	assert.Equal(t, int64(36_300_000), raw.TotalInvestment)
+
+	// Calculate with budget check
+	enriched, err := allocator.Calculate(proposal, rateCardItems, 2, 50_000_000, "IDR")
+	require.NoError(t, err)
+	assert.Equal(t, int64(36_300_000), enriched.TotalInvestment)
+}

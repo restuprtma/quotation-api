@@ -22,6 +22,7 @@ func sampleEnrichedAllocation() dto.EnrichedAllocation {
 				Seniority:      "senior",
 				TermType:       "long_term",
 				EmployeeCount:  1,
+				PeriodQuarters: 12,
 				PeriodMonths:   3,
 				AmountPerMonth: 12_000_000,
 				LineTotal:      36_000_000,
@@ -31,6 +32,7 @@ func sampleEnrichedAllocation() dto.EnrichedAllocation {
 				Seniority:      "intermediate",
 				TermType:       "long_term",
 				EmployeeCount:  2,
+				PeriodQuarters: 12,
 				PeriodMonths:   3,
 				AmountPerMonth: 8_000_000,
 				LineTotal:      48_000_000,
@@ -116,7 +118,7 @@ func TestRenderCriticalBlocks_InvestmentTableMatchesEnrichedLines(t *testing.T) 
 
 	for _, res := range allocation.Resources {
 		assert.Contains(t, out, fmt.Sprintf(`data-role="%s_%s"`, res.Role, res.Seniority))
-		assert.Contains(t, out, fmt.Sprintf("<td>%d</td>", res.PeriodMonths))
+		assert.Contains(t, out, "<td>3 bln</td>")
 	}
 	assert.Contains(t, out, "<th>Durasi (bulan)</th>")
 	assert.NotContains(t, out, "<th>Durasi (kuartal)</th>")
@@ -893,4 +895,65 @@ func TestDOMValidator_ValidateDocumentSafety_BareTextBudgetLeakRejects(t *testin
 	err := v.ValidateDocumentSafety(`Nilai maksimum 100.000.000 rupiah.`, &budget, 50000000)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrUnsafeHTML)
+}
+
+func TestRenderCriticalBlocks_InvestmentTableQuarterDurations(t *testing.T) {
+	r := service.NewHTMLRenderer()
+	v := service.NewDOMValidator()
+
+	testCases := []struct {
+		quarters      int64
+		expectedLabel string
+	}{
+		{1, "0,25 bln"},
+		{2, "0,5 bln"},
+		{3, "0,75 bln"},
+		{4, "1 bln"},
+		{6, "1,5 bln"},
+		{8, "2 bln"},
+		{12, "3 bln"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.expectedLabel, func(t *testing.T) {
+			input := sampleCriticalInput()
+			input.Allocation.Resources = []dto.EnrichedResource{
+				{
+					Role:           "programmer",
+					Seniority:      "senior",
+					TermType:       "long_term",
+					EmployeeCount:  1,
+					PeriodQuarters: tc.quarters,
+					PeriodMonths:   (tc.quarters + 3) / 4,
+					AmountPerMonth: 12_000_000,
+					LineTotal:      (12_000_000 * 1 * tc.quarters) / 4,
+				},
+			}
+			input.Allocation.TotalInvestment = input.Allocation.Resources[0].LineTotal
+
+			out, err := r.RenderCriticalBlocks(input)
+			require.NoError(t, err)
+			assert.Contains(t, out, fmt.Sprintf("<td>%s</td>", tc.expectedLabel))
+
+			expected := service.IntegrityExpectations{
+				Currency:        "IDR",
+				TotalInvestment: input.Allocation.TotalInvestment,
+				Lines: []service.ExpectedLine{
+					{
+						Role:           "programmer",
+						Seniority:      "senior",
+						EmployeeCount:  1,
+						PeriodQuarters: tc.quarters,
+						PeriodMonths:   (tc.quarters + 3) / 4,
+						AmountPerMonth: 12_000_000,
+						LineTotal:      input.Allocation.Resources[0].LineTotal,
+					},
+				},
+			}
+
+			modified, err := v.CheckCommercialModified(out, expected)
+			require.NoError(t, err)
+			assert.False(t, modified, "quarter duration %s must not be flagged as modified", tc.expectedLabel)
+		})
+	}
 }

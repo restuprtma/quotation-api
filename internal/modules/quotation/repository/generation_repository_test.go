@@ -36,9 +36,10 @@ func cleanupCompanies(t *testing.T, pool *pgxpool.Pool, companyIDs ...uuid.UUID)
 func validDraftParams(companyID uuid.UUID) repository.CreateDraftParams {
 	budget := int64(150_000_000)
 	key := uuid.New()
+	clientID := uuid.New()
 	return repository.CreateDraftParams{
 		CompanyID:             companyID,
-		ClientID:              uuid.New(),
+		ClientID:              &clientID,
 		QuotationNumber:       "QUO-GEN-" + key.String()[:8],
 		Subject:               "Customer Portal",
 		SolutionType:          "custom_software",
@@ -258,7 +259,7 @@ func TestCreateDraftRollbackAtomicity(t *testing.T) {
 	cleanupCompanies(t, pool, companyR)
 
 	params := validDraftParams(companyR)
-	params.ClientID = clientR
+	params.ClientID = &clientR
 	invalidBudget := int64(-1)
 	params.BudgetMaximum = &invalidBudget // violates chk_budget_maximum_non_negative
 

@@ -61,6 +61,10 @@ const (
 // just the code, so even accidental logging of the error stays safe.
 type GenerationError struct {
 	Code    string
+	// Summary is only populated for budget_unfeasible; it carries the last
+	// attempt's allocation composition total and the budget maximum/excess so
+	// the client sees WHY instead of a bare code. Stable role names only.
+	Summary string
 	message string
 }
 
@@ -68,6 +72,10 @@ func (e *GenerationError) Error() string { return e.Code }
 
 func newGenerationError(code, safeMessage string) *GenerationError {
 	return &GenerationError{Code: code, message: safeMessage}
+}
+
+func newGenerationErrorWithSummary(code, safeMessage, summary string) *GenerationError {
+	return &GenerationError{Code: code, message: safeMessage, Summary: summary}
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +265,11 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	if gerr != nil {
 		var ge *GenerationError
 		if errors.As(gerr, &ge) {
-			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, ge.message)
+			reason := ge.message
+			if ge.Code == ErrCodeBudgetUnfeasible && ge.Summary != "" {
+				reason = ge.Summary
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
 		} else {
 			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, gerr.Error())
 		}
@@ -734,6 +746,10 @@ type retryFeedback struct {
 func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provider AIProvider, req dto.GenerateQuotationRequest, cfg *generationConfig) (dto.EnrichedAllocation, error) {
 	envelope := GetSafetyEnvelope(SafetyEnvelopeFileName)
 	var feedback *retryFeedback
+	// The client already sees the allocation lines and rate card figures in
+	// rendered documents, so a summary of the LAST aborted attempt is carried
+	// alongside budget_unfeasible (see GenerationError doc).
+	var lastSummary string
 
 	for attempt := 1; attempt <= MaxProposalAttempts; attempt++ {
 		text, gerr := s.callProvider(ctx, provider, buildAllocationPrompt(envelope, cfg.skill.ContentInstruction, buildAllocationPayload(req, cfg, feedback)))
@@ -749,30 +765,83 @@ func (s *QuotationGenerationService) optimizeBudget(ctx context.Context, provide
 			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeAllocationInvalid, "allocation proposal is invalid")
 		}
 
-		enriched, aerr := s.allocator.Calculate(proposal, cfg.rateCardItems, req.ProjectDurationMonths, req.BudgetMaximum, cfg.rateCard.Currency)
-		if aerr == nil {
-			return enriched, nil
+		enriched, aerr := s.allocator.CalculateRaw(proposal, cfg.rateCardItems, req.ProjectDurationMonths, cfg.rateCard.Currency)
+		if aerr != nil {
+			if errors.Is(aerr, dto.ErrMissingRateItem) {
+				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeRateItemMissing, "rate item is missing for the proposed allocation")
+			}
+			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
 		}
 
-		var exceeded *dto.BudgetExceededError
-		if errors.As(aerr, &exceeded) {
+		finalTotal := enriched.TotalInvestment
+		lastSummary = buildBudgetSummary(enriched, finalTotal, req.BudgetMaximum)
+
+		if req.BudgetMaximum > 0 && finalTotal > req.BudgetMaximum {
 			if attempt == MaxProposalAttempts {
-				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
+				return dto.EnrichedAllocation{}, newGenerationErrorWithSummary(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation", lastSummary)
+			}
+			excess, xerr := checkedAdd(finalTotal, -req.BudgetMaximum)
+			if xerr != nil {
+				return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "budget excess calculation failed")
 			}
 			feedback = &retryFeedback{
 				AttemptNumber:      attempt + 1,
 				MaximumAttempts:    MaxProposalAttempts,
-				BudgetExcessAmount: exceeded.Excess,
+				BudgetExcessAmount: excess,
 			}
 			continue
 		}
-		if errors.Is(aerr, dto.ErrMissingRateItem) {
-			return dto.EnrichedAllocation{}, newGenerationError(ErrCodeRateItemMissing, "rate item is missing for the proposed allocation")
+
+		if req.BudgetMaximum > 0 {
+			utilizationNumerator, uerr := checkedMul(finalTotal, 100)
+			if uerr == nil {
+				enriched.UtilizationPercent = utilizationNumerator / req.BudgetMaximum
+			}
 		}
-		return dto.EnrichedAllocation{}, newGenerationError(ErrCodeGenerationFailed, "allocation enrichment failed")
+		return enriched, nil
 	}
 	// Defensive: unreachable while every iteration either returns or continues.
-	return dto.EnrichedAllocation{}, newGenerationError(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation")
+	return dto.EnrichedAllocation{}, newGenerationErrorWithSummary(ErrCodeBudgetUnfeasible, "budget cannot accommodate a viable allocation", lastSummary)
+}
+
+// buildBudgetSummary renders the last attempt's allocation so budget_unfeasible
+// answers WHY: stable role/seniority names, durations in months derived from
+// the stored quarter units, and amounts formatted exactly like the rendered
+// document. It only contains rate-card-derived figures the client already sees,
+// never prompts, provider payloads, or keys.
+func buildBudgetSummary(enriched dto.EnrichedAllocation, finalTotal, budgetMaximum int64) string {
+	if len(enriched.Resources) == 0 {
+		return ""
+	}
+	rows := make([]string, 0, len(enriched.Resources))
+	for _, res := range enriched.Resources {
+		dur := res.PeriodQuarters
+		if dur <= 0 && res.PeriodMonths > 0 {
+			dur = res.PeriodMonths * 4
+		}
+		rows = append(rows, fmt.Sprintf("%d %s %s %s", res.EmployeeCount, res.Role, res.Seniority, quarterDurationLabel(dur)))
+	}
+	excess := finalTotal - budgetMaximum
+	return fmt.Sprintf(
+		"Setelah %d percobaan, alokasi minimum layak (%s) total %s, masih %s di atas batas %s.",
+		MaxProposalAttempts,
+		strings.Join(rows, ", "),
+		formatCurrency(finalTotal, enriched.Currency),
+		formatCurrency(excess, enriched.Currency),
+		formatCurrency(budgetMaximum, enriched.Currency),
+	)
+}
+
+// quarterDurationLabel converts integer quarter-months to an Indonesian month
+// label (4 quarters = 1 bln), keeping integer-only money/time math.
+func quarterDurationLabel(quarters int64) string {
+	fractional := map[int64]string{1: "25", 2: "5", 3: "75"}
+	whole := quarters / 4
+	rem := quarters % 4
+	if rem == 0 {
+		return fmt.Sprintf("%d bln", whole)
+	}
+	return fmt.Sprintf("%d,%s bln", whole, fractional[rem])
 }
 
 func buildAllocationPayload(req dto.GenerateQuotationRequest, cfg *generationConfig, feedback *retryFeedback) allocationPromptPayload {
@@ -842,8 +911,15 @@ func buildAllocationPrompt(envelope, instruction string, payload allocationPromp
 }
 
 const allocationTaskSchema = `Return exactly ONE JSON object and nothing else. Schema:
-{"resources":[{"role":"<one of allowed_roles>","seniority":"<one of allowed_seniorities>","employee_count":<integer >= 1>,"period_months":<integer >= 1>,"scope_references":["<exact scope strings from generation_input>"],"reason":"<short reason>"}],"selected_optional_scope":["<subset of optional_scope>"],"standard_activities":["<subset of allowed_standard_activities>"]}
-Rules: every mandatory_scope item must appear in at least one resource scope_references; never invent roles, seniorities or business features; NEVER output rates, amounts, prices, discounts or totals.`
+{"resources":[{"role":"<one of allowed_roles>","seniority":"<one of allowed_seniorities>","employee_count":<integer >= 1>,"period_quarters":<integer >= 1>,"scope_references":["<exact scope strings from generation_input>"],"reason":"<short reason>"}],"selected_optional_scope":["<subset of optional_scope>"],"standard_activities":["<subset of allowed_standard_activities>"]}
+Rules: every mandatory_scope item must appear in at least one resource scope_references; never invent roles, seniorities or business features; NEVER output rates, amounts, prices, discounts or totals.
+period_quarters rules: period_quarters is an INTEGER count of quarter-months THAT role is actively engaged, not the total project length. 1 quarter-month = 0.25 bulan, so 2 = 0.5 month, 3 = 0.75 month, 4 = one full month, 5 = 1.25 months. It must be between 1 and project_duration_months * 4 (compute the cap; e.g. a 6-month project caps at 24 quarters, a 2-month project at 8 quarters). Allocate each role only for the phases where its work actually happens, following a realistic software delivery lifecycle: business_analyst is front-loaded (requirements & design, first part of the project only, never the whole duration); ui_ux_designer is front-loaded on design and tapers off once development is underway; programmer is the core build role and usually the ONLY role legitimately active across most of the project duration; quality_assurance is back-loaded (testing and stabilization near the end); devops is concentrated around initial setup and final release/hardening. Use the reason field to justify every chosen period_quarters (which phase, roughly how many months). Every role assigned the full cap must explicitly justify it.
+HARD CONSTRAINT - Do NOT default every role to the full project duration: a non-programmer role carrying the full duration is idle capacity the client pays for. The server sums your proposed lines into a raw total and checks it against budget_maximum; a proposal above budget is rejected as budget_unfeasible and there are at most 3 attempts, so never spend an attempt on a proposal whose untrimmed non-programmer durations are an obvious cost driver. Assigning full duration to a non-programmer role while the proposal is at or above budget_maximum is a ladder violation and wastes the attempt.
+LOW-BUDGET MANDATORY PRIORITY LADDER - when the budget is tight relative to team size (especially project_duration_months <= 2), you MUST apply the four levels strictly in order, escalating only when the previous level demonstrably cannot bring the raw total under budget_maximum. Short projects are where budgets are tightest, so structural phasing applies MORE here, never less:
+LEVEL 1 - TRIM NON-CORE DURATIONS to their real phase footprint, expressed in quarter units. Reference pattern for a 2-month project (cap 8 quarters): ui_ux_designer 1-2 quarters (design up front, execution belongs to programmers), business_analyst 2 quarters (requirements & design up front), devops 1 quarter (setup at start, deploy at end), quality_assurance 1-2 quarters (testing at the end), programmer at or near the full 8 quarters - the only role that may span the whole timeline. Scale the same way for 3 months: support roles stay at 1-4 quarters each.
+LEVEL 2 - CONSOLIDATE OVERLAPPING ROLES: drop a resource row entirely and expand the surviving row's scope_references to cover its scope. Never invent merged role names - every role must still come from allowed_roles. Allowed consolidation: business_analyst absorbing ui_ux_designer work (both are front-loaded product/design work). Never consolidate a programmer row with a non-programmer row, and never merge quality_assurance with devops.
+LEVEL 3 - REDUCE SCOPE, NOT WORK QUALITY: exclude optional_scope items and drop standard_activities that are not essential, trimming the affected rows' scope_references accordingly. Keep the quality of every retained role's work intact.
+LEVEL 4 - LAST RESORT: if levels 1-3 combined still leave the raw total above budget_maximum, still return your most aggressively reduced proposal (minimum viable team, non-core roles at 1-2 quarters, core programmer dominant) and state in the surviving reason fields exactly what was already stripped (e.g. "minimum viable team: support roles at 0.25 month of a 2-month project"). Never return a proposal where every role carries the full project duration.`
 
 // ---------------------------------------------------------------------------
 // Narrative composition
@@ -1020,6 +1096,7 @@ func buildIntegrityExpectations(req dto.GenerateQuotationRequest, cfg *generatio
 			Role:           res.Role,
 			Seniority:      res.Seniority,
 			EmployeeCount:  res.EmployeeCount,
+			PeriodQuarters: res.PeriodQuarters,
 			PeriodMonths:   res.PeriodMonths,
 			AmountPerMonth: res.AmountPerMonth,
 			LineTotal:      res.LineTotal,

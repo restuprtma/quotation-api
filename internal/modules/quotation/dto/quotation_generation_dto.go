@@ -69,7 +69,8 @@ type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`
 	EmployeeCount   int64    `json:"employee_count"`
-	PeriodMonths    int64    `json:"period_months"`
+	PeriodQuarters  int64    `json:"period_quarters,omitempty"`
+	PeriodMonths    int64    `json:"period_months,omitempty"`
 	ScopeReferences []string `json:"scope_references"`
 	Reason          string   `json:"reason"`
 }
@@ -85,6 +86,7 @@ type EnrichedResource struct {
 	Seniority       string   `json:"seniority"`
 	TermType        string   `json:"term_type"`
 	EmployeeCount   int64    `json:"employee_count"`
+	PeriodQuarters  int64    `json:"period_quarters"`
 	PeriodMonths    int64    `json:"period_months"`
 	AmountPerMonth  int64    `json:"amount_per_month"`
 	LineTotal       int64    `json:"line_total"`

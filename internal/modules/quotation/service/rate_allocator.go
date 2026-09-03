@@ -12,6 +12,7 @@ import (
 type RateAllocator interface {
 	DetermineTermType(projectDurationMonths int64) string
 	Calculate(proposal dto.AllocationProposal, rateCardItems []domain.RateCardItem, projectDurationMonths int64, budgetMaximum int64, currency string) (dto.EnrichedAllocation, error)
+	CalculateRaw(proposal dto.AllocationProposal, rateCardItems []domain.RateCardItem, projectDurationMonths int64, currency string) (dto.EnrichedAllocation, error)
 }
 
 type defaultRateAllocator struct{}
@@ -27,7 +28,7 @@ func (r *defaultRateAllocator) DetermineTermType(projectDurationMonths int64) st
 	return "long_term"
 }
 
-func (r *defaultRateAllocator) Calculate(proposal dto.AllocationProposal, rateCardItems []domain.RateCardItem, projectDurationMonths int64, budgetMaximum int64, currency string) (dto.EnrichedAllocation, error) {
+func (r *defaultRateAllocator) CalculateRaw(proposal dto.AllocationProposal, rateCardItems []domain.RateCardItem, projectDurationMonths int64, currency string) (dto.EnrichedAllocation, error) {
 	if projectDurationMonths < 1 {
 		return dto.EnrichedAllocation{}, errors.New("project_duration_months must be positive")
 	}
@@ -56,11 +57,20 @@ func (r *defaultRateAllocator) Calculate(proposal dto.AllocationProposal, rateCa
 	}
 
 	for i, res := range proposal.Resources {
+		quarters := res.PeriodQuarters
+		if quarters <= 0 && res.PeriodMonths > 0 {
+			quarters = res.PeriodMonths * 4
+		}
+		months := res.PeriodMonths
+		if months <= 0 && quarters > 0 {
+			months = (quarters + 3) / 4
+		}
+
 		if res.EmployeeCount <= 0 {
 			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d].employee_count must be positive", i)
 		}
-		if res.PeriodMonths <= 0 {
-			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d].period_months must be positive", i)
+		if quarters <= 0 {
+			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d].period_quarters must be positive", i)
 		}
 
 		key := fmt.Sprintf("%s|%s|%s", res.Role, res.Seniority, term)
@@ -73,10 +83,11 @@ func (r *defaultRateAllocator) Calculate(proposal dto.AllocationProposal, rateCa
 		if err != nil {
 			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d] rate * employee_count: %w", i, err)
 		}
-		lineTotal, err = checkedMul(lineTotal, res.PeriodMonths)
+		lineTotal, err = checkedMul(lineTotal, quarters)
 		if err != nil {
-			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d] line total: %w", i, err)
+			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d] line total * quarters: %w", i, err)
 		}
+		lineTotal = lineTotal / 4
 
 		var addErr error
 		result.TotalInvestment, addErr = checkedAdd(result.TotalInvestment, lineTotal)
@@ -89,12 +100,22 @@ func (r *defaultRateAllocator) Calculate(proposal dto.AllocationProposal, rateCa
 			Seniority:       res.Seniority,
 			TermType:        term,
 			EmployeeCount:   res.EmployeeCount,
-			PeriodMonths:    res.PeriodMonths,
+			PeriodQuarters:  quarters,
+			PeriodMonths:    months,
 			AmountPerMonth:  amountPerMonth,
 			LineTotal:       lineTotal,
 			ScopeReferences: append([]string(nil), res.ScopeReferences...),
 			Reason:          res.Reason,
 		})
+	}
+
+	return result, nil
+}
+
+func (r *defaultRateAllocator) Calculate(proposal dto.AllocationProposal, rateCardItems []domain.RateCardItem, projectDurationMonths int64, budgetMaximum int64, currency string) (dto.EnrichedAllocation, error) {
+	result, err := r.CalculateRaw(proposal, rateCardItems, projectDurationMonths, currency)
+	if err != nil {
+		return dto.EnrichedAllocation{}, err
 	}
 
 	if budgetMaximum > 0 {

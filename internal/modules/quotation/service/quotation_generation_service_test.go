@@ -189,7 +189,7 @@ func (fx pipelineFixture) request() dto.GenerateQuotationRequest {
 	return dto.GenerateQuotationRequest{
 		IdempotencyKey:            uuidPtrString(fx.key.String()),
 		SkillID:                   fx.skillID,
-		ClientID:                  fx.clientID,
+		ClientID:                  &fx.clientID,
 		Subject:                   subject,
 		SolutionType:              "custom_software",
 		CommercialScheme:          "dedicated_squad",
@@ -218,9 +218,9 @@ func uuidPtrString(s string) *string { return &s }
 func allocationJSON() string {
 	return `{
 		"resources": [
-			{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,
+			{"role":"programmer","seniority":"senior","employee_count":1,"period_quarters":12,
 			 "scope_references":["Customer portal"],"reason":"Mengimplementasikan fitur portal"},
-			{"role":"business_analyst","seniority":"intermediate","employee_count":1,"period_months":3,
+			{"role":"business_analyst","seniority":"intermediate","employee_count":1,"period_quarters":12,
 			 "scope_references":["Admin panel"],"reason":"Mendefinisikan kebutuhan panel admin"}
 		],
 		"selected_optional_scope": [],
@@ -232,9 +232,9 @@ func allocationJSON() string {
 func allocationJSONOverbudget() string {
 	return `{
 		"resources": [
-			{"role":"programmer","seniority":"senior","employee_count":4,"period_months":3,
+			{"role":"programmer","seniority":"senior","employee_count":4,"period_quarters":12,
 			 "scope_references":["Customer portal"],"reason":"Percepatan implementasi portal"},
-			{"role":"business_analyst","seniority":"intermediate","employee_count":1,"period_months":3,
+			{"role":"business_analyst","seniority":"intermediate","employee_count":1,"period_quarters":12,
 			 "scope_references":["Admin panel"],"reason":"Mendefinisikan kebutuhan panel admin"}
 		],
 		"selected_optional_scope": [],
@@ -389,7 +389,12 @@ func TestGenerate_ThreeTimesOverbudget_BudgetUnfeasible(t *testing.T) {
 	var ge *service.GenerationError
 	require.ErrorAs(t, err, &ge)
 	assert.Equal(t, "budget_unfeasible", ge.Code)
-	assert.Len(t, ge.Error(), len("budget_unfeasible")) // redaksi: pesan == kode saja
+	assert.Len(t, ge.Error(), len("budget_unfeasible")) // redaksi: Error() == kode saja
+	require.NotEmpty(t, ge.Summary, "budget_unfeasible harus membawa ringkasan alokasi terakhir")
+	assert.Contains(t, ge.Summary, "programmer", "ringkasan menyebut komposisi role")
+	assert.Contains(t, ge.Summary, "business_analyst")
+	assert.Contains(t, ge.Summary, "Rp", "ringkasan memuat angka uang")
+	assert.Contains(t, ge.Summary, "Rp 50.000.000", "ringkasan menyebut maksimum budget")
 
 	assert.Equal(t, 3, mock.callCount(), "tepat 3 attempts, tidak lebih")
 	assert.NotEqual(t, uuid.Nil, qid)
@@ -460,7 +465,7 @@ func TestGenerate_UnknownRole_AllocationInvalidSingleCall(t *testing.T) {
 	fx := seedPipelineFixtures(t, pool)
 
 	mock := &scriptedAIProvider{steps: []scriptedStep{
-		{text: `{"resources":[{"role":"data_scientist","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Analisis data"}],"selected_optional_scope":[],"standard_activities":[]}`},
+		{text: `{"resources":[{"role":"data_scientist","seniority":"senior","employee_count":1,"period_quarters":12,"scope_references":["Customer portal"],"reason":"Analisis data"}],"selected_optional_scope":[],"standard_activities":[]}`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -477,7 +482,7 @@ func TestGenerate_ForbiddenRateField_AllocationInvalid(t *testing.T) {
 
 	// AI mencoba menyelipkan angka rate/total — DisallowUnknownFields harus menolak.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
-		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Implementasi","rate":12000000}],"selected_optional_scope":[],"standard_activities":[],"total":36000000}`},
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_quarters":12,"scope_references":["Customer portal"],"reason":"Implementasi","rate":12000000}],"selected_optional_scope":[],"standard_activities":[],"total":36000000}`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -491,7 +496,7 @@ func TestGenerate_NewBusinessFeatureRejected_AllocationInvalid(t *testing.T) {
 
 	// Fitur baru di luar mandatory+optional+standard allowlist.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
-		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["AI dashboard"],"reason":"Fitur AI baru"}],"selected_optional_scope":[],"standard_activities":[]}`},
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_quarters":12,"scope_references":["AI dashboard"],"reason":"Fitur AI baru"}],"selected_optional_scope":[],"standard_activities":[]}`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -505,7 +510,7 @@ func TestGenerate_MissingRateItem_RateItemMissing(t *testing.T) {
 
 	// quality_assurance valid sbg role tapi tidak ada di rate card fixture.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
-		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Implementasi"},{"role":"quality_assurance","seniority":"intermediate","employee_count":1,"period_months":3,"scope_references":["Admin panel"],"reason":"Uji kualitas"}],"selected_optional_scope":[],"standard_activities":[]}`},
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_quarters":12,"scope_references":["Customer portal"],"reason":"Implementasi"},{"role":"quality_assurance","seniority":"intermediate","employee_count":1,"period_quarters":12,"scope_references":["Admin panel"],"reason":"Uji kualitas"}],"selected_optional_scope":[],"standard_activities":[]}`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -522,7 +527,7 @@ func TestGenerate_MandatoryScopeDroppedOnRetry_FatalAllocationInvalid(t *testing
 	// menolak meski sedang berada di tengah retry loop.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSONOverbudget()},
-		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,"scope_references":["Customer portal"],"reason":"Implementasi"}],"selected_optional_scope":["Notification center"],"standard_activities":[]}`},
+		{text: `{"resources":[{"role":"programmer","seniority":"senior","employee_count":1,"period_quarters":12,"scope_references":["Customer portal"],"reason":"Implementasi"}],"selected_optional_scope":["Notification center"],"standard_activities":[]}`},
 		{text: narrativeHTML()},
 	}}
 	svc, _ := newSvc(pool, mock)

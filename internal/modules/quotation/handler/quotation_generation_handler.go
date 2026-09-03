@@ -232,6 +232,11 @@ func (h *QuotationGenerationHandler) mapGenerationError(c *gin.Context, err erro
 		return
 	}
 
+	if ge.Code == service.ErrCodeBudgetUnfeasible && ge.Summary != "" {
+		response.Error(c, http.StatusUnprocessableEntity, ge.Summary, ge.Error())
+		return
+	}
+
 	switch ge.Code {
 	case service.ErrCodeRegenerateRateLimited:
 		response.Error(c, http.StatusTooManyRequests, "Regenerate limit reached", ge.Error())

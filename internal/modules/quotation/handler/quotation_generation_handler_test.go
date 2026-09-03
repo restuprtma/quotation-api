@@ -176,7 +176,7 @@ func (fx httpFixture) requestBody() []byte {
 	body, err := json.Marshal(dto.GenerateQuotationRequest{
 		IdempotencyKey:            strPtr(fx.key.String()),
 		SkillID:                   fx.skillID,
-		ClientID:                  fx.clientID,
+		ClientID:                  &fx.clientID,
 		Subject:                   "Pengembangan Customer Portal",
 		SolutionType:              "custom_software",
 		CommercialScheme:          "dedicated_squad",
@@ -208,9 +208,9 @@ func strPtr(s string) *string { return &s }
 func httpAllocationJSON() string {
 	return `{
 		"resources": [
-			{"role":"programmer","seniority":"senior","employee_count":1,"period_months":3,
+			{"role":"programmer","seniority":"senior","employee_count":1,"period_quarters":12,
 			 "scope_references":["Customer portal"],"reason":"Mengimplementasikan fitur portal"},
-			{"role":"business_analyst","seniority":"intermediate","employee_count":1,"period_months":3,
+			{"role":"business_analyst","seniority":"intermediate","employee_count":1,"period_quarters":12,
 			 "scope_references":["Admin panel"],"reason":"Mendefinisikan kebutuhan panel admin"}
 		],
 		"selected_optional_scope": [],
