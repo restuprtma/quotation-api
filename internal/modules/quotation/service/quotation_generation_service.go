@@ -841,12 +841,15 @@ Rules: every mandatory_scope item must appear in at least one resource scope_ref
 var narrativeOutputContract = []string{
 	"Output ONLY an HTML fragment, no markdown fences, no explanations.",
 	"You MUST wrap the opening paragraph in <section data-block-type=\"opening\">.</section>",
-	"You MUST wrap the scope list and its heading in <section data-block-type=\"scope\">.</section>",
+	"The opening paragraph MUST begin with: 'Melalui penawaran ini, kami menegaskan kesiapan tim IT Profesional kami yang berjumlah lebih dari 100 orang untuk mendukung layanan dan keberhasilan proyek. Dokumen ini memuat ruang lingkup pekerjaan, output, timeline, dan rincian biaya sebagai acuan kesepakatan bersama kedua belah pihak.'",
+	"You MUST wrap the scope section in <section data-block-type=\"scope\">.</section>",
+	"The scope section MUST have heading <h2>Lingkup Pekerjaan &amp; Timeline</h2>.",
+	"For each scope_items entry, output a <strong> title followed by a <ul> with 2-4 <li> items describing specific technical deliverables or activities for that scope area. Write in Bahasa Indonesia formal with English technical terms inline.",
 	"You MUST wrap the closing paragraph in <section data-block-type=\"closing\">.</section>",
 	"Allowed tags: section, p, strong, em, ul, ol, li, h1, h2, h3, br.",
 	"Never output tables, script, style, links or images.",
 	"Never mention prices, totals, budgets, payment terms or legal clauses.",
-	"Use Bahasa Indonesia formal.",
+	"Use Bahasa Indonesia formal with English IT/software engineering terms.",
 }
 
 func (s *QuotationGenerationService) composeNarrative(ctx context.Context, provider AIProvider, req dto.GenerateQuotationRequest, cfg *generationConfig, enriched dto.EnrichedAllocation) (string, error) {
@@ -893,7 +896,11 @@ func (s *QuotationGenerationService) composeNarrative(ctx context.Context, provi
 	return narrative, nil
 }
 
-const narrativeTaskSchema = `Compose the narrative section of a business quotation: an opening paragraph, a "Ruang Lingkup dan Timeline" heading followed by one list item per scope_items entry, and a closing courtesy paragraph.`
+const narrativeTaskSchema = `Compose the narrative section of a Venturo Pro Solusindo business quotation document:
+1. An opening paragraph that affirms the company's readiness with 100+ IT professionals to support the project.
+2. A "Lingkup Pekerjaan & Timeline" section: for each scope_items entry, write a descriptive subsection with the scope name in <strong> tags, followed by a <ul> list of 2-4 specific technical activities or deliverables. Group related scope items by project phase (e.g., Requirement Analysis & System Design, Development, SIT/UAT & Go-Live) when the scope naturally fits those phases.
+3. A brief closing courtesy paragraph.
+The tone is formal Indonesian (Bahasa Indonesia) with English IT terminology inline.`
 
 type allocationPromptInput struct {
 	Subject                   string   `json:"subject"`
