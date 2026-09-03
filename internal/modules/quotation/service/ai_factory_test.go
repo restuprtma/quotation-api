@@ -11,6 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAIFactory_OpenAIAndAgentRouter(t *testing.T) {
+	factory := NewProviderFactory()
+	for _, name := range []string{"openai", "agentrouter"} {
+		cfg := ProviderConfig{
+			ProviderName:    name,
+			DecryptedAPIKey: "sk-test",
+			Model:           "gpt-4o",
+		}
+		provider, err := factory.New(context.Background(), cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, provider)
+	}
+}
+
 func TestAIFactory_MissingCredential_Ollama(t *testing.T) {
 	factory := NewProviderFactory()
 	cfg := ProviderConfig{
