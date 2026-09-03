@@ -12,6 +12,7 @@ type Credential struct {
 	Provider        string     `json:"provider" db:"provider"`
 	Model           string     `json:"model" db:"model"`
 	EncryptedAPIKey string     `json:"encrypted_api_key" db:"encrypted_api_key"`
+	BaseURL         string     `json:"base_url" db:"base_url"`
 	KeyHint         string     `json:"key_hint" db:"key_hint"`
 	IsActive        bool       `json:"is_active" db:"is_active"`
 	CreatedBy       *uuid.UUID `json:"created_by" db:"created_by"`

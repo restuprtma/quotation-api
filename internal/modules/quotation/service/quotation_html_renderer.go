@@ -127,7 +127,7 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 	b.WriteString(`<section data-block-type="commercial">`)
 	b.WriteString(`<h2>Development Investment</h2>`)
 	b.WriteString(`<table>`)
-	b.WriteString(`<thead><tr><th>Peran</th><th>Senioritas</th><th>Jumlah SDM</th><th>Durasi (bulan)</th><th>Tarif/Bulan</th><th>Total</th></tr></thead>`)
+	b.WriteString(`<thead><tr><th>Peran</th><th>Senioritas</th><th>Jumlah SDM</th><th>Durasi (kuartal)</th><th>Tarif/Bulan</th><th>Total</th></tr></thead>`)
 	b.WriteString(`<tbody>`)
 	for _, res := range a.Resources {
 		rowKey := strings.ToLower(res.Role) + "_" + strings.ToLower(res.Seniority)
@@ -135,12 +135,12 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Role)) + "</td>")
 		b.WriteString("<td>" + htmlEscape(humanizeLabel(res.Seniority)) + "</td>")
 		b.WriteString(fmt.Sprintf("<td>%d</td>", res.EmployeeCount))
-		b.WriteString(fmt.Sprintf("<td>%d</td>", res.PeriodMonths))
+		b.WriteString(fmt.Sprintf("<td>%d</td>", res.PeriodQuarters))
 		b.WriteString("<td>" + formatNumber(res.AmountPerMonth) + "</td>")
 		b.WriteString(`<td data-field="line_total">` + formatNumber(res.LineTotal) + "</td>")
 		b.WriteString("</tr>")
 	}
-	b.WriteString(`<tr><td colspan="5"><strong>Total Investment</strong></td><td data-field="total_investment"><strong>` + formatCurrency(a.TotalInvestment, a.Currency) + `</strong></td></tr>`)
+	b.WriteString(`<tr><td colspan="5"><strong>TOTAL INVESTMENT</strong></td><td data-field="total_investment"><strong>` + formatCurrency(a.TotalInvestment, a.Currency) + `</strong></td></tr>`)
 	b.WriteString(`</tbody></table>`)
 	b.WriteString(`</section>`)
 	return b.String()
@@ -149,8 +149,8 @@ func (r *defaultHTMLRenderer) renderInvestmentTable(a dto.EnrichedAllocation) st
 func (r *defaultHTMLRenderer) renderPaymentSchedule(p dto.PaymentTermsInput) string {
 	var b strings.Builder
 	b.WriteString(`<section data-block-type="payment">`)
-	b.WriteString(`<h2>Jadwal Pembayaran</h2>`)
-	b.WriteString(`<table><thead><tr><th>Milestone</th><th>Persentase</th><th>Keterangan</th></tr></thead><tbody>`)
+	b.WriteString(`<h2>Ketentuan Pembayaran</h2>`)
+	b.WriteString(`<table><thead><tr><th>Terms</th><th>Persentase (%)</th><th>Keterangan</th></tr></thead><tbody>`)
 	for _, item := range p.Items {
 		b.WriteString("<tr>")
 		b.WriteString("<td>" + htmlEscape(item.MilestoneName) + "</td>")
@@ -170,9 +170,20 @@ func (r *defaultHTMLRenderer) renderLegalBlock(legalHTML string) string {
 func (r *defaultHTMLRenderer) renderSignatureBlock() string {
 	return `<section data-block-type="signature">
   <h2>Persetujuan</h2>
-  <table>
+  <table class="signature-table">
     <tbody>
-      <tr><td>Perwakilan Vendor</td><td>Perwakilan Klien</td></tr>
+      <tr>
+        <td class="signature-cell">
+          <p>Hormat Kami,</p>
+          <br><br><br><br>
+          <p><strong>PT Venturo Pro Solusindo</strong></p>
+        </td>
+        <td class="signature-cell">
+          <p>Disetujui Oleh,</p>
+          <br><br><br><br>
+          <p><strong>(Nama Klien)</strong></p>
+        </td>
+      </tr>
     </tbody>
   </table>
 </section>`
@@ -288,6 +299,7 @@ type ExpectedLine struct {
 	Seniority      string
 	EmployeeCount  int64
 	PeriodMonths   int64
+	PeriodQuarters int64
 	AmountPerMonth int64
 	LineTotal      int64
 }

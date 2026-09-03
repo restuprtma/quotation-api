@@ -292,7 +292,7 @@ func TestDOMValidator_DetectsModifiedTotalInvestment(t *testing.T) {
 
 func TestDOMValidator_DetectsRemovedTotalRow(t *testing.T) {
 	doc, exp := assembleForTest(t)
-	removedIdx := strings.Index(doc, `<tr><td colspan="5"><strong>Total Investment</strong></td>`)
+	removedIdx := strings.Index(doc, `<tr><td colspan="5"><strong>TOTAL INVESTMENT</strong></td>`)
 	endIdx := strings.Index(doc[removedIdx:], "</tr>") + removedIdx + len("</tr>")
 	tampered := doc[:removedIdx] + doc[endIdx:]
 	v := service.NewDOMValidator()
