@@ -258,3 +258,67 @@ func (r *RateCardRepository) GetActiveRateCard(ctx context.Context, companyID, m
 func (r *RateCardRepository) ListActiveRateCards(ctx context.Context, companyID string) ([]*domain.RateCard, error) {
 	return r.ListAll(ctx, companyID, true)
 }
+
+func (r *RateCardRepository) GetOvertimeConfigs(ctx context.Context, rateCardID, companyID string) ([]*domain.OvertimeRateConfig, error) {
+	query := `
+		SELECT id, company_id, rate_card_id, role, seniority, term_type,
+			base_monthly_rate, hourly_divisor,
+			workday_first_hour_multiplier, workday_subsequent_multiplier,
+			holiday_base_multiplier, holiday_9th_hour_multiplier, holiday_10plus_multiplier,
+			created_at, updated_at
+		FROM overtime_rate_configs
+		WHERE rate_card_id = $1 AND company_id = $2
+		ORDER BY role, seniority, term_type
+	`
+	rows, err := r.db.Query(ctx, query, rateCardID, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*domain.OvertimeRateConfig
+	for rows.Next() {
+		cfg := &domain.OvertimeRateConfig{}
+		if err := rows.Scan(
+			&cfg.ID, &cfg.CompanyID, &cfg.RateCardID, &cfg.Role, &cfg.Seniority, &cfg.TermType,
+			&cfg.BaseMonthlyRate, &cfg.HourlyDivisor,
+			&cfg.WorkdayFirstHourMultiplier, &cfg.WorkdaySubsequentMultiplier,
+			&cfg.HolidayBaseMultiplier, &cfg.Holiday9thHourMultiplier, &cfg.Holiday10PlusMultiplier,
+			&cfg.CreatedAt, &cfg.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		list = append(list, cfg)
+	}
+	return list, rows.Err()
+}
+
+func (r *RateCardRepository) GetInfrastructurePackages(ctx context.Context, rateCardID, companyID string) ([]*domain.InfrastructurePackage, error) {
+	query := `
+		SELECT id, company_id, rate_card_id, category, package_name, vcpu, ram_gb, storage_gb, amount_per_month,
+			created_at, updated_at
+		FROM infrastructure_packages
+		WHERE rate_card_id = $1 AND company_id = $2
+		ORDER BY category, amount_per_month ASC
+	`
+	rows, err := r.db.Query(ctx, query, rateCardID, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*domain.InfrastructurePackage
+	for rows.Next() {
+		pkg := &domain.InfrastructurePackage{}
+		if err := rows.Scan(
+			&pkg.ID, &pkg.CompanyID, &pkg.RateCardID, &pkg.Category, &pkg.PackageName,
+			&pkg.VCPU, &pkg.RAMGB, &pkg.StorageGB, &pkg.AmountPerMonth,
+			&pkg.CreatedAt, &pkg.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		list = append(list, pkg)
+	}
+	return list, rows.Err()
+}
+

@@ -125,7 +125,9 @@ func (s *RateCardService) GetDetail(ctx context.Context, companyID, id string) (
 	if err != nil {
 		return nil, err
 	}
-	return mapToDetailResponse(rc, items), nil
+	overtimes, _ := s.repo.GetOvertimeConfigs(ctx, id, companyID)
+	infras, _ := s.repo.GetInfrastructurePackages(ctx, id, companyID)
+	return mapToDetailResponseWithExtras(rc, items, overtimes, infras), nil
 }
 
 func (s *RateCardService) ListAll(ctx context.Context, companyID string, activeOnly bool) ([]*dto.RateCardSummaryResponse, error) {
@@ -196,6 +198,15 @@ func (s *RateCardService) GetRateCard(ctx context.Context, companyID, id string)
 }
 
 func mapToDetailResponse(rc *domain.RateCard, items []*domain.RateCardItem) *dto.RateCardDetailResponse {
+	return mapToDetailResponseWithExtras(rc, items, nil, nil)
+}
+
+func mapToDetailResponseWithExtras(
+	rc *domain.RateCard,
+	items []*domain.RateCardItem,
+	overtimes []*domain.OvertimeRateConfig,
+	infras []*domain.InfrastructurePackage,
+) *dto.RateCardDetailResponse {
 	itemResponses := make([]dto.RateCardItemResponse, len(items))
 	for i, item := range items {
 		itemResponses[i] = dto.RateCardItemResponse{
@@ -228,6 +239,43 @@ func mapToDetailResponse(rc *domain.RateCard, items []*domain.RateCardItem) *dto
 		}
 	}
 
+	var otResponses []dto.OvertimeConfigResponse
+	if len(overtimes) > 0 {
+		otResponses = make([]dto.OvertimeConfigResponse, len(overtimes))
+		for i, ot := range overtimes {
+			otResponses[i] = dto.OvertimeConfigResponse{
+				ID:                          ot.ID,
+				Role:                        ot.Role,
+				Seniority:                   ot.Seniority,
+				TermType:                    ot.TermType,
+				BaseMonthlyRate:             ot.BaseMonthlyRate,
+				HourlyRate:                  ot.HourlyRate(),
+				HourlyDivisor:               ot.HourlyDivisor,
+				WorkdayFirstHourMultiplier:  ot.WorkdayFirstHourMultiplier,
+				WorkdaySubsequentMultiplier: ot.WorkdaySubsequentMultiplier,
+				HolidayBaseMultiplier:       ot.HolidayBaseMultiplier,
+				Holiday9thHourMultiplier:    ot.Holiday9thHourMultiplier,
+				Holiday10PlusMultiplier:     ot.Holiday10PlusMultiplier,
+			}
+		}
+	}
+
+	var infraResponses []dto.InfrastructurePackageResponse
+	if len(infras) > 0 {
+		infraResponses = make([]dto.InfrastructurePackageResponse, len(infras))
+		for i, inf := range infras {
+			infraResponses[i] = dto.InfrastructurePackageResponse{
+				ID:             inf.ID,
+				Category:       inf.Category,
+				PackageName:    inf.PackageName,
+				VCPU:           inf.VCPU,
+				RAMGB:          inf.RAMGB,
+				StorageGB:      inf.StorageGB,
+				AmountPerMonth: inf.AmountPerMonth,
+			}
+		}
+	}
+
 	return &dto.RateCardDetailResponse{
 		ID:                    rc.ID,
 		CompanyID:             rc.CompanyID,
@@ -243,6 +291,8 @@ func mapToDetailResponse(rc *domain.RateCard, items []*domain.RateCardItem) *dto
 		EffectiveFrom:         rc.EffectiveFrom,
 		EffectiveUntil:        rc.EffectiveUntil,
 		Items:                 itemResponses,
+		OvertimeConfigs:       otResponses,
+		InfraPackages:         infraResponses,
 		CreatedAt:             rc.CreatedAt,
 		UpdatedAt:             rc.UpdatedAt,
 	}

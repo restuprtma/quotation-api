@@ -135,13 +135,18 @@ type RateCardItemResponse struct {
 }
 
 type OvertimeConfigResponse struct {
-	ID              uuid.UUID `json:"id"`
-	Role            string    `json:"role"`
-	Seniority       string    `json:"seniority"`
-	TermType        string    `json:"term_type"`
-	BaseMonthlyRate int64     `json:"base_monthly_rate"`
-	HourlyRate      int64     `json:"hourly_rate"`
-	HourlyDivisor   int       `json:"hourly_divisor"`
+	ID                          uuid.UUID `json:"id"`
+	Role                        string    `json:"role"`
+	Seniority                   string    `json:"seniority"`
+	TermType                    string    `json:"term_type"`
+	BaseMonthlyRate             int64     `json:"base_monthly_rate"`
+	HourlyRate                  int64     `json:"hourly_rate"`
+	HourlyDivisor               int       `json:"hourly_divisor"`
+	WorkdayFirstHourMultiplier  int       `json:"workday_first_hour_multiplier,omitempty"`
+	WorkdaySubsequentMultiplier int       `json:"workday_subsequent_multiplier,omitempty"`
+	HolidayBaseMultiplier       int       `json:"holiday_base_multiplier,omitempty"`
+	Holiday9thHourMultiplier    int       `json:"holiday_9th_hour_multiplier,omitempty"`
+	Holiday10PlusMultiplier     int       `json:"holiday_10plus_multiplier,omitempty"`
 }
 
 type InfrastructurePackageResponse struct {
