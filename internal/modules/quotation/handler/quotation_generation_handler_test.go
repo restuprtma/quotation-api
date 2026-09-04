@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/middleware"
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/handler"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
@@ -269,7 +270,8 @@ func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner 
 	genRepo := repository.NewGenerationRepository(pool)
 	source := &fixedSource{provider: provider, name: "gemini", model: "gemini-test"}
 	genSvc := service.NewQuotationGenerationService(genRepo, source, opts...)
-	genHandler := handler.NewQuotationGenerationHandler(genSvc, genRepo)
+	previewCalculator := service.NewDedicatedSquadCalculator(repository.NewRateCardRepository(pool))
+	genHandler := handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator)
 
 	router.Use(func(c *gin.Context) {
 		company := owner
@@ -289,11 +291,89 @@ func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner 
 	{
 		q.GET("/:id", genHandler.GetByID)
 		q.POST("/generate", genHandler.Generate)
+		q.POST("/preview", genHandler.Preview)
 		q.POST("/:id/regenerate", genHandler.Regenerate)
 		q.GET("/:id/generation-status", genHandler.GetGenerationStatus)
 		q.PUT("/:id/draft", genHandler.SaveDraft)
 	}
 	return router
+}
+
+func TestPreview_HTTP_CalculatesWithoutAIOrPersistence(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+	ctx := context.Background()
+	cardID := uuid.New()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO rate_cards (id, company_id, code, name, market, client_tier, currency, effective_from, is_active)
+		VALUES ($1,$2,'VENTURO-STD-2026','Preview Card','national','commercial_national','IDR',NOW(),true)
+	`, cardID, fx.companyID)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO rate_card_items (company_id, rate_card_id, role, display_name, seniority, discipline, term_type,
+			amount_per_month, recruitment_fee, onboarding_fee)
+		VALUES ($1,$2,'backend_programmer','Backend Programmer','senior','ENGINEERING','short_term',50000000,1000000,2000000)
+	`, fx.companyID, cardID)
+	require.NoError(t, err)
+
+	provider := &adaptiveAIProvider{}
+	router := newGenerationRouter(pool, provider, fx.companyID)
+	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
+	payload := dto.GenerateQuotationRequest{
+		RateCardID: cardID,
+		DedicatedSquad: &domain.DedicatedSquadInput{
+			Model: domain.ModelSOWSmall, Requirement: "Bangun portal pelanggan",
+			DevelopmentSquad: []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}},
+			PaymentCount:     2, PaymentAnchorDate: &anchor, Timeline: domain.TimelineInput{Mode: domain.TimelineRelative},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var beforeQuotations, beforeRevisions int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotations WHERE company_id=$1`, fx.companyID).Scan(&beforeQuotations))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotation_revisions WHERE company_id=$1`, fx.companyID).Scan(&beforeRevisions))
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview", nil, body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, 0, provider.calls())
+
+	var responseBody struct {
+		Data dto.DedicatedSquadPreviewResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+	assert.Equal(t, int64(50_000_000), responseBody.Data.Calculation.TotalInvestment)
+	assert.NotEmpty(t, responseBody.Data.VisibleSections)
+	assert.False(t, responseBody.Data.IncludeK6)
+	assert.False(t, responseBody.Data.IncludePentest)
+
+	var afterQuotations, afterRevisions int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotations WHERE company_id=$1`, fx.companyID).Scan(&afterQuotations))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotation_revisions WHERE company_id=$1`, fx.companyID).Scan(&afterRevisions))
+	assert.Equal(t, beforeQuotations, afterQuotations)
+	assert.Equal(t, beforeRevisions, afterRevisions)
+
+	payload.DedicatedSquad.DevelopmentSquad[0].Role = "missing_role"
+	missingBody, _ := json.Marshal(payload)
+	wMissing := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview", nil, missingBody)
+	assert.Equal(t, http.StatusUnprocessableEntity, wMissing.Code)
+	assert.Equal(t, service.ErrCodeRateItemMissing, detailCode(t, wMissing))
+
+	payload.DedicatedSquad.DevelopmentSquad[0].Role = "backend_programmer"
+	payload.DedicatedSquad.Model = domain.ModelSOWLarge
+	invalidBody, _ := json.Marshal(payload)
+	wInvalid := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview", nil, invalidBody)
+	assert.Equal(t, http.StatusUnprocessableEntity, wInvalid.Code)
+	assert.Equal(t, service.ErrCodeAllocationInvalid, detailCode(t, wInvalid))
+}
+
+func TestPreview_HTTP_RequiresCompanyContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := handler.NewQuotationGenerationHandler(nil, nil)
+	router.POST("/quotation/v1/quotations/preview", h.Preview)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview", nil, []byte(`{"dedicated_squad":{}}`))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func doJSON(router *gin.Engine, method, path string, companyOverride *uuid.UUID, body []byte) *httptest.ResponseRecorder {

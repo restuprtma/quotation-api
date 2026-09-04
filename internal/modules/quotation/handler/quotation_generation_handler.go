@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"venturo-skeleton-go/internal/middleware"
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
 	"venturo-skeleton-go/internal/modules/quotation/service"
@@ -19,12 +21,62 @@ import (
 // or tokens; every failure surfaces as a safe error code produced by the
 // service layer (GenerationError.Error() prints the code only).
 type QuotationGenerationHandler struct {
-	genSvc  *service.QuotationGenerationService
-	genRepo *repository.GenerationRepository
+	genSvc            *service.QuotationGenerationService
+	genRepo           *repository.GenerationRepository
+	previewCalculator dedicatedSquadPreviewCalculator
 }
 
-func NewQuotationGenerationHandler(genSvc *service.QuotationGenerationService, genRepo *repository.GenerationRepository) *QuotationGenerationHandler {
-	return &QuotationGenerationHandler{genSvc: genSvc, genRepo: genRepo}
+type dedicatedSquadPreviewCalculator interface {
+	Calculate(ctx context.Context, companyID, rateCardID string, input domain.DedicatedSquadInput) (domain.DedicatedSquadCalculation, error)
+}
+
+func NewQuotationGenerationHandler(genSvc *service.QuotationGenerationService, genRepo *repository.GenerationRepository, previewCalculator ...dedicatedSquadPreviewCalculator) *QuotationGenerationHandler {
+	h := &QuotationGenerationHandler{genSvc: genSvc, genRepo: genRepo}
+	if len(previewCalculator) > 0 {
+		h.previewCalculator = previewCalculator[0]
+	}
+	return h
+}
+
+// Preview computes server-authoritative Dedicated Squad figures without AI or persistence.
+func (h *QuotationGenerationHandler) Preview(c *gin.Context) {
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	companyID, ok := companyUUID(c)
+	if !ok {
+		return
+	}
+	if req.DedicatedSquad == nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad input is required", service.ErrCodeAllocationInvalid)
+		return
+	}
+	if h.previewCalculator == nil {
+		response.Error(c, http.StatusInternalServerError, "Internal server error", "")
+		return
+	}
+
+	calculation, err := h.previewCalculator.Calculate(c.Request.Context(), companyID.String(), req.RateCardID.String(), *req.DedicatedSquad)
+	if err != nil {
+		if errors.Is(err, dto.ErrMissingRateItem) {
+			response.Error(c, http.StatusUnprocessableEntity, "Rate item is unavailable", service.ErrCodeRateItemMissing)
+			return
+		}
+		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad allocation is invalid", service.ErrCodeAllocationInvalid)
+		return
+	}
+	rules, err := service.EvaluateDedicatedSquadRules(*req.DedicatedSquad, calculation.DevelopmentSubtotal)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad allocation is invalid", service.ErrCodeAllocationInvalid)
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Dedicated squad preview calculated successfully", dto.DedicatedSquadPreviewResponse{
+		Calculation: calculation, VisibleSections: service.BuildSectionPlan(rules),
+		IncludeK6: rules.IncludeK6, IncludePentest: rules.IncludePentest,
+	})
 }
 
 // Generate starts the AI-first pipeline and returns 201 with the committed

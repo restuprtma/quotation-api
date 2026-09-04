@@ -47,10 +47,11 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	genRepo := repository.NewGenerationRepository(db)
 	providerSource := service.NewDBCredentialProviderSource(credentialRepo, aiFactory, cfg.AI.CredentialEncryptionKey)
 	genSvc := service.NewQuotationGenerationService(genRepo, providerSource)
+	previewCalculator := service.NewDedicatedSquadCalculator(rcRepo)
 
 	return &Module{
 		Handler:    hdlr,
-		GenHandler: handler.NewQuotationGenerationHandler(genSvc, genRepo),
+		GenHandler: handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
 		Service:    svc,
 	}
 }
@@ -71,6 +72,7 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.PUT("/:id", m.Handler.Update)
 
 		quotations.POST("/generate", m.GenHandler.Generate)
+		quotations.POST("/preview", m.GenHandler.Preview)
 		quotations.POST("/:id/regenerate", m.GenHandler.Regenerate)
 		quotations.GET("/:id/generation-status", m.GenHandler.GetGenerationStatus)
 		quotations.PUT("/:id/draft", m.GenHandler.SaveDraft)

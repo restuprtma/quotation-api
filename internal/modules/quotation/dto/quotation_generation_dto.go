@@ -67,6 +67,13 @@ type GenerateQuotationRequest struct {
 	AdditionalNotes           string                      `json:"additional_notes,omitempty"`
 }
 
+type DedicatedSquadPreviewResponse struct {
+	Calculation     domain.DedicatedSquadCalculation `json:"calculation"`
+	VisibleSections []domain.DocumentSection         `json:"visible_sections"`
+	IncludeK6       bool                             `json:"include_k6"`
+	IncludePentest  bool                             `json:"include_pentest"`
+}
+
 type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`
