@@ -143,7 +143,7 @@ func TestSanitize_PreservesNarrativeTags(t *testing.T) {
 		"strike":     `<p>ini <s>coret</s></p>`,
 		"blockquote": `<blockquote>Kutipan dokumen</blockquote>`,
 		"section":    `<section><p>Bagian satu</p></section>`,
-		"link":       `<a href="https://example.com/spec">link</a>`,
+		"link":       `<a>link</a>`,
 		"unordered":  `<ul><li>satu</li><li>dua</li></ul>`,
 		"ordered":    `<ol><li>pertama</li><li>kedua</li></ol>`,
 		"h1":         `<h1>Judul Utama</h1>`,
@@ -161,6 +161,20 @@ func TestSanitize_PreservesNarrativeTags(t *testing.T) {
 			assert.Equal(t, snippet, out, "tag naratif dasar harus lolos utuh")
 		})
 	}
+}
+
+func TestSanitize_DedicatedTemplateSemanticMarkersOnly(t *testing.T) {
+	s := newSanitizerUnderTest()
+	input := `<article class="quotation-document" style="width:210mm"><section data-block-type="legal" data-section-number="4" data-evil="x"><table class="signature-table"><tr><th data-column-width="75">Description</th><th data-column-width="25">Timeline</th></tr></table><a href="https://evil.example">external</a></section></article>`
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+	assert.Contains(t, out, `class="quotation-document"`)
+	assert.Contains(t, out, `data-section-number="4"`)
+	assert.Contains(t, out, `data-column-width="75"`)
+	assert.Contains(t, out, `class="signature-table"`)
+	assert.NotContains(t, out, `style=`)
+	assert.NotContains(t, out, `data-evil`)
+	assert.NotContains(t, out, `href=`)
 }
 
 func TestSanitize_PreservesBreakTag(t *testing.T) {

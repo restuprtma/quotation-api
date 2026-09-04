@@ -2,6 +2,18 @@ package service
 
 const DefaultLegalTemplateVersion = 3
 
+const DedicatedTaxClause = "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia."
+const DedicatedInvoiceClause = "Tagihan dikirimkan sesuai tanggal invoice dan wajib dilunasi dalam jangka waktu H+14 (empat belas) hari kalender."
+const DedicatedSuspensionClause = "Keterlambatan pembayaran berakibat pada penghentian sementara pekerjaan pengembangan dan pengunduran jadwal timeline tanpa penalti bagi Venturo."
+const DedicatedBindingClause = "Dokumen penawaran disepakati sebagai bagian yang tidak terpisahkan dari Service Agreement Venturo."
+
+var DedicatedExclusionClauses = [...]string{
+	"Biaya akomodasi, transportasi luar kota, dan konsumsi harian jika pekerjaan on-site diminta oleh klien.",
+	"Percepatan pekerjaan di luar jam kerja reguler (malam hari, Sabtu, Minggu, atau hari libur nasional) dikenakan biaya lembur tersendiri.",
+	"Lisensi pihak ketiga, credit API AI (OpenAI/Anthropic), Payment Gateway, WhatsApp API / SMS Gateway, domain, dan server cloud di luar paket yang disepakati.",
+	"Penambahan fitur baru, perubahan alur proses yang telah di-approve, atau penundaan approval dari klien yang mengakibatkan masa kontrak molor.",
+}
+
 const DefaultLegalTemplateHTML = `<h2>Ketentuan</h2>` +
 	`<h3>Pajak dan Invoice</h3>` +
 	`<p>Nilai investasi yang tercantum dalam penawaran ini belum termasuk Pajak Pertambahan Nilai (PPN). Pengenaan dan besaran pajak mengikuti ketentuan perpajakan yang berlaku dan akan ditagihkan sesuai dokumen perpajakan yang sah.</p>` +

@@ -249,7 +249,7 @@ func (r *defaultHTMLRenderer) Assemble(criticalHTML, narrativeHTML string) (stri
 	}
 	lower := strings.ToLower(narrativeHTML)
 	compacted := whitespaceRemoved.Replace(lower)
-	for _, marker := range []string{"data-block-type=\"commercial\"", "data-field=", "data-role="} {
+	for _, marker := range []string{"data-block-type=\"commercial\"", "data-block-type=\"payment\"", "data-block-type=\"legal\"", "data-block-type=\"signature\"", "data-field=", "data-role=", "data-section-number=", "data-column-width="} {
 		if strings.Contains(compacted, marker) {
 			return "", fmt.Errorf("%w: narrative contains protected block marker %q", ErrUnsafeHTML, marker)
 		}
@@ -389,7 +389,6 @@ type defaultDOMValidator struct{}
 func NewDOMValidator() DOMValidator {
 	return &defaultDOMValidator{}
 }
-
 
 func (v *defaultDOMValidator) ValidateIntegrity(documentHTML string, expected IntegrityExpectations) error {
 	root, err := html.Parse(strings.NewReader(documentHTML))
