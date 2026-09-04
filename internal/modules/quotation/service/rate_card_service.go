@@ -193,6 +193,16 @@ func (s *RateCardService) ListActiveRateCards(ctx context.Context, companyID str
 	return s.repo.ListActiveRateCards(ctx, companyID)
 }
 
+// ListGeneratorCards returns only official, active master cards available to
+// the tenant. Admin listing remains available through ListAll.
+func (s *RateCardService) ListGeneratorCards(ctx context.Context, companyID string) ([]*domain.RateCard, error) {
+	return s.repo.ListGeneratorCards(ctx, companyID)
+}
+
+func (s *RateCardService) ResolveItem(ctx context.Context, companyID, rateCardID, role, seniority, termType string) (*domain.RateCardItem, error) {
+	return s.repo.ResolveItem(ctx, companyID, rateCardID, role, seniority, termType)
+}
+
 func (s *RateCardService) GetRateCard(ctx context.Context, companyID, id string) (*domain.RateCard, error) {
 	return s.repo.Get(ctx, id, companyID)
 }

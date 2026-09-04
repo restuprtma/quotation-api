@@ -8,9 +8,17 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"venturo-skeleton-go/internal/modules/quotation/domain"
+	"venturo-skeleton-go/internal/modules/quotation/dto"
 )
 
 var ErrRateCardNotFound = errors.New("rate card not found")
+
+var generatorRateCardCodes = []string{
+	"DEFAULT",
+	"VENTURO-STD-2026",
+	"VENTURO-BUMN-2026",
+	"VENTURO-INTL-2026",
+}
 
 type RateCardRepository struct {
 	db *pgxpool.Pool
@@ -259,6 +267,99 @@ func (r *RateCardRepository) ListActiveRateCards(ctx context.Context, companyID 
 	return r.ListAll(ctx, companyID, true)
 }
 
+// ResolveItem returns the single tenant-owned rate item matching the selected
+// card and commercial dimensions. Role and seniority are case-insensitive to
+// tolerate presentation-layer casing, while term type remains an exact enum.
+func (r *RateCardRepository) ResolveItem(ctx context.Context, companyID, rateCardID, role, seniority, termType string) (*domain.RateCardItem, error) {
+	query := `
+		SELECT id, company_id, rate_card_id, role, display_name, seniority, discipline,
+			term_type, amount_per_month,
+			base_salary, tech_lead_fee, ai_rnd_fee, workspace_fee, management_fee,
+			education_requirement, experience_requirement,
+			published_rate, max_discount_pct, floor_rate,
+			kickoff_fee, recruitment_fee, onboarding_fee,
+			created_at, updated_at
+		FROM rate_card_items
+		WHERE company_id = $1
+			AND rate_card_id = $2
+			AND LOWER(role) = LOWER($3)
+			AND LOWER(seniority) = LOWER($4)
+			AND term_type = $5
+		LIMIT 2
+	`
+	rows, err := r.db.Query(ctx, query, companyID, rateCardID, role, seniority, termType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []*domain.RateCardItem
+	for rows.Next() {
+		item := &domain.RateCardItem{}
+		if err := rows.Scan(
+			&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.DisplayName,
+			&item.Seniority, &item.Discipline, &item.TermType, &item.AmountPerMonth,
+			&item.BaseSalary, &item.TechLeadFee, &item.AiRndFee, &item.WorkspaceFee, &item.ManagementFee,
+			&item.EducationRequirement, &item.ExperienceRequirement,
+			&item.PublishedRate, &item.MaxDiscountPct, &item.FloorRate,
+			&item.KickoffFee, &item.RecruitmentFee, &item.OnboardingFee,
+			&item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		matches = append(matches, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, dto.ErrMissingRateItem
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("duplicate rate items for role %q, seniority %q, term %q", role, seniority, termType)
+	}
+	return matches[0], nil
+}
+
+// ListGeneratorCards exposes only the four official master-card codes to the
+// quotation generator. It deliberately retains both tenant and active filters;
+// admin CRUD continues to use ListAll.
+func (r *RateCardRepository) ListGeneratorCards(ctx context.Context, companyID string) ([]*domain.RateCard, error) {
+	query := `
+		SELECT id, company_id, code, name, market, client_tier, currency, description,
+			short_term_surcharge_pct, enterprise_markup_pct,
+			effective_from, effective_until, is_active, created_by, created_at, updated_at
+		FROM rate_cards
+		WHERE company_id = $1 AND is_active = true AND code = ANY($2)
+		ORDER BY CASE code
+			WHEN 'DEFAULT' THEN 1
+			WHEN 'VENTURO-STD-2026' THEN 2
+			WHEN 'VENTURO-BUMN-2026' THEN 3
+			WHEN 'VENTURO-INTL-2026' THEN 4
+		END
+	`
+	rows, err := r.db.Query(ctx, query, companyID, generatorRateCardCodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cards := make([]*domain.RateCard, 0, len(generatorRateCardCodes))
+	for rows.Next() {
+		card := &domain.RateCard{}
+		if err := rows.Scan(
+			&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.ClientTier,
+			&card.Currency, &card.Description, &card.ShortTermSurchargePct, &card.EnterpriseMarkupPct,
+			&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.CreatedBy,
+			&card.CreatedAt, &card.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		cards = append(cards, card)
+	}
+	return cards, rows.Err()
+}
+
 func (r *RateCardRepository) GetOvertimeConfigs(ctx context.Context, rateCardID, companyID string) ([]*domain.OvertimeRateConfig, error) {
 	query := `
 		SELECT id, company_id, rate_card_id, role, seniority, term_type,
@@ -321,4 +422,3 @@ func (r *RateCardRepository) GetInfrastructurePackages(ctx context.Context, rate
 	}
 	return list, rows.Err()
 }
-
