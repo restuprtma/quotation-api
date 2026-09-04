@@ -44,6 +44,7 @@ func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) 
 	req := GenerateQuotationRequest{
 		DedicatedSquad: &domain.DedicatedSquadInput{
 			Model:             domain.ModelSOWLarge,
+			Requirement:       "Build quotation engine",
 			DevelopmentSquad:  []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 8}},
 			PaymentCount:      2,
 			PaymentAnchorDate: &anchor,
@@ -61,4 +62,6 @@ func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) 
 	require.NoError(t, json.Unmarshal(b, &decoded))
 	require.NotNil(t, decoded.DedicatedSquad)
 	require.Equal(t, domain.ModelSOWLarge, decoded.DedicatedSquad.Model)
+	require.Equal(t, anchor, *decoded.DedicatedSquad.PaymentAnchorDate)
+	require.NoError(t, decoded.DedicatedSquad.Validate())
 }

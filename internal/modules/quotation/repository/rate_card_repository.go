@@ -135,14 +135,14 @@ func (r *RateCardRepository) GetWithDetails(ctx context.Context, id, companyID s
 	}
 
 	itemQuery := `
-		SELECT id, company_id, rate_card_id, role, display_name, seniority, discipline,
-			term_type, amount_per_month,
-			base_salary, tech_lead_fee, ai_rnd_fee, workspace_fee, management_fee,
-			education_requirement, experience_requirement,
-			published_rate, max_discount_pct, floor_rate,
-			kickoff_fee, recruitment_fee, onboarding_fee,
-			created_at, updated_at
-		FROM rate_card_items
+		SELECT item.id, item.company_id, item.rate_card_id, item.role, item.display_name,
+			item.seniority, item.discipline, item.term_type, item.amount_per_month,
+			item.base_salary, item.tech_lead_fee, item.ai_rnd_fee, item.workspace_fee, item.management_fee,
+			item.education_requirement, item.experience_requirement,
+			item.published_rate, item.max_discount_pct, item.floor_rate,
+			item.kickoff_fee, item.recruitment_fee, item.onboarding_fee,
+			item.created_at, item.updated_at
+		FROM rate_card_items AS item
 		WHERE rate_card_id = $1 AND company_id = $2
 		ORDER BY discipline, role, seniority, term_type
 	`
@@ -272,22 +272,26 @@ func (r *RateCardRepository) ListActiveRateCards(ctx context.Context, companyID 
 // tolerate presentation-layer casing, while term type remains an exact enum.
 func (r *RateCardRepository) ResolveItem(ctx context.Context, companyID, rateCardID, role, seniority, termType string) (*domain.RateCardItem, error) {
 	query := `
-		SELECT id, company_id, rate_card_id, role, display_name, seniority, discipline,
-			term_type, amount_per_month,
-			base_salary, tech_lead_fee, ai_rnd_fee, workspace_fee, management_fee,
-			education_requirement, experience_requirement,
-			published_rate, max_discount_pct, floor_rate,
-			kickoff_fee, recruitment_fee, onboarding_fee,
-			created_at, updated_at
-		FROM rate_card_items
-		WHERE company_id = $1
-			AND rate_card_id = $2
-			AND LOWER(role) = LOWER($3)
-			AND LOWER(seniority) = LOWER($4)
-			AND term_type = $5
+		SELECT item.id, item.company_id, item.rate_card_id, item.role, item.display_name,
+			item.seniority, item.discipline, item.term_type, item.amount_per_month,
+			item.base_salary, item.tech_lead_fee, item.ai_rnd_fee, item.workspace_fee, item.management_fee,
+			item.education_requirement, item.experience_requirement,
+			item.published_rate, item.max_discount_pct, item.floor_rate,
+			item.kickoff_fee, item.recruitment_fee, item.onboarding_fee,
+			item.created_at, item.updated_at
+		FROM rate_card_items AS item
+		JOIN rate_cards AS card
+			ON card.id = item.rate_card_id AND card.company_id = item.company_id
+		WHERE item.company_id = $1
+			AND item.rate_card_id = $2
+			AND LOWER(item.role) = LOWER($3)
+			AND LOWER(item.seniority) = LOWER($4)
+			AND item.term_type = $5
+			AND card.is_active = true
+			AND card.code = ANY($6)
 		LIMIT 2
 	`
-	rows, err := r.db.Query(ctx, query, companyID, rateCardID, role, seniority, termType)
+	rows, err := r.db.Query(ctx, query, companyID, rateCardID, role, seniority, termType, generatorRateCardCodes)
 	if err != nil {
 		return nil, err
 	}

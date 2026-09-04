@@ -13,7 +13,7 @@ import (
 func TestDedicatedSquadRulesDecisionMatrix(t *testing.T) {
 	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
 	monthlyLine := domain.SquadLineInput{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}
-	base := domain.DedicatedSquadInput{DevelopmentSquad: []domain.SquadLineInput{monthlyLine}, PaymentCount: 2, PaymentAnchorDate: &anchor, Timeline: domain.TimelineInput{Mode: domain.TimelineRelative}}
+	base := domain.DedicatedSquadInput{Requirement: "Build a portal", DevelopmentSquad: []domain.SquadLineInput{monthlyLine}, PaymentCount: 2, PaymentAnchorDate: &anchor, Timeline: domain.TimelineInput{Mode: domain.TimelineRelative}}
 
 	tests := []struct {
 		name       string
@@ -77,19 +77,19 @@ func TestDedicatedSquadRulesDecisionMatrix(t *testing.T) {
 		},
 		{
 			name:       "1C monthly without timeline",
-			input:      domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation, DevelopmentSquad: []domain.SquadLineInput{{Role: "mobile_developer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 24}}, KickoffDiscountBPS: 10000, PaymentCount: 6, PaymentAnchorDate: &anchor},
+			input:      domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation, Requirement: "Provide engineering capacity", DevelopmentSquad: []domain.SquadLineInput{{Role: "mobile_developer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 24}}, KickoffDiscountBPS: 10000, PaymentCount: 6, PaymentAnchorDate: &anchor},
 			subtotal:   69_300_000,
 			want:       DedicatedSquadRules{PreparationKind: PreparationEngineeringKickoff, PaymentKind: PaymentMonthly, PreparationDiscountBPS: 10000},
 			wantTitles: []string{"Biaya Development", "Pembayaran", "Batasan dan Pengecualian"},
 		},
 		{
 			name:    "1C payment count follows longest monthly period",
-			input:   domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation, DevelopmentSquad: []domain.SquadLineInput{{Role: "mobile_developer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 24}}, KickoffDiscountBPS: 5000, PaymentCount: 5, PaymentAnchorDate: &anchor},
+			input:   domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation, Requirement: "Provide engineering capacity", DevelopmentSquad: []domain.SquadLineInput{{Role: "mobile_developer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 24}}, KickoffDiscountBPS: 5000, PaymentCount: 5, PaymentAnchorDate: &anchor},
 			wantErr: "payment_count: model 1C requires 6 monthly payments",
 		},
 		{
 			name:    "1C rejects unsupported kickoff discount",
-			input:   domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation, DevelopmentSquad: []domain.SquadLineInput{{Role: "mobile_developer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}}, KickoffDiscountBPS: 2500, PaymentCount: 1, PaymentAnchorDate: &anchor},
+			input:   domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation, Requirement: "Provide engineering capacity", DevelopmentSquad: []domain.SquadLineInput{{Role: "mobile_developer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}}, KickoffDiscountBPS: 2500, PaymentCount: 1, PaymentAnchorDate: &anchor},
 			wantErr: "kickoff_discount_bps: must be 5000 or 10000",
 		},
 		{
@@ -134,7 +134,7 @@ func mutateInput(input domain.DedicatedSquadInput, mutate func(*domain.Dedicated
 func sprintInput(anchor time.Time, paymentCount int32) domain.DedicatedSquadInput {
 	start := time.Date(2026, time.July, 14, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, time.July, 17, 0, 0, 0, 0, time.UTC)
-	return domain.DedicatedSquadInput{Model: domain.ModelSprint, DevelopmentSquad: []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, WorkdayCount: 4}}, PaymentCount: paymentCount, PaymentAnchorDate: &anchor, Timeline: domain.TimelineInput{Mode: domain.TimelineSprint, StartDate: &start, SprintEndDate: &end}}
+	return domain.DedicatedSquadInput{Model: domain.ModelSprint, Requirement: "Fix checkout validation", DevelopmentSquad: []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, WorkdayCount: 4}}, PaymentCount: paymentCount, PaymentAnchorDate: &anchor, Timeline: domain.TimelineInput{Mode: domain.TimelineSprint, StartDate: &start, SprintEndDate: &end}}
 }
 
 func sectionTitles(sections []domain.DocumentSection) []string {

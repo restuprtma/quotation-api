@@ -102,6 +102,14 @@ type Module struct {
 	SubFeatures []string `json:"sub_features"`
 }
 
+const (
+	MaxDedicatedRequirementRunes = 20_000
+	MaxHeadcountQuarters         = 400 // 100 people
+	MaxPeriodQuarters            = 96  // 24 months
+	MaxSprintWorkdays            = 366
+	MaxPaymentCount              = 60
+)
+
 func (in DedicatedSquadInput) Validate() error {
 	if !in.Model.valid() {
 		return fmt.Errorf("model: unsupported dedicated squad model %q", in.Model)
@@ -109,11 +117,21 @@ func (in DedicatedSquadInput) Validate() error {
 	if len(in.DevelopmentSquad) == 0 {
 		return fmt.Errorf("development_squad: must contain at least one line")
 	}
+	requirement := strings.TrimSpace(in.Requirement)
+	if requirement == "" {
+		return fmt.Errorf("requirement: is required")
+	}
+	if len([]rune(requirement)) > MaxDedicatedRequirementRunes {
+		return fmt.Errorf("requirement: must be at most %d characters", MaxDedicatedRequirementRunes)
+	}
 	if in.PaymentAnchorDate == nil {
 		return fmt.Errorf("payment_anchor_date: is required")
 	}
 	if in.PaymentCount <= 0 {
 		return fmt.Errorf("payment_count: must be greater than zero")
+	}
+	if in.PaymentCount > MaxPaymentCount {
+		return fmt.Errorf("payment_count: must be at most %d", MaxPaymentCount)
 	}
 	for i, line := range in.DevelopmentSquad {
 		if err := validateSquadLine(line, in.Model == ModelSprint); err != nil {
@@ -146,6 +164,9 @@ func (in DedicatedSquadInput) Validate() error {
 		}
 		if in.Timeline.Mode == TimelineCalendar && in.Timeline.StartDate == nil {
 			return fmt.Errorf("timeline.start_date: is required for calendar timeline")
+		}
+		if in.Timeline.Mode == TimelineRelative && in.Timeline.StartDate != nil {
+			return fmt.Errorf("timeline.start_date: must be empty for relative timeline")
 		}
 		if in.Timeline.SprintEndDate != nil {
 			return fmt.Errorf("timeline.sprint_end_date: only supported for model 1D")
@@ -197,9 +218,15 @@ func validateSquadLine(line SquadLineInput, sprint bool) error {
 	if line.HeadcountQuarters <= 0 {
 		return fmt.Errorf("headcount_quarters: must be greater than zero")
 	}
+	if line.HeadcountQuarters > MaxHeadcountQuarters {
+		return fmt.Errorf("headcount_quarters: must be at most %d", MaxHeadcountQuarters)
+	}
 	if sprint {
 		if line.WorkdayCount <= 0 {
 			return fmt.Errorf("workday_count: must be greater than zero for model 1D")
+		}
+		if line.WorkdayCount > MaxSprintWorkdays {
+			return fmt.Errorf("workday_count: must be at most %d", MaxSprintWorkdays)
 		}
 		if line.PeriodQuarters != 0 {
 			return fmt.Errorf("period_quarters: must be zero for model 1D")
@@ -208,6 +235,9 @@ func validateSquadLine(line SquadLineInput, sprint bool) error {
 	}
 	if line.PeriodQuarters <= 0 {
 		return fmt.Errorf("period_quarters: must be greater than zero")
+	}
+	if line.PeriodQuarters > MaxPeriodQuarters {
+		return fmt.Errorf("period_quarters: must be at most %d", MaxPeriodQuarters)
 	}
 	if line.WorkdayCount != 0 {
 		return fmt.Errorf("workday_count: only supported for model 1D")

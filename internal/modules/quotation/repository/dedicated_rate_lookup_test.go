@@ -71,6 +71,20 @@ func TestDedicatedRateLookup(t *testing.T) {
 		assert.ErrorIs(t, lookupErr, dto.ErrMissingRateItem)
 	})
 
+	t.Run("rejects an inactive official card", func(t *testing.T) {
+		_, updateErr := pool.Exec(ctx, `UPDATE rate_cards SET is_active = false WHERE id = $1 AND company_id = $2`, cardIDs["VENTURO-STD-2026"], companyID)
+		require.NoError(t, updateErr)
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `UPDATE rate_cards SET is_active = true WHERE id = $1 AND company_id = $2`, cardIDs["VENTURO-STD-2026"], companyID)
+		})
+
+		_, lookupErr := repo.ResolveItem(ctx, companyID.String(), cardIDs["VENTURO-STD-2026"].String(), "backend_programmer", "senior", "long_term")
+		assert.ErrorIs(t, lookupErr, dto.ErrMissingRateItem)
+
+		_, updateErr = pool.Exec(ctx, `UPDATE rate_cards SET is_active = true WHERE id = $1 AND company_id = $2`, cardIDs["VENTURO-STD-2026"], companyID)
+		require.NoError(t, updateErr)
+	})
+
 	t.Run("lists only official generator cards", func(t *testing.T) {
 		cards, listErr := repo.ListGeneratorCards(ctx, companyID.String())
 		require.NoError(t, listErr)
