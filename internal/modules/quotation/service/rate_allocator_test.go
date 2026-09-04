@@ -441,3 +441,109 @@ func TestRateAllocator_Calculate_QuarterMonthsPhasing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(36_300_000), enriched.TotalInvestment)
 }
+
+func TestRateAllocator_Calculate_Venturo14StandardRoles(t *testing.T) {
+	allocator := service.NewRateAllocator()
+
+	rateCardID := uuid.New()
+	companyID := uuid.New()
+
+	roles := []string{
+		"business_analyst", "system_analyst", "frontend_programmer", "backend_programmer",
+		"fullstack_developer", "mobile_developer", "devops", "data_engineer",
+		"data_analyst", "ui_ux_designer", "automated_tester", "functional_tester",
+		"technical_writer", "pentester",
+	}
+
+	var rateCardItems []domain.RateCardItem
+	var proposalResources []dto.AllocationResource
+
+	for _, role := range roles {
+		rateCardItems = append(rateCardItems, domain.RateCardItem{
+			ID:             uuid.New(),
+			CompanyID:      companyID,
+			RateCardID:     rateCardID,
+			Role:           role,
+			Seniority:      "senior",
+			TermType:       "long_term",
+			AmountPerMonth: 10_000_000,
+		})
+		proposalResources = append(proposalResources, dto.AllocationResource{
+			Role:            role,
+			Seniority:       "senior",
+			EmployeeCount:   1,
+			PeriodMonths:    3,
+			ScopeReferences: []string{"Scope A"},
+			Reason:          "Role execution",
+		})
+	}
+
+	proposal := dto.AllocationProposal{Resources: proposalResources}
+	enriched, err := allocator.Calculate(proposal, rateCardItems, 3, 500_000_000, "IDR")
+	require.NoError(t, err)
+
+	// 14 roles * 10M * 1 * 3 = 420M
+	assert.Equal(t, int64(420_000_000), enriched.TotalInvestment)
+	assert.Len(t, enriched.Resources, 14)
+}
+
+func TestRateAllocator_Calculate_RoleAliases(t *testing.T) {
+	allocator := service.NewRateAllocator()
+
+	rateCardID := uuid.New()
+	companyID := uuid.New()
+
+	// Rate card contains canonical names
+	rateCardItems := []domain.RateCardItem{
+		{
+			ID:             uuid.New(),
+			CompanyID:      companyID,
+			RateCardID:     rateCardID,
+			Role:           "backend_programmer",
+			Seniority:      "senior",
+			TermType:       "long_term",
+			AmountPerMonth: 11_550_000,
+		},
+		{
+			ID:             uuid.New(),
+			CompanyID:      companyID,
+			RateCardID:     rateCardID,
+			Role:           "automated_tester",
+			Seniority:      "senior",
+			TermType:       "long_term",
+			AmountPerMonth: 11_550_000,
+		},
+	}
+
+	// Proposal uses legacy aliases: programmer, quality_assurance
+	proposal := dto.AllocationProposal{
+		Resources: []dto.AllocationResource{
+			{
+				Role:            "programmer",
+				Seniority:       "senior",
+				EmployeeCount:   1,
+				PeriodMonths:    3,
+				ScopeReferences: []string{"Scope A"},
+				Reason:          "Backend lead",
+			},
+			{
+				Role:            "quality_assurance",
+				Seniority:       "senior",
+				EmployeeCount:   1,
+				PeriodMonths:    3,
+				ScopeReferences: []string{"Scope A"},
+				Reason:          "QA Automation",
+			},
+		},
+	}
+
+	enriched, err := allocator.Calculate(proposal, rateCardItems, 3, 100_000_000, "IDR")
+	require.NoError(t, err)
+
+	// 11.55M * 3 = 34.65M each -> 69.3M
+	assert.Equal(t, int64(69_300_000), enriched.TotalInvestment)
+	require.Len(t, enriched.Resources, 2)
+	assert.Equal(t, int64(34_650_000), enriched.Resources[0].LineTotal)
+	assert.Equal(t, int64(34_650_000), enriched.Resources[1].LineTotal)
+}
+

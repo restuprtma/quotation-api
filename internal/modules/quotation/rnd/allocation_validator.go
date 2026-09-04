@@ -14,7 +14,27 @@ import (
 var (
 	ErrBudgetExceeded   = errors.New("allocation exceeds budget")
 	ErrBudgetUnfeasible = errors.New("budget is unfeasible")
+
+	validRndRoles = []string{
+		"business_analyst", "system_analyst", "frontend_programmer", "backend_programmer",
+		"fullstack_developer", "mobile_developer", "devops", "data_engineer",
+		"data_analyst", "ui_ux_designer", "automated_tester", "functional_tester",
+		"technical_writer", "pentester",
+	}
+
+	rndRoleAliases = map[string]string{
+		"programmer":        "backend_programmer",
+		"quality_assurance": "automated_tester",
+		"qa":                "automated_tester",
+	}
 )
+
+func resolveRndRole(role string) string {
+	if canonical, ok := rndRoleAliases[role]; ok {
+		return canonical
+	}
+	return role
+}
 
 type BudgetExceededError struct {
 	Total  int64
@@ -92,7 +112,8 @@ func ValidateAndEnrich(input GenerationInput, proposal AllocationProposal, cards
 	}
 
 	for resourceIndex, resource := range proposal.Resources {
-		if !containsString([]string{"business_analyst", "ui_ux_designer", "programmer", "quality_assurance", "devops"}, resource.Role) {
+		resolvedRole := resolveRndRole(resource.Role)
+		if !containsString(validRndRoles, resolvedRole) {
 			return EnrichedAllocation{}, fmt.Errorf("resources[%d].role %q is invalid", resourceIndex, resource.Role)
 		}
 		if !containsString([]string{"associate", "intermediate", "senior"}, resource.Seniority) {
@@ -130,8 +151,12 @@ func ValidateAndEnrich(input GenerationInput, proposal AllocationProposal, cards
 			return EnrichedAllocation{}, fmt.Errorf("resources[%d].reason must be non-empty and at most 500 characters", resourceIndex)
 		}
 
-		key := rateLookupKey(resource.Role, resource.Seniority, term)
+		key := rateLookupKey(resolvedRole, resource.Seniority, term)
 		rateMatches := rates[key]
+		if len(rateMatches) == 0 {
+			fallbackKey := rateLookupKey(resource.Role, resource.Seniority, term)
+			rateMatches = rates[fallbackKey]
+		}
 		if len(rateMatches) == 0 {
 			return EnrichedAllocation{}, fmt.Errorf("missing rate for %s|%s", input.RateCardCode, key)
 		}
@@ -249,6 +274,12 @@ func buildRateLookup(cards RateCardFixture, rateCardCode string) (map[string][]i
 			}
 			key := rateLookupKey(item.Role, item.Seniority, item.TermType)
 			rates[key] = append(rates[key], item.AmountPerMonth)
+
+			resolved := resolveRndRole(item.Role)
+			if resolved != item.Role {
+				resolvedKey := rateLookupKey(resolved, item.Seniority, item.TermType)
+				rates[resolvedKey] = append(rates[resolvedKey], item.AmountPerMonth)
+			}
 		}
 	}
 	if !matchedCard {

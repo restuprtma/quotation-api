@@ -269,3 +269,45 @@ func loadCommittedAllocationData(t *testing.T, fixtureName string) (Fixture, Rat
 	}
 	return fixture, cards
 }
+
+func TestValidateAndEnrich_14RolesAndAliases(t *testing.T) {
+	roles := []string{
+		"business_analyst", "system_analyst", "frontend_programmer", "backend_programmer",
+		"fullstack_developer", "mobile_developer", "devops", "data_engineer",
+		"data_analyst", "ui_ux_designer", "automated_tester", "functional_tester",
+		"technical_writer", "pentester",
+	}
+
+	for _, role := range roles {
+		t.Run(role, func(t *testing.T) {
+			input := allocationInput(100_000_000)
+			cards := cardsFor(RateItem{Role: role, Seniority: "senior", TermType: "long_term", AmountPerMonth: 10_000_000})
+			proposal := proposalFor([]AllocationResource{
+				allocationResource(role, "senior", 1, 3, "Scope A"),
+			})
+			enriched, err := ValidateAndEnrich(input, proposal, cards)
+			if err != nil {
+				t.Fatalf("unexpected error for role %q: %v", role, err)
+			}
+			if len(enriched.Resources) != 1 {
+				t.Fatalf("expected 1 resource, got %d", len(enriched.Resources))
+			}
+		})
+	}
+
+	t.Run("alias resolution", func(t *testing.T) {
+		input := allocationInput(100_000_000)
+		cards := cardsFor(RateItem{Role: "backend_programmer", Seniority: "senior", TermType: "long_term", AmountPerMonth: 10_000_000})
+		proposal := proposalFor([]AllocationResource{
+			allocationResource("programmer", "senior", 1, 3, "Scope A"),
+		})
+		enriched, err := ValidateAndEnrich(input, proposal, cards)
+		if err != nil {
+			t.Fatalf("unexpected error for alias programmer: %v", err)
+		}
+		if len(enriched.Resources) != 1 {
+			t.Fatalf("expected 1 resource, got %d", len(enriched.Resources))
+		}
+	})
+}
+
