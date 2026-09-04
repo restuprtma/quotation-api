@@ -13,9 +13,27 @@ import (
 )
 
 var (
-	validRoles       = []string{"business_analyst", "ui_ux_designer", "programmer", "quality_assurance", "devops"}
+	validRoles = []string{
+		"business_analyst", "system_analyst", "frontend_programmer", "backend_programmer",
+		"fullstack_developer", "mobile_developer", "devops", "data_engineer",
+		"data_analyst", "ui_ux_designer", "automated_tester", "functional_tester",
+		"technical_writer", "pentester",
+	}
 	validSeniorities = []string{"associate", "intermediate", "senior"}
+
+	roleAliases = map[string]string{
+		"programmer":        "backend_programmer",
+		"quality_assurance": "automated_tester",
+		"qa":                "automated_tester",
+	}
 )
+
+func resolveRole(role string) string {
+	if canonical, ok := roleAliases[role]; ok {
+		return canonical
+	}
+	return role
+}
 
 type AllocationValidator interface {
 	DecodeAllocationJSON(raw []byte) (dto.AllocationProposal, error)
@@ -90,6 +108,7 @@ func (v *defaultAllocationValidator) ValidateProposal(input dto.GenerateQuotatio
 
 	for i := range proposal.Resources {
 		res := &proposal.Resources[i]
+		res.Role = resolveRole(res.Role)
 		if res.PeriodQuarters <= 0 && res.PeriodMonths > 0 {
 			res.PeriodQuarters = res.PeriodMonths * 4
 		}

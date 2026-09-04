@@ -33,7 +33,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 
 	rcRepo := repository.NewRateCardRepository(db)
 	legalRepo := repository.NewLegalTemplateRepository(db)
-	rcSvc := service.NewRateCardService(rcRepo)
+	rcSvc := service.NewRateCardService(db, rcRepo)
 	legalSvc := service.NewLegalTemplateService(legalRepo)
 	skillSvc := service.NewSkillService(skillRepo)
 	settingsSvc := service.NewSettingsService(db, skillRepo, rcRepo, legalRepo, skillSvc)
