@@ -60,7 +60,7 @@ const (
 // GenerationError is the ONLY error type returned by Generate. Error() prints
 // just the code, so even accidental logging of the error stays safe.
 type GenerationError struct {
-	Code    string
+	Code string
 	// Summary is only populated for budget_unfeasible; it carries the last
 	// attempt's allocation composition total and the budget maximum/excess so
 	// the client sees WHY instead of a bare code. Stable role names only.
@@ -153,14 +153,15 @@ func mapProviderError(err error) *GenerationError {
 // ---------------------------------------------------------------------------
 
 type QuotationGenerationService struct {
-	genRepo        *repository.GenerationRepository
-	providerSource ProviderSource
-	validator      AllocationValidator
-	allocator      RateAllocator
-	renderer       HTMLRenderer
-	sanitizer      HTMLSanitizer
-	domValidator   DOMValidator
-	attemptTimeout time.Duration
+	genRepo           *repository.GenerationRepository
+	providerSource    ProviderSource
+	validator         AllocationValidator
+	allocator         RateAllocator
+	renderer          HTMLRenderer
+	sanitizer         HTMLSanitizer
+	domValidator      DOMValidator
+	attemptTimeout    time.Duration
+	dedicatedRenderer DedicatedSquadHTMLRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -177,14 +178,15 @@ func NewQuotationGenerationService(
 	opts ...GenerationOption,
 ) *QuotationGenerationService {
 	svc := &QuotationGenerationService{
-		genRepo:        genRepo,
-		providerSource: source,
-		validator:      NewAllocationValidator(),
-		allocator:      NewRateAllocator(),
-		renderer:       NewHTMLRenderer(),
-		sanitizer:      NewHTMLSanitizer(),
-		domValidator:   NewDOMValidator(),
-		attemptTimeout: DefaultAttemptTimeout,
+		genRepo:           genRepo,
+		providerSource:    source,
+		validator:         NewAllocationValidator(),
+		allocator:         NewRateAllocator(),
+		renderer:          NewHTMLRenderer(),
+		sanitizer:         NewHTMLSanitizer(),
+		domValidator:      NewDOMValidator(),
+		dedicatedRenderer: NewDedicatedSquadHTMLRenderer(),
+		attemptTimeout:    DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -246,6 +248,20 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		return uuid.Nil, newGenerationError(ErrCodeGenerationFailed, "failed to create draft")
 	}
 
+	if req.DedicatedSquad != nil {
+		gerr := s.generateDedicated(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			var ge *GenerationError
+			reason := "dedicated squad generation failed"
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
+	}
+
 	provider, provName, model, perr := s.providerSource.ProviderForCompany(ctx, companyID)
 	if perr != nil {
 		var ge *GenerationError
@@ -276,6 +292,151 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		return draft.QuotationID, gerr
 	}
 	return draft.QuotationID, nil
+}
+
+func (s *QuotationGenerationService) generateDedicated(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	input := *req.DedicatedSquad
+	calculator := NewDedicatedSquadCalculator(rateSnapshotLookup{items: cfg.rateCardItems})
+	calculation, err := calculator.Calculate(ctx, companyID.String(), req.RateCardID.String(), input)
+	if err != nil {
+		if errors.Is(err, dto.ErrMissingRateItem) {
+			return newGenerationError(ErrCodeRateItemMissing, "rate item is missing for dedicated squad")
+		}
+		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad calculation is invalid")
+	}
+	rules, err := EvaluateDedicatedSquadRules(input, calculation.DevelopmentSubtotal)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad rules are invalid")
+	}
+
+	modules, providerName, model, gerr := s.extractDedicatedModules(ctx, companyID, input)
+	if gerr != nil {
+		return gerr
+	}
+	timeline, err := GenerateTimeline(input, rules, modules)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad timeline is invalid")
+	}
+
+	metadata := QuotationMetadata{
+		QuotationNumber: cfg.quotationNumber, Subject: strings.TrimSpace(req.Subject),
+		ClientName: cfg.clientName, ClientCompanyName: cfg.clientCompanyName,
+		IssueDate: indonesianDate(*input.PaymentAnchorDate),
+	}
+	return s.renderAndPersistDedicated(ctx, repository.CompleteDedicatedGenerationParams{
+		CompanyID: companyID, RevisionID: revisionID,
+		CalculationSnapshot: mustJSON(calculation), ModuleSnapshot: mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
+		AiProvider: providerName, AiModel: model,
+	}, DedicatedSquadDocumentInput{Metadata: metadata, Input: input, Calculation: calculation, Rules: rules, Timeline: timeline})
+}
+
+func (s *QuotationGenerationService) regenerateDedicated(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	var calculation domain.DedicatedSquadCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+	input := *req.DedicatedSquad
+	rules, err := EvaluateDedicatedSquadRules(input, calculation.DevelopmentSubtotal)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "stored dedicated squad rules are invalid")
+	}
+	modules, providerName, model, gerr := s.extractDedicatedModules(ctx, companyID, input)
+	if gerr != nil {
+		return gerr
+	}
+	timeline, err := GenerateTimeline(input, rules, modules)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad timeline is invalid")
+	}
+	metadata := QuotationMetadata{
+		QuotationNumber: draft.QuotationNumber, Subject: strings.TrimSpace(req.Subject),
+		ClientName: strings.TrimSpace(req.ClientName), ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
+		IssueDate: indonesianDate(*input.PaymentAnchorDate),
+	}
+	return s.renderAndPersistDedicated(ctx, repository.CompleteDedicatedGenerationParams{
+		CompanyID: companyID, RevisionID: draft.RevisionID, Regenerated: true,
+		CalculationSnapshot: append(json.RawMessage(nil), draft.CalculationSnapshot...),
+		ModuleSnapshot:      mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
+		AiProvider: providerName, AiModel: model,
+	}, DedicatedSquadDocumentInput{Metadata: metadata, Input: input, Calculation: calculation, Rules: rules, Timeline: timeline})
+}
+
+func (s *QuotationGenerationService) extractDedicatedModules(ctx context.Context, companyID uuid.UUID, input domain.DedicatedSquadInput) ([]domain.Module, string, string, error) {
+	if input.Model == domain.ModelSprint {
+		return []domain.Module{}, "", "", nil
+	}
+	provider, providerName, model, err := s.providerSource.ProviderForCompany(ctx, companyID)
+	if err != nil {
+		var ge *GenerationError
+		if errors.As(err, &ge) {
+			return nil, "", "", ge
+		}
+		return nil, "", "", newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, s.attemptTimeout)
+	defer cancel()
+	modules, err := (ModuleExtractor{}).Extract(attemptCtx, provider, input.Requirement)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+			return nil, "", "", newGenerationError(ErrCodeProviderTimeout, "AI provider did not respond in time")
+		}
+		var providerErr *ProviderError
+		if errors.As(err, &providerErr) {
+			return nil, "", "", mapProviderError(err)
+		}
+		return nil, "", "", newGenerationError(ErrCodeGenerationFailed, "module extraction failed")
+	}
+	return modules, providerName, model, nil
+}
+
+func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Context, params repository.CompleteDedicatedGenerationParams, document DedicatedSquadDocumentInput) error {
+	rawHTML, err := s.dedicatedRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document sanitization failed")
+	}
+	if !strings.Contains(sanitized, `class="quotation-document"`) || !strings.Contains(sanitized, `data-block-type="commercial"`) {
+		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+	params.ContentHTML, params.ContentHash = sanitized, &hashString
+
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin dedicated generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDedicatedGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist dedicated generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit dedicated generation result")
+	}
+	return nil
+}
+
+type rateSnapshotLookup struct{ items []domain.RateCardItem }
+
+func (l rateSnapshotLookup) ResolveItem(_ context.Context, _, _, role, seniority, termType string) (*domain.RateCardItem, error) {
+	var found *domain.RateCardItem
+	for i := range l.items {
+		item := &l.items[i]
+		if strings.EqualFold(item.Role, role) && strings.EqualFold(item.Seniority, seniority) && item.TermType == termType {
+			if found != nil {
+				return nil, fmt.Errorf("duplicate rate item for %s|%s|%s", role, seniority, termType)
+			}
+			copy := *item
+			found = &copy
+		}
+	}
+	if found == nil {
+		return nil, fmt.Errorf("%w: %s|%s|%s", dto.ErrMissingRateItem, role, seniority, termType)
+	}
+	return found, nil
 }
 
 // composeAndPersist performs the post-allocation half of the initial
@@ -398,6 +559,9 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 			return newGenerationError(ErrCodeRegenerateRateLimited, "regenerate limit reached for this draft")
 		}
 		return newGenerationError(ErrCodeGenerationFailed, "failed to update regenerate counter")
+	}
+	if req.DedicatedSquad != nil {
+		return s.regenerateDedicated(ctx, companyID, req, draft)
 	}
 
 	cfg, gerr := s.loadConfiguration(ctx, companyID, req)
@@ -629,18 +793,18 @@ func (s *QuotationGenerationService) SaveDraft(
 // ---------------------------------------------------------------------------
 
 type generationConfig struct {
-	companyID        uuid.UUID
-	skill            *domain.Skill
-	rateCard         *domain.RateCard
-	rateCardItems    []domain.RateCardItem
+	companyID         uuid.UUID
+	skill             *domain.Skill
+	rateCard          *domain.RateCard
+	rateCardItems     []domain.RateCardItem
 	legal             *domain.LegalTemplate
 	clientName        string
 	clientCompanyName string
 	quotationNumber   string
-	termType         string
-	rateCardSnapshot json.RawMessage
-	legalSnapshot    json.RawMessage
-	skillSnapshot    json.RawMessage
+	termType          string
+	rateCardSnapshot  json.RawMessage
+	legalSnapshot     json.RawMessage
+	skillSnapshot     json.RawMessage
 }
 
 func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest) (*generationConfig, error) {
@@ -1153,6 +1317,15 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 	subject := strings.TrimSpace(req.Subject)
 	if subject == "" || utf8.RuneCountInString(subject) > 200 {
 		return newGenerationError(ErrCodeGenerationFailed, "subject must be between 1 and 200 characters")
+	}
+	if req.DedicatedSquad != nil {
+		if req.RateCardID == uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is required")
+		}
+		if err := req.DedicatedSquad.Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "dedicated_squad input is invalid")
+		}
+		return nil
 	}
 	if req.ProjectDurationMonths < 1 || req.ProjectDurationMonths > 24 {
 		return newGenerationError(ErrCodeGenerationFailed, "project_duration_months must be between 1 and 24")

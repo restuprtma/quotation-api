@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -61,6 +62,9 @@ func TestGenerationPersistenceSchema(t *testing.T) {
 		"generation_input":        "jsonb",
 		"budget_maximum":          "bigint",
 		"allocation_snapshot":     "jsonb",
+		"calculation_snapshot":    "jsonb",
+		"module_snapshot":         "jsonb",
+		"timeline_snapshot":       "jsonb",
 		"rate_card_snapshot":      "jsonb",
 		"legal_template_snapshot": "jsonb",
 		"content_html":            "text",
@@ -99,6 +103,67 @@ func TestGenerationPersistenceSchema(t *testing.T) {
 			t.Fatal("expected unique index 'uq_revisions_idempotency_key' on quotation_revisions")
 		}
 	})
+}
+
+func TestCompleteDedicatedGenerationRoundTripAndTenantIsolation(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	draft, err := repo.CreateDraftTransaction(ctx, validDraftParams(companyID))
+	if err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	err = repo.CompleteDedicatedGeneration(ctx, tx, repository.CompleteDedicatedGenerationParams{
+		CompanyID: companyID, RevisionID: draft.RevisionID, ContentHTML: "<section>dedicated</section>",
+		CalculationSnapshot: []byte(`{"total_investment":178600000}`),
+		ModuleSnapshot:      []byte(`[{"name":"Reservasi","sub_features":["Booking"]}]`),
+		TimelineSnapshot:    []byte(`[{"description":"Development","timeline":"Bulan 2, 3"}]`),
+		AiProvider:          "openai", AiModel: "test-model",
+	})
+	if err != nil {
+		t.Fatalf("complete dedicated generation: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var calculation, modules, timeline, html, status string
+	err = pool.QueryRow(ctx, `
+		SELECT calculation_snapshot::text, module_snapshot::text, timeline_snapshot::text,
+		       content_html, generation_status
+		FROM quotation_revisions WHERE id = $1 AND company_id = $2
+	`, draft.RevisionID, companyID).Scan(&calculation, &modules, &timeline, &html, &status)
+	if err != nil {
+		t.Fatalf("read snapshots: %v", err)
+	}
+	if calculation == "" || modules == "" || timeline == "" {
+		t.Fatal("all dedicated snapshots must be persisted")
+	}
+	if html != "<section>dedicated</section>" || status != repository.GenerationStatusCompleted {
+		t.Fatalf("unexpected completion state: html=%q status=%q", html, status)
+	}
+
+	foreignTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin foreign: %v", err)
+	}
+	defer foreignTx.Rollback(ctx)
+	err = repo.CompleteDedicatedGeneration(ctx, foreignTx, repository.CompleteDedicatedGenerationParams{
+		CompanyID: uuid.New(), RevisionID: draft.RevisionID, ContentHTML: "foreign",
+		CalculationSnapshot: []byte(`{}`), ModuleSnapshot: []byte(`[]`), TimelineSnapshot: []byte(`[]`),
+	})
+	if !errors.Is(err, repository.ErrRevisionNotFound) {
+		t.Fatalf("foreign tenant completion error = %v, want ErrRevisionNotFound", err)
+	}
 }
 
 func TestSequentialDoubleSubmitIdempotent(t *testing.T) {
