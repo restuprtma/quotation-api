@@ -34,3 +34,15 @@ func TestAllocationTaskSchema_MandatoryLadderPresent(t *testing.T) {
 		}
 	}
 }
+
+func TestDedicatedSquadModulePrompt_IsEmbeddedAndCommerciallyIsolated(t *testing.T) {
+	prompt := strings.ToLower(GetSafetyEnvelope("dedicated_squad_modules_v1.txt"))
+	if prompt == "" {
+		t.Fatal("dedicated squad module extraction prompt is not embedded")
+	}
+	for _, marker := range []string{"json only", "price", "layout", "legal", "timeline", "role", "headcount"} {
+		if !strings.Contains(prompt, marker) {
+			t.Errorf("module extraction prompt is missing isolation marker %q", marker)
+		}
+	}
+}

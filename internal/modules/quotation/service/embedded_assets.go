@@ -16,3 +16,9 @@ func GetSafetyEnvelope(name string) string {
 	}
 	return string(b)
 }
+
+// GetDedicatedSquadModulesPrompt returns the immutable, versioned prompt used
+// exclusively for module/sub-feature extraction.
+func GetDedicatedSquadModulesPrompt() string {
+	return GetSafetyEnvelope("dedicated_squad_modules_v1.txt")
+}
