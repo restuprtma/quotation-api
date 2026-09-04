@@ -799,11 +799,14 @@ func (r *GenerationRepository) GetSkillForGeneration(ctx context.Context, compan
 func (r *GenerationRepository) GetRateCardWithItems(ctx context.Context, companyID, rateCardID uuid.UUID) (*domain.RateCard, []domain.RateCardItem, error) {
 	card := &domain.RateCard{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, company_id, code, name, market, currency, effective_from, effective_until, is_active, created_by, created_at, updated_at
+		SELECT id, company_id, code, name, market, client_tier, currency, description,
+			short_term_surcharge_pct, enterprise_markup_pct,
+			effective_from, effective_until, is_active, created_by, created_at, updated_at
 		FROM rate_cards
 		WHERE id = $1 AND company_id = $2 AND is_active = true
 	`, rateCardID, companyID).Scan(
-		&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.Currency,
+		&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.ClientTier, &card.Currency, &card.Description,
+		&card.ShortTermSurchargePct, &card.EnterpriseMarkupPct,
 		&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.CreatedBy, &card.CreatedAt, &card.UpdatedAt,
 	)
 	if err != nil {
@@ -814,9 +817,16 @@ func (r *GenerationRepository) GetRateCardWithItems(ctx context.Context, company
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT id, company_id, rate_card_id, role, seniority, term_type, amount_per_month, created_at, updated_at
+		SELECT id, company_id, rate_card_id, role, display_name, seniority, discipline,
+			term_type, amount_per_month,
+			base_salary, tech_lead_fee, ai_rnd_fee, workspace_fee, management_fee,
+			education_requirement, experience_requirement,
+			published_rate, max_discount_pct, floor_rate,
+			kickoff_fee, recruitment_fee, onboarding_fee,
+			created_at, updated_at
 		FROM rate_card_items
 		WHERE rate_card_id = $1 AND company_id = $2
+		ORDER BY discipline, role, seniority, term_type
 	`, rateCardID, companyID)
 	if err != nil {
 		return nil, nil, err
@@ -827,8 +837,13 @@ func (r *GenerationRepository) GetRateCardWithItems(ctx context.Context, company
 	for rows.Next() {
 		item := domain.RateCardItem{}
 		if err := rows.Scan(
-			&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.Seniority,
-			&item.TermType, &item.AmountPerMonth, &item.CreatedAt, &item.UpdatedAt,
+			&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.DisplayName,
+			&item.Seniority, &item.Discipline, &item.TermType, &item.AmountPerMonth,
+			&item.BaseSalary, &item.TechLeadFee, &item.AiRndFee, &item.WorkspaceFee, &item.ManagementFee,
+			&item.EducationRequirement, &item.ExperienceRequirement,
+			&item.PublishedRate, &item.MaxDiscountPct, &item.FloorRate,
+			&item.KickoffFee, &item.RecruitmentFee, &item.OnboardingFee,
+			&item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, nil, err
 		}
