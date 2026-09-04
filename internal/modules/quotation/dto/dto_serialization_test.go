@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 )
 
 func TestCredentialResponse_JSONSerialization(t *testing.T) {
@@ -36,4 +37,28 @@ func TestCredentialResponse_JSONSerialization(t *testing.T) {
 
 	assert.Equal(t, "openai", raw["provider"])
 	assert.Equal(t, "sk-...abcd", raw["key_hint"])
+}
+
+func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) {
+	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
+	req := GenerateQuotationRequest{
+		DedicatedSquad: &domain.DedicatedSquadInput{
+			Model:             domain.ModelSOWLarge,
+			DevelopmentSquad:  []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 8}},
+			PaymentCount:      2,
+			PaymentAnchorDate: &anchor,
+			Timeline:          domain.TimelineInput{Mode: domain.TimelineRelative},
+		},
+	}
+
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &raw))
+	require.Contains(t, raw, "dedicated_squad")
+
+	var decoded GenerateQuotationRequest
+	require.NoError(t, json.Unmarshal(b, &decoded))
+	require.NotNil(t, decoded.DedicatedSquad)
+	require.Equal(t, domain.ModelSOWLarge, decoded.DedicatedSquad.Model)
 }
