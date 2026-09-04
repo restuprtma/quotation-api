@@ -415,7 +415,19 @@ func (s *Service) ResetSkillDefault(ctx context.Context, companyID, id string) e
 	return s.skillRepo.Update(ctx, q, skill)
 }
 func (s *Service) ListRateCards(ctx context.Context, companyID string) (interface{}, error) {
-	return s.rateCardSvc.ListActiveRateCards(ctx, companyID)
+	return s.rateCardSvc.ListAll(ctx, companyID, false)
+}
+
+func (s *Service) CreateRateCard(ctx context.Context, companyID string, userID *uuid.UUID, req *dto.CreateRateCardRequest) (*dto.RateCardDetailResponse, error) {
+	return s.rateCardSvc.Create(ctx, companyID, userID, req)
+}
+
+func (s *Service) GetRateCardDetail(ctx context.Context, companyID, id string) (*dto.RateCardDetailResponse, error) {
+	return s.rateCardSvc.GetDetail(ctx, companyID, id)
+}
+
+func (s *Service) DeleteRateCard(ctx context.Context, companyID, id string) error {
+	return s.rateCardSvc.Delete(ctx, companyID, id)
 }
 
 func (s *Service) GetRateCard(ctx context.Context, companyID, id string) (interface{}, error) {

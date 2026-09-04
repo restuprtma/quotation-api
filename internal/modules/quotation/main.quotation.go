@@ -100,6 +100,9 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 	{
 		rateCards.GET("", m.Handler.ListRateCards)
 		rateCards.GET("/:id", m.Handler.GetRateCard)
+		rateCards.GET("/:id/details", m.Handler.GetRateCardDetail)
+		rateCards.POST("", m.Handler.CreateRateCard)
+		rateCards.DELETE("/:id", m.Handler.DeleteRateCard)
 	}
 
 	legalTemplates := router.Group("/legal-templates")
