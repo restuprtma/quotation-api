@@ -71,6 +71,16 @@ func TestDedicatedSquadInputJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDedicatedSquadInputAcceptsCalendarDateJSON(t *testing.T) {
+	payload := []byte(`{"model":"1D","requirement":"Fix checkout","development_squad":[{"role":"backend_programmer","seniority":"senior","headcount_quarters":4,"period_quarters":0,"workday_count":5}],"maintenance_enabled":false,"payment_count":1,"payment_anchor_date":"2026-09-05","timeline":{"mode":"sprint","start_date":"2026-09-07","sprint_end_date":"2026-09-11"}}`)
+	var input domain.DedicatedSquadInput
+	require.NoError(t, json.Unmarshal(payload, &input))
+	require.NotNil(t, input.PaymentAnchorDate)
+	require.NotNil(t, input.Timeline.StartDate)
+	require.Equal(t, "2026-09-05", input.PaymentAnchorDate.Format("2006-01-02"))
+	require.NoError(t, input.Validate())
+}
+
 func TestDedicatedSquadInputRejectsValuesAboveOperationalLimits(t *testing.T) {
 	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
 	valid := domain.DedicatedSquadInput{

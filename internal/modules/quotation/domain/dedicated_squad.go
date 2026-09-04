@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -37,6 +38,30 @@ type TimelineInput struct {
 	SprintEndDate *time.Time   `json:"sprint_end_date,omitempty"`
 }
 
+// UnmarshalJSON accepts both the browser's calendar-date form (YYYY-MM-DD)
+// and RFC3339 timestamps. Marshal remains the standard time.Time encoding so
+// persisted snapshots are unambiguous and reproducible.
+func (in *TimelineInput) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Mode          TimelineMode    `json:"mode"`
+		StartDate     json.RawMessage `json:"start_date"`
+		SprintEndDate json.RawMessage `json:"sprint_end_date"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	start, err := decodeOptionalDate(wire.StartDate)
+	if err != nil {
+		return fmt.Errorf("start_date: %w", err)
+	}
+	end, err := decodeOptionalDate(wire.SprintEndDate)
+	if err != nil {
+		return fmt.Errorf("sprint_end_date: %w", err)
+	}
+	in.Mode, in.StartDate, in.SprintEndDate = wire.Mode, start, end
+	return nil
+}
+
 type DedicatedSquadInput struct {
 	Model              SquadModel       `json:"model"`
 	Requirement        string           `json:"requirement"`
@@ -47,6 +72,24 @@ type DedicatedSquadInput struct {
 	PaymentCount       int32            `json:"payment_count"`
 	PaymentAnchorDate  *time.Time       `json:"payment_anchor_date"`
 	Timeline           TimelineInput    `json:"timeline"`
+}
+
+func (in *DedicatedSquadInput) UnmarshalJSON(data []byte) error {
+	type inputAlias DedicatedSquadInput
+	var wire struct {
+		*inputAlias
+		PaymentAnchorDate json.RawMessage `json:"payment_anchor_date"`
+	}
+	wire.inputAlias = (*inputAlias)(in)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	anchor, err := decodeOptionalDate(wire.PaymentAnchorDate)
+	if err != nil {
+		return fmt.Errorf("payment_anchor_date: %w", err)
+	}
+	in.PaymentAnchorDate = anchor
+	return nil
 }
 
 // Calculation types are snapshots of server-authoritative commercial values.
@@ -258,4 +301,23 @@ func inclusiveWeekdays(start, end time.Time) int32 {
 func dateOnly(value time.Time) time.Time {
 	year, month, day := value.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, value.Location())
+}
+
+func decodeOptionalDate(raw json.RawMessage) (*time.Time, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("must be a date string")
+	}
+	if value == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return &parsed, nil
+		}
+	}
+	return nil, fmt.Errorf("must use YYYY-MM-DD or RFC3339")
 }
