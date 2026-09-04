@@ -46,6 +46,13 @@ func (r *defaultRateAllocator) CalculateRaw(proposal dto.AllocationProposal, rat
 			return dto.EnrichedAllocation{}, fmt.Errorf("duplicate rate item for %s", key)
 		}
 		rateMap[key] = item.AmountPerMonth
+		resolved := resolveRole(item.Role)
+		if resolved != item.Role {
+			resolvedKey := fmt.Sprintf("%s|%s|%s", resolved, item.Seniority, item.TermType)
+			if _, exists := rateMap[resolvedKey]; !exists {
+				rateMap[resolvedKey] = item.AmountPerMonth
+			}
+		}
 	}
 
 	result := dto.EnrichedAllocation{
@@ -73,8 +80,13 @@ func (r *defaultRateAllocator) CalculateRaw(proposal dto.AllocationProposal, rat
 			return dto.EnrichedAllocation{}, fmt.Errorf("resources[%d].period_quarters must be positive", i)
 		}
 
-		key := fmt.Sprintf("%s|%s|%s", res.Role, res.Seniority, term)
+		resolvedRole := resolveRole(res.Role)
+		key := fmt.Sprintf("%s|%s|%s", resolvedRole, res.Seniority, term)
 		amountPerMonth, exists := rateMap[key]
+		if !exists {
+			legacyKey := fmt.Sprintf("%s|%s|%s", res.Role, res.Seniority, term)
+			amountPerMonth, exists = rateMap[legacyKey]
+		}
 		if !exists {
 			return dto.EnrichedAllocation{}, fmt.Errorf("%w: missing rate for %s", dto.ErrMissingRateItem, key)
 		}

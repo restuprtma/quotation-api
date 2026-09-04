@@ -707,12 +707,15 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	cfg.termType = s.allocator.DetermineTermType(req.ProjectDurationMonths)
 
 	cfg.rateCardSnapshot = mustJSON(rateCardSnapshotView{
-		ID:       card.ID,
-		Code:     card.Code,
-		Name:     card.Name,
-		Market:   card.Market,
-		Currency: card.Currency,
-		Items:    rateCardItemViews(items),
+		ID:                    card.ID,
+		Code:                  card.Code,
+		Name:                  card.Name,
+		Market:                card.Market,
+		ClientTier:            card.ClientTier,
+		Currency:              card.Currency,
+		ShortTermSurchargePct: card.ShortTermSurchargePct,
+		EnterpriseMarkupPct:   card.EnterpriseMarkupPct,
+		Items:                 rateCardItemViews(items),
 	})
 	cfg.legalSnapshot = mustJSON(legalSnapshotView{
 		ID:          legal.ID,
@@ -1042,19 +1045,37 @@ func (s *QuotationGenerationService) callProvider(ctx context.Context, provider 
 // ---------------------------------------------------------------------------
 
 type rateCardItemSnapshot struct {
-	Role           string `json:"role"`
-	Seniority      string `json:"seniority"`
-	TermType       string `json:"term_type"`
-	AmountPerMonth int64  `json:"amount_per_month"`
+	Role                  string `json:"role"`
+	DisplayName           string `json:"display_name,omitempty"`
+	Seniority             string `json:"seniority"`
+	Discipline            string `json:"discipline,omitempty"`
+	TermType              string `json:"term_type"`
+	AmountPerMonth        int64  `json:"amount_per_month"`
+	BaseSalary            int64  `json:"base_salary,omitempty"`
+	TechLeadFee           int64  `json:"tech_lead_fee,omitempty"`
+	AiRndFee              int64  `json:"ai_rnd_fee,omitempty"`
+	WorkspaceFee          int64  `json:"workspace_fee,omitempty"`
+	ManagementFee         int64  `json:"management_fee,omitempty"`
+	EducationRequirement  string `json:"education_requirement,omitempty"`
+	ExperienceRequirement string `json:"experience_requirement,omitempty"`
+	PublishedRate         int64  `json:"published_rate,omitempty"`
+	MaxDiscountPct        int    `json:"max_discount_pct,omitempty"`
+	FloorRate             int64  `json:"floor_rate,omitempty"`
+	KickoffFee            int64  `json:"kickoff_fee,omitempty"`
+	RecruitmentFee        int64  `json:"recruitment_fee,omitempty"`
+	OnboardingFee         int64  `json:"onboarding_fee,omitempty"`
 }
 
 type rateCardSnapshotView struct {
-	ID       uuid.UUID              `json:"id"`
-	Code     string                 `json:"code"`
-	Name     string                 `json:"name"`
-	Market   string                 `json:"market"`
-	Currency string                 `json:"currency"`
-	Items    []rateCardItemSnapshot `json:"items"`
+	ID                    uuid.UUID              `json:"id"`
+	Code                  string                 `json:"code"`
+	Name                  string                 `json:"name"`
+	Market                string                 `json:"market"`
+	ClientTier            string                 `json:"client_tier,omitempty"`
+	Currency              string                 `json:"currency"`
+	ShortTermSurchargePct int                    `json:"short_term_surcharge_pct,omitempty"`
+	EnterpriseMarkupPct   int                    `json:"enterprise_markup_pct,omitempty"`
+	Items                 []rateCardItemSnapshot `json:"items"`
 }
 
 type legalSnapshotView struct {
@@ -1074,10 +1095,25 @@ func rateCardItemViews(items []domain.RateCardItem) []rateCardItemSnapshot {
 	views := make([]rateCardItemSnapshot, 0, len(items))
 	for _, item := range items {
 		views = append(views, rateCardItemSnapshot{
-			Role:           item.Role,
-			Seniority:      item.Seniority,
-			TermType:       item.TermType,
-			AmountPerMonth: item.AmountPerMonth,
+			Role:                  item.Role,
+			DisplayName:           item.DisplayName,
+			Seniority:             item.Seniority,
+			Discipline:            item.Discipline,
+			TermType:              item.TermType,
+			AmountPerMonth:        item.AmountPerMonth,
+			BaseSalary:            item.BaseSalary,
+			TechLeadFee:           item.TechLeadFee,
+			AiRndFee:              item.AiRndFee,
+			WorkspaceFee:          item.WorkspaceFee,
+			ManagementFee:         item.ManagementFee,
+			EducationRequirement:  item.EducationRequirement,
+			ExperienceRequirement: item.ExperienceRequirement,
+			PublishedRate:         item.PublishedRate,
+			MaxDiscountPct:        item.MaxDiscountPct,
+			FloorRate:             item.FloorRate,
+			KickoffFee:            item.KickoffFee,
+			RecruitmentFee:        item.RecruitmentFee,
+			OnboardingFee:         item.OnboardingFee,
 		})
 	}
 	return views
