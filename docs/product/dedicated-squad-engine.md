@@ -30,7 +30,7 @@ POST /quotation/v1/quotations/:id/regenerate
 GET  /quotation/v1/quotations/:id/generation-status
 ~~~
 
-<code>preview</code> calculates only the server-authoritative commercial view. It does not persist or call an AI provider. <code>generate</code> creates a durable draft before any provider call and returns the quotation ID. <code>generation-status</code> is authoritative while generation is pending. Direct API dates are RFC3339 timestamps (for example, <code>2026-07-14T00:00:00Z</code>) because they unmarshal into Go <code>time.Time</code>; a UI date adapter must normalize date-picker values before sending them.
+<code>preview</code> calculates only the server-authoritative commercial view. It does not persist or call an AI provider. <code>generate</code> creates a durable draft before any provider call and returns the quotation ID. <code>generation-status</code> is authoritative while generation is pending. Date fields accept either an ISO calendar date (<code>2026-07-14</code>) or RFC3339 (<code>2026-07-14T00:00:00Z</code>); persisted snapshots use the unambiguous RFC3339 form.
 
 The common envelope fields are:
 
