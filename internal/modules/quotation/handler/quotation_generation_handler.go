@@ -53,6 +53,14 @@ func (h *QuotationGenerationHandler) Preview(c *gin.Context) {
 		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad input is required", service.ErrCodeAllocationInvalid)
 		return
 	}
+	if req.CommercialScheme != "dedicated_squad" {
+		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad commercial scheme is required", service.ErrCodeAllocationInvalid)
+		return
+	}
+	if req.RateCardID == uuid.Nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Rate card is required", service.ErrCodeInvalidRateCard)
+		return
+	}
 	if h.previewCalculator == nil {
 		response.Error(c, http.StatusInternalServerError, "Internal server error", "")
 		return
