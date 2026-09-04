@@ -36,6 +36,15 @@ const (
 	dedicatedSquadScheme = "dedicated_squad"
 )
 
+func isOfficialGeneratorRateCardCode(code string) bool {
+	switch code {
+	case "DEFAULT", "VENTURO-STD-2026", "VENTURO-BUMN-2026", "VENTURO-INTL-2026":
+		return true
+	default:
+		return false
+	}
+}
+
 // Safe error codes surfaced to callers. Values match the roadmap error list;
 // messages are STATIC — they never embed prompts, provider payloads, keys,
 // budget figures, or rate card internals.
@@ -828,6 +837,9 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	}
 	if len(items) == 0 {
 		return nil, newGenerationError(ErrCodeInvalidRateCard, "rate card has no rate items")
+	}
+	if req.DedicatedSquad != nil && !isOfficialGeneratorRateCardCode(card.Code) {
+		return nil, newGenerationError(ErrCodeInvalidRateCard, "dedicated squad requires an official generator rate card")
 	}
 	cfg.rateCard = card
 	cfg.rateCardItems = items
