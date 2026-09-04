@@ -178,6 +178,20 @@ func (r *Repository) GetByID(ctx context.Context, id, companyID string) (*domain
 }
 ```
 
+### Rate Card Conventions
+
+- **14 Standard Venturo Roles**: `business_analyst`, `system_analyst`, `frontend_programmer`, `backend_programmer`, `fullstack_developer`, `mobile_developer`, `devops`, `data_engineer`, `data_analyst`, `ui_ux_designer`, `automated_tester`, `functional_tester`, `technical_writer`, `pentester`.
+- **Backward-Compatible Role Aliases**: Canonical resolver normalizes legacy aliases: `programmer` → `backend_programmer`, `quality_assurance` / `qa` → `automated_tester`.
+- **Disciplines**: `ENGINEERING`, `QA`, `PRODUCT`, `DATA`, `INFRASTRUCTURE`, `SUPPORT`.
+- **Client Tiers**: `commercial_national` (default), `government_bumn`, `international`.
+- **Integer IDR Invariant**: All monetary amounts are integers (`int64` in Go, `BIGINT` in PostgreSQL). Never use floats for currency.
+- **Derived Rates**: Daily rate = `AmountPerMonth / 22`. Hourly rate = `AmountPerMonth / 173`.
+- **Cost Breakdown (5 Components)**: `base_salary`, `tech_lead_fee`, `ai_rnd_fee`, `workspace_fee`, `management_fee`.
+- **Commercial Negotiation Bounds**: `published_rate`, `max_discount_pct`, `floor_rate`.
+- **Preparation & Hiring Fees**: `kickoff_fee`, `recruitment_fee`, `onboarding_fee`.
+- **Overtime Calculation**: Depnaker formula configured in `overtime_rate_configs` (`hourly_divisor: 173`, workday 1.5x/2.0x, holiday 2.0x/3.0x/4.0x).
+- **CRUD Routes**: `POST /quotation/v1/rate-cards`, `GET /quotation/v1/rate-cards`, `GET /quotation/v1/rate-cards/:id/details`, `DELETE /quotation/v1/rate-cards/:id`.
+
 ## Common Gotchas
 
 ### Migration Issues
