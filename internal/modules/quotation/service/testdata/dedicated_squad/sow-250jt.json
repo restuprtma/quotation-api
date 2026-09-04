@@ -1,0 +1,111 @@
+{
+  "schema_version": "dedicated-squad-benchmark-v1",
+  "metadata": {
+    "source_sheet": "sow 250JT",
+    "source_gid": "1705673570",
+    "verified_on": "2026-09-05",
+    "source_status": "historical_sheet_reference_current_card_expected",
+    "source_variance": [
+      "The historical sheet lists legacy role rates and hiring totals; expected values use the current VENTURO-STD-2026 master card.",
+      "The historical sheet groups K6 and penetration testing into combined rows; the current deterministic timeline emits separate phase rows.",
+      "The historical sheet's payment schedule is retained only as provenance; payment rows below are recalculated by the current engine."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-SOW-250JT",
+    "subject": "Current-card deterministic benchmark: SOW 250JT",
+    "client_name": "Benchmark Client",
+    "client_company": "PT Benchmark 250JT",
+    "issue_date": "5 September 2026"
+  },
+  "rate_card": {
+    "code": "VENTURO-STD-2026",
+    "market": "national",
+    "source": "internal/database/seeders/quotation/001_venturo_master_rate_cards.sql"
+  },
+  "input": {
+    "model": "1A",
+    "requirement": "Build a marketplace portal with registration, reservation, payments, analytics, and access control.",
+    "development_squad": [
+      { "role": "ui_ux_designer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4 },
+      { "role": "business_analyst", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4 },
+      { "role": "backend_programmer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 12 },
+      { "role": "backend_programmer", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 12 },
+      { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 12 },
+      { "role": "functional_tester", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 12 }
+    ],
+    "maintenance_enabled": true,
+    "maintenance_squad": [
+      { "role": "devops", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4 },
+      { "role": "data_analyst", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 4 }
+    ],
+    "payment_count": 6,
+    "payment_anchor_date": "2025-09-01T00:00:00Z",
+    "timeline": { "mode": "relative" }
+  },
+  "modules": [
+    { "name": "Registration & KYC", "sub_features": ["Account registration", "KYC verification"] },
+    { "name": "Reservations", "sub_features": ["Real-time booking"] },
+    { "name": "Payments", "sub_features": ["VA and QRIS integration"] }
+  ],
+  "expected": {
+    "calculation": {
+      "model": "1A",
+      "development": [
+        { "role": "ui_ux_designer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 16170000, "line_total": 16170000 },
+        { "role": "business_analyst", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 23380000, "line_total": 23380000 },
+        { "role": "backend_programmer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 12, "term_type": "long_term", "amount_per_unit": 11550000, "line_total": 34650000 },
+        { "role": "backend_programmer", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 12, "term_type": "long_term", "amount_per_unit": 9550000, "line_total": 28650000 },
+        { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 12, "term_type": "long_term", "amount_per_unit": 11550000, "line_total": 34650000 },
+        { "role": "functional_tester", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 12, "term_type": "long_term", "amount_per_unit": 8000000, "line_total": 24000000 }
+      ],
+      "development_subtotal": 161500000,
+      "maintenance": [
+        { "role": "devops", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 16170000, "line_total": 16170000 },
+        { "role": "data_analyst", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 18900000, "line_total": 18900000 }
+      ],
+      "maintenance_subtotal": 35070000,
+      "preparation": { "kind": "hiring", "gross": 90400000, "discount": 45200000, "net": 45200000 },
+      "total": 286970000,
+      "discount": 45200000,
+      "total_investment": 241770000,
+      "payments": [
+        { "work_period": "Hiring & Kick off", "terms": "Down Payment", "invoice_date": "2025-09-01T00:00:00Z", "due_date": "2025-09-15T00:00:00Z", "nominal": 45200000 },
+        { "work_period": "Bulan 1", "terms": "Termin 1", "invoice_date": "2025-10-01T00:00:00Z", "due_date": "2025-10-15T00:00:00Z", "nominal": 32761666 },
+        { "work_period": "Bulan 2", "terms": "Termin 2", "invoice_date": "2025-11-01T00:00:00Z", "due_date": "2025-11-15T00:00:00Z", "nominal": 32761666 },
+        { "work_period": "Bulan 3", "terms": "Termin 3", "invoice_date": "2025-12-01T00:00:00Z", "due_date": "2025-12-15T00:00:00Z", "nominal": 32761666 },
+        { "work_period": "Bulan 4", "terms": "Termin 4", "invoice_date": "2026-01-01T00:00:00Z", "due_date": "2026-01-15T00:00:00Z", "nominal": 32761666 },
+        { "work_period": "Bulan 5", "terms": "Termin 5", "invoice_date": "2026-02-01T00:00:00Z", "due_date": "2026-02-15T00:00:00Z", "nominal": 32761666 },
+        { "work_period": "Bulan 6", "terms": "Termin 6", "invoice_date": "2026-03-01T00:00:00Z", "due_date": "2026-03-15T00:00:00Z", "nominal": 32761670 }
+      ]
+    },
+    "rules": { "preparation_kind": "hiring", "payment_kind": "net_preparation_dp", "preparation_discount_bps": 5000, "direct_project_discount_bps": 0, "include_timeline": true, "include_maintenance": true, "include_k6": true, "include_pentest": true },
+    "timeline": [
+      { "description": "Requirement Analysis & System Design", "timeline": "Bulan 1", "deliverables": ["Kick-off meeting dan identifikasi kebutuhan bisnis", "Review proses bisnis dan alur kerja yang ada", "Analisis gap antara proses bisnis saat ini dan sistem yang diinginkan", "Penyusunan dokumen Project Requirement Document (PRD)", "Wireframing dan mockup UI/UX untuk gambaran awal sistem", "Persetujuan requirement bersama klien", "Menyusun desain arsitektur sistem dan database"] },
+      { "description": "Development", "timeline": "Bulan 2, 3", "deliverables": ["Registration & KYC", "- Account registration", "- KYC verification", "Reservations", "- Real-time booking", "Payments", "- VA and QRIS integration"] },
+      { "description": "Performance / Load Test", "timeline": "2 Minggu", "deliverables": ["Menyiapkan staging environment yang mereplikasi kondisi produksi", "Membuat script testing menggunakan tools K6", "Melakukan uji beban (Load Test) dengan jumlah pengguna bertahap (baseline → stress → endurance)", "Mencatat metrik performa (response time P95/P99, throughput, CPU, RAM, DB latency, error rate)", "Analisis hasil performa dan identifikasi bottleneck (server, database, API, query, caching, dll)", "Melakukan tuning dan optimasi sistem (Redis untuk caching, RabbitMQ untuk antrian proses)"] },
+      { "description": "Penetration Test", "timeline": "2 Minggu", "deliverables": ["Menentukan Scope of Work dan Rules of Engagement (daftar domain, IP, API, batasan)", "Melakukan Reconnaissance & Information Gathering (identifikasi endpoint, versi software, dependency)", "Melakukan Vulnerability Assessment (OWASP Top 10, CVE scan, dependency scan)", "Melakukan Manual Penetration Test untuk eksploitasi terkontrol pada kerentanan potensial", "Uji autentikasi, otorisasi, logika bisnis, privilege escalation, dan validasi input", "Melakukan Post-Exploitation Analysis (menilai dampak dan risiko)", "Menyusun laporan hasil pengujian lengkap dengan severity level dan rekomendasi perbaikan"] },
+      { "description": "System Integration Testing (SIT)", "timeline": "Bulan 4", "deliverables": ["End-to-End Business Process Testing (Pengujian sesuai Test Scenario)", "Error Handling & Negative Testing", "Regression testing (untuk memastikan perubahan tidak merusak fitur lain)", "Compatibility testing (uji di berbagai perangkat/browser bila relevan)"] },
+      { "description": "User Acceptance Testing (UAT)", "timeline": "2 Minggu", "deliverables": ["Menjadwalkan sesi review bersama tim dan klien", "Dokumentasi hasil uji (defect log, feedback list)", "Memastikan seluruh sprint planning yang telah disepakati bersama telah dikerjakan", "Penanganan apabila muncul bug saat review dan melakukan retesting", "Memberikan training kepada klien agar sistem dapat digunakan dengan optimal", "Melakukan penambahan atau improvement sesuai hasil UAT yang disepakati", "Memverifikasi Quality Release Checklist sebelum sistem diakses pengguna", "Klien memberikan approval formal (sign-off) sebelum go-live", "Melakukan security assessment dasar (uji akses, SQL injection, dan celah umum)"] },
+      { "description": "Go-Live", "timeline": "Bulan 5", "deliverables": ["Deployment checklist (server, domain, SSL, konfigurasi)", "Memantau performa dan stabilitas sistem setelah aktif", "Menyediakan hypercare support pada masa awal penggunaan", "Menangani bug, penambahan, atau improvement pasca go-live", "Melakukan security assessment dasar (uji akses, SQL injection, dan celah umum)"] },
+      { "description": "Support & Maintenance", "timeline": "Bulan 6 - 17", "deliverables": ["Memantau performa sistem secara rutin untuk memastikan stabilitas", "Menangani bug atau error yang muncul setelah sistem berjalan", "Melakukan patching dan update keamanan secara berkala", "Menyediakan support helpdesk untuk pertanyaan dan kendala pengguna", "Melakukan preventive maintenance untuk mencegah gangguan di masa depan", "Melaksanakan backup data secara terjadwal dan memastikan restore dapat dilakukan", "Menangani request penambahan fitur atau improvement minor sesuai kebutuhan klien", "Menyusun laporan periodik terkait status sistem, bug, dan aktivitas maintenance"] }
+    ],
+    "section_titles": ["Biaya Development", "Biaya Maintenance", "Lingkup Pekerjaan & Timeline", "Pembayaran", "Batasan dan Pengecualian"],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD",
+      "block_types": ["metadata", "opening", "commercial", "commercial-maintenance", "timeline", "payment", "legal", "signature"],
+      "section_numbers": [1, 2, 3, 4, 5],
+      "section_titles": ["1. Biaya Development", "2. Biaya Maintenance", "3. Lingkup Pekerjaan & Timeline", "4. Pembayaran", "5. Batasan dan Pengecualian"],
+      "development_line_keys": ["ui_ux_designer_senior", "business_analyst_senior", "backend_programmer_senior", "backend_programmer_intermediate", "mobile_developer_senior", "functional_tester_intermediate"],
+      "maintenance_line_keys": ["devops_senior", "data_analyst_intermediate"],
+      "payment_nominals": ["Rp 45.200.000", "Rp 32.761.666", "Rp 32.761.666", "Rp 32.761.666", "Rp 32.761.666", "Rp 32.761.666", "Rp 32.761.670"],
+      "cost_headers": ["Development Squad", "Rate (Monthly)", "Employee", "Period (Month)", "Total"],
+      "maintenance_headers": ["Maintenance Squad", "Rate (Monthly)", "Employee", "Period (Month)", "Total"],
+      "timeline_headers": ["Description", "Timeline"],
+      "timeline_column_widths": ["75", "25"],
+      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "legal_exclusion_count": 4,
+      "signature_column_count": 2
+    }
+  }
+}

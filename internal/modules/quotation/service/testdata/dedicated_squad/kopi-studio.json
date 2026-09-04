@@ -1,0 +1,75 @@
+{
+  "schema_version": "dedicated-squad-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Kopi Studio - Sewa Programmer",
+    "source_gid": "518961110",
+    "verified_on": "2026-09-05",
+    "source_status": "historical_sheet_reference_current_card_expected",
+    "source_variance": [
+      "The historical sheet uses legacy monthly rates; expected values use current VENTURO-STD-2026 rates.",
+      "The historical sheet displays the intermediate resource as short-term; model 1C now deterministically resolves all lines as long-term.",
+      "The historical sheet uses Indonesian month names; current payment rendering follows the Go time.Month labels."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-KOPI-STUDIO",
+    "subject": "Current-card deterministic benchmark: Kopi Studio staff augmentation",
+    "client_name": "Benchmark Client",
+    "client_company": "Kopi Studio",
+    "issue_date": "5 September 2026"
+  },
+  "rate_card": { "code": "VENTURO-STD-2026", "market": "national", "source": "internal/database/seeders/quotation/001_venturo_master_rate_cards.sql" },
+  "input": {
+    "model": "1C",
+    "requirement": "Provide dedicated engineering capacity for the client's product backlog.",
+    "development_squad": [
+      { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 24 },
+      { "role": "backend_programmer", "seniority": "intermediate", "headcount_quarters": 2, "period_quarters": 4 }
+    ],
+    "maintenance_enabled": false,
+    "kickoff_discount_bps": 5000,
+    "payment_count": 6,
+    "payment_anchor_date": "2026-08-17T00:00:00Z",
+    "timeline": { "mode": "" }
+  },
+  "expected": {
+    "calculation": {
+      "model": "1C",
+      "development": [
+        { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 24, "term_type": "long_term", "amount_per_unit": 11550000, "line_total": 69300000 },
+        { "role": "backend_programmer", "seniority": "intermediate", "headcount_quarters": 2, "period_quarters": 4, "term_type": "long_term", "amount_per_unit": 9550000, "line_total": 4775000 }
+      ],
+      "development_subtotal": 74075000,
+      "maintenance_subtotal": 0,
+      "preparation": { "kind": "engineering_kickoff", "gross": 16325000, "discount": 8162500, "net": 8162500 },
+      "total": 90400000,
+      "discount": 8162500,
+      "total_investment": 82237500,
+      "payments": [
+        { "work_period": "Engineering Kick-off", "terms": "Down Payment", "invoice_date": "2026-08-17T00:00:00Z", "due_date": "2026-08-31T00:00:00Z", "nominal": 8162500 },
+        { "work_period": "1 - 30 September 2026", "terms": "Termin 1", "invoice_date": "2026-09-30T00:00:00Z", "due_date": "2026-10-14T00:00:00Z", "nominal": 16325000 },
+        { "work_period": "1 - 31 October 2026", "terms": "Termin 2", "invoice_date": "2026-10-31T00:00:00Z", "due_date": "2026-11-14T00:00:00Z", "nominal": 11550000 },
+        { "work_period": "1 - 30 November 2026", "terms": "Termin 3", "invoice_date": "2026-11-30T00:00:00Z", "due_date": "2026-12-14T00:00:00Z", "nominal": 11550000 },
+        { "work_period": "1 - 31 December 2026", "terms": "Termin 4", "invoice_date": "2026-12-31T00:00:00Z", "due_date": "2027-01-14T00:00:00Z", "nominal": 11550000 },
+        { "work_period": "1 - 31 January 2027", "terms": "Termin 5", "invoice_date": "2027-01-31T00:00:00Z", "due_date": "2027-02-14T00:00:00Z", "nominal": 11550000 },
+        { "work_period": "1 - 28 February 2027", "terms": "Termin 6", "invoice_date": "2027-02-28T00:00:00Z", "due_date": "2027-03-14T00:00:00Z", "nominal": 11550000 }
+      ]
+    },
+    "rules": { "preparation_kind": "engineering_kickoff", "payment_kind": "monthly", "preparation_discount_bps": 5000, "direct_project_discount_bps": 0, "include_timeline": false, "include_maintenance": false, "include_k6": false, "include_pentest": false },
+    "timeline": [],
+    "section_titles": ["Biaya Development", "Pembayaran", "Batasan dan Pengecualian"],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD",
+      "block_types": ["metadata", "opening", "commercial", "payment", "legal", "signature"],
+      "section_numbers": [1, 2, 3],
+      "section_titles": ["1. Biaya Development", "2. Pembayaran", "3. Batasan dan Pengecualian"],
+      "development_line_keys": ["mobile_developer_senior", "backend_programmer_intermediate"],
+      "maintenance_line_keys": [],
+      "payment_nominals": ["Rp 8.162.500", "Rp 16.325.000", "Rp 11.550.000", "Rp 11.550.000", "Rp 11.550.000", "Rp 11.550.000", "Rp 11.550.000"],
+      "cost_headers": ["Development Squad", "Rate (Monthly)", "Employee", "Period (Month)", "Total"],
+      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "legal_exclusion_count": 4,
+      "signature_column_count": 2
+    }
+  }
+}

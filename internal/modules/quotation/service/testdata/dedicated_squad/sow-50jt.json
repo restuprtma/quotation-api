@@ -1,0 +1,86 @@
+{
+  "schema_version": "dedicated-squad-benchmark-v1",
+  "metadata": {
+    "source_sheet": "sow 50JT",
+    "source_gid": "1432474578",
+    "verified_on": "2026-09-05",
+    "source_status": "historical_sheet_reference_current_card_expected",
+    "source_variance": [
+      "The historical sheet's approximately Rp54.877.500 total is not used; expected values use current VENTURO-STD-2026 rates.",
+      "The current generator uses the generic deterministic phase sequence for tier 50 instead of the historical combined phase labels.",
+      "The historical payment dates are provenance only; the expected schedule is recalculated from the fixture anchor date."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-SOW-50JT",
+    "subject": "Current-card deterministic benchmark: SOW 50JT",
+    "client_name": "Benchmark Client",
+    "client_company": "PT Benchmark 50JT",
+    "issue_date": "5 September 2026"
+  },
+  "rate_card": { "code": "VENTURO-STD-2026", "market": "national", "source": "internal/database/seeders/quotation/001_venturo_master_rate_cards.sql" },
+  "input": {
+    "model": "1B",
+    "requirement": "Build a compact commerce portal with catalog, checkout, and order tracking.",
+    "development_squad": [
+      { "role": "ui_ux_designer", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 4 },
+      { "role": "business_analyst", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4 },
+      { "role": "backend_programmer", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 4 },
+      { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4 }
+    ],
+    "maintenance_enabled": false,
+    "payment_count": 3,
+    "payment_anchor_date": "2026-06-17T00:00:00Z",
+    "timeline": { "mode": "relative" }
+  },
+  "modules": [
+    { "name": "Catalog", "sub_features": ["Product listing", "Keyword search"] },
+    { "name": "Checkout", "sub_features": ["Cart and order submission"] }
+  ],
+  "expected": {
+    "calculation": {
+      "model": "1B",
+      "development": [
+        { "role": "ui_ux_designer", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 13370000, "line_total": 13370000 },
+        { "role": "business_analyst", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 23380000, "line_total": 23380000 },
+        { "role": "backend_programmer", "seniority": "intermediate", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 13370000, "line_total": 13370000 },
+        { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 4, "term_type": "short_term", "amount_per_unit": 16170000, "line_total": 16170000 }
+      ],
+      "development_subtotal": 66290000,
+      "maintenance_subtotal": 0,
+      "preparation": { "kind": "none", "gross": 0, "discount": 0, "net": 0 },
+      "total": 66290000,
+      "discount": 0,
+      "total_investment": 66290000,
+      "payments": [
+        { "work_period": "Hiring & Kick off", "terms": "Down Payment", "invoice_date": "2026-06-17T00:00:00Z", "due_date": "2026-07-01T00:00:00Z", "nominal": 22096666 },
+        { "work_period": "Bulan 2", "terms": "Termin 2", "invoice_date": "2026-07-17T00:00:00Z", "due_date": "2026-07-31T00:00:00Z", "nominal": 22096666 },
+        { "work_period": "Bulan 3", "terms": "Termin 3", "invoice_date": "2026-08-17T00:00:00Z", "due_date": "2026-08-31T00:00:00Z", "nominal": 22096668 }
+      ]
+    },
+    "rules": { "preparation_kind": "none", "payment_kind": "equal_installments", "project_tier": "50", "preparation_discount_bps": 0, "direct_project_discount_bps": 0, "include_timeline": true, "include_maintenance": false, "include_k6": false, "include_pentest": false },
+    "timeline": [
+      { "description": "Requirement Analysis & System Design", "timeline": "Bulan 1", "deliverables": ["Kick-off meeting dan identifikasi kebutuhan bisnis", "Review proses bisnis dan alur kerja yang ada", "Analisis gap antara proses bisnis saat ini dan sistem yang diinginkan", "Penyusunan dokumen Project Requirement Document (PRD)", "Wireframing dan mockup UI/UX untuk gambaran awal sistem", "Persetujuan requirement bersama klien", "Menyusun desain arsitektur sistem dan database"] },
+      { "description": "Development", "timeline": "Bulan 2, 3", "deliverables": ["Catalog", "- Product listing", "- Keyword search", "Checkout", "- Cart and order submission"] },
+      { "description": "System Integration Testing (SIT)", "timeline": "Bulan 4", "deliverables": ["End-to-End Business Process Testing (Pengujian sesuai Test Scenario)", "Error Handling & Negative Testing", "Regression testing (untuk memastikan perubahan tidak merusak fitur lain)", "Compatibility testing (uji di berbagai perangkat/browser bila relevan)"] },
+      { "description": "User Acceptance Testing (UAT)", "timeline": "2 Minggu", "deliverables": ["Menjadwalkan sesi review bersama tim dan klien", "Dokumentasi hasil uji (defect log, feedback list)", "Memastikan seluruh sprint planning yang telah disepakati bersama telah dikerjakan", "Penanganan apabila muncul bug saat review dan melakukan retesting", "Memberikan training kepada klien agar sistem dapat digunakan dengan optimal", "Melakukan penambahan atau improvement sesuai hasil UAT yang disepakati", "Memverifikasi Quality Release Checklist sebelum sistem diakses pengguna", "Klien memberikan approval formal (sign-off) sebelum go-live", "Melakukan security assessment dasar (uji akses, SQL injection, dan celah umum)"] },
+      { "description": "Go-Live", "timeline": "Bulan 5", "deliverables": ["Deployment checklist (server, domain, SSL, konfigurasi)", "Memantau performa dan stabilitas sistem setelah aktif", "Menyediakan hypercare support pada masa awal penggunaan", "Menangani bug, penambahan, atau improvement pasca go-live", "Melakukan security assessment dasar (uji akses, SQL injection, dan celah umum)"] }
+    ],
+    "section_titles": ["Biaya Development", "Lingkup Pekerjaan & Timeline", "Pembayaran", "Batasan dan Pengecualian"],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD",
+      "block_types": ["metadata", "opening", "commercial", "timeline", "payment", "legal", "signature"],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": ["1. Biaya Development", "2. Lingkup Pekerjaan & Timeline", "3. Pembayaran", "4. Batasan dan Pengecualian"],
+      "development_line_keys": ["ui_ux_designer_intermediate", "business_analyst_senior", "backend_programmer_intermediate", "mobile_developer_senior"],
+      "maintenance_line_keys": [],
+      "payment_nominals": ["Rp 22.096.666", "Rp 22.096.666", "Rp 22.096.668"],
+      "cost_headers": ["Development Squad", "Rate (Monthly)", "Employee", "Period (Month)", "Total"],
+      "timeline_headers": ["Description", "Timeline"],
+      "timeline_column_widths": ["75", "25"],
+      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "legal_exclusion_count": 4,
+      "signature_column_count": 2
+    }
+  }
+}

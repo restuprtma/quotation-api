@@ -1,0 +1,70 @@
+{
+  "schema_version": "dedicated-squad-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Cuit - Penambahan Programmer",
+    "source_gid": "1313740160",
+    "verified_on": "2026-09-05",
+    "source_status": "historical_sheet_reference_current_card_expected",
+    "source_variance": [
+      "The historical sheet's Rp729,545/day is not used; the current master short-term rate Rp16,170,000 divided by 22 yields Rp735,000/day.",
+      "The historical invoice date is provenance only; the current engine invoices on the sprint end date and applies H+14.",
+      "The current renderer keeps the official four-section document structure; visual parity with the historical sheet is not asserted."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-CUIT",
+    "subject": "Current-card deterministic benchmark: Cuit feature sprint",
+    "client_name": "Benchmark Client",
+    "client_company": "Cuit",
+    "issue_date": "5 September 2026"
+  },
+  "rate_card": { "code": "VENTURO-STD-2026", "market": "national", "source": "internal/database/seeders/quotation/001_venturo_master_rate_cards.sql" },
+  "input": {
+    "model": "1D",
+    "requirement": "- Penyesuaian layout responsive pada tampilan checkout mobile app\n- Perbaikan bug validasi form alamat pengiriman\n- Integrasi webhook callback status transaksi payment gateway\n- Testing dan verifikasi build release APK",
+    "development_squad": [
+      { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "workday_count": 4 }
+    ],
+    "maintenance_enabled": false,
+    "payment_count": 1,
+    "payment_anchor_date": "2026-07-14T00:00:00Z",
+    "timeline": { "mode": "sprint", "start_date": "2026-07-14T00:00:00Z", "sprint_end_date": "2026-07-17T00:00:00Z" }
+  },
+  "expected": {
+    "calculation": {
+      "model": "1D",
+      "development": [
+        { "role": "mobile_developer", "seniority": "senior", "headcount_quarters": 4, "period_quarters": 0, "workday_count": 4, "term_type": "short_term", "amount_per_unit": 735000, "line_total": 2940000 }
+      ],
+      "development_subtotal": 2940000,
+      "maintenance_subtotal": 0,
+      "preparation": { "kind": "none", "gross": 0, "discount": 0, "net": 0 },
+      "total": 2940000,
+      "discount": 0,
+      "total_investment": 2940000,
+      "payments": [
+        { "work_period": "Penyelesaian pekerjaan", "terms": "Pelunasan", "invoice_date": "2026-07-17T00:00:00Z", "due_date": "2026-07-31T00:00:00Z", "nominal": 2940000 }
+      ]
+    },
+    "rules": { "preparation_kind": "none", "payment_kind": "single_settlement", "preparation_discount_bps": 0, "direct_project_discount_bps": 0, "include_timeline": true, "include_maintenance": false, "include_k6": false, "include_pentest": false },
+    "timeline": [
+      { "description": "Sprint Task List", "timeline": "14 - 17 Juli 2026 (4 Hari Kerja)", "deliverables": ["Penyesuaian layout responsive pada tampilan checkout mobile app", "Perbaikan bug validasi form alamat pengiriman", "Integrasi webhook callback status transaksi payment gateway", "Testing dan verifikasi build release APK"] }
+    ],
+    "section_titles": ["Biaya Development", "Lingkup Pekerjaan & Timeline", "Pembayaran", "Batasan dan Pengecualian"],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD",
+      "block_types": ["metadata", "opening", "commercial", "timeline", "payment", "legal", "signature"],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": ["1. Biaya Development", "2. Lingkup Pekerjaan & Timeline", "3. Pembayaran", "4. Batasan dan Pengecualian"],
+      "development_line_keys": ["mobile_developer_senior"],
+      "maintenance_line_keys": [],
+      "payment_nominals": ["Rp 2.940.000"],
+      "cost_headers": ["Development Squad", "Rate (Hari)", "Employee", "Period (Hari)", "Total"],
+      "timeline_headers": ["Description", "Timeline"],
+      "timeline_column_widths": ["75", "25"],
+      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "legal_exclusion_count": 4,
+      "signature_column_count": 2
+    }
+  }
+}
