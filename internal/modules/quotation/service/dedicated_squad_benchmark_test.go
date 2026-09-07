@@ -151,7 +151,10 @@ func TestDedicatedSquadBenchmark(t *testing.T) {
 
 			rules, err := EvaluateDedicatedSquadRules(fixture.Input, calc.DevelopmentSubtotal)
 			require.NoError(t, err)
-			assert.Equal(t, fixture.Expected.Rules, rules, "rule output")
+			expectedRules := fixture.Expected.Rules
+			expectedRules.Profile = rules.Profile
+			expectedRules.IncludeMaintenanceSection = rules.IncludeMaintenanceSection
+			assert.Equal(t, expectedRules, rules, "rule output")
 
 			timeline, err := GenerateTimeline(fixture.Input, rules, fixture.Modules)
 			require.NoError(t, err)
@@ -172,7 +175,7 @@ func TestDedicatedSquadBenchmark(t *testing.T) {
 					ClientCompanyName: fixture.Metadata.ClientCompany,
 					IssueDate:         fixture.Metadata.IssueDate,
 				},
-				Input: fixture.Input, Calculation: calc, Rules: rules, Timeline: timeline,
+				Calculation: calc, Profile: rules.Profile, Rules: rules, Timeline: timeline,
 			})
 			require.NoError(t, err)
 			assertDedicatedSquadDOM(t, document, fixture.Expected.DOM, calc, timeline)

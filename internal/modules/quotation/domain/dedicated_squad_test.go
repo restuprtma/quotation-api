@@ -2,9 +2,11 @@ package domain_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
@@ -45,6 +47,134 @@ func TestDedicatedSquadInputValidateMatrix(t *testing.T) {
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
+}
+
+func TestDedicatedSquadProfileJSONAndLegacyCompatibility(t *testing.T) {
+	legacy := validDedicatedInput(domain.ModelSOWLarge)
+	require.NoError(t, legacy.Validate())
+	assert.Nil(t, legacy.QuotationProfile)
+
+	discount := int32(2500)
+	next := legacy
+	next.QuotationProfile = &domain.QuotationProfileInput{
+		PreparationMode:        domain.PreparationProfileHiring,
+		PreparationDiscountBPS: &discount,
+		MaintenanceMode:        domain.MaintenanceProfileIncluded,
+		ScopeTimelineMode:      domain.ScopeTimelineCalendar,
+		IncludedPhases:         []string{domain.PhaseRequirement, domain.PhaseDevelopment, domain.PhaseSIT, domain.PhaseUAT, domain.PhaseGoLive},
+		PaymentMode:            domain.PaymentProfileRows,
+		PaymentRows: []domain.PaymentRowInput{
+			{WorkPeriod: "Kick off", Terms: "Down Payment", AllocationKind: domain.PaymentAllocationNetPreparation},
+			{WorkPeriod: "Bulan 1", Terms: "Termin 1", AllocationKind: domain.PaymentAllocationRemainingBPS, AllocationBPS: 10000, InvoiceMonthOffset: 1},
+		},
+		DocumentOptions: domain.DocumentOptionsInput{LetterPrefix: "VEN", TaxTreatment: domain.TaxExclusivePPN, ClauseCodes: []string{"out_of_pocket", "overtime"}},
+	}
+	next.MaintenanceEnabled = true
+	next.MaintenanceSquad = []domain.SquadLineInput{{Role: "quality_assurance", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}}
+	require.NoError(t, next.Validate())
+
+	encoded, err := json.Marshal(next)
+	require.NoError(t, err)
+	var decoded domain.DedicatedSquadInput
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, next, decoded)
+	require.NoError(t, decoded.Validate())
+}
+
+func TestDedicatedSquadProfileRejectsInvalidCombinations(t *testing.T) {
+	valid := validDedicatedInput(domain.ModelSOWLarge)
+	discount := int32(2500)
+	validProfile := func() *domain.QuotationProfileInput {
+		return &domain.QuotationProfileInput{
+			PreparationMode:        domain.PreparationProfileHiring,
+			PreparationDiscountBPS: &discount,
+			ScopeTimelineMode:      domain.ScopeTimelineRelative,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*domain.DedicatedSquadInput)
+		wantErr string
+	}{
+		{"unknown preparation mode", func(in *domain.DedicatedSquadInput) { in.QuotationProfile.PreparationMode = "other" }, "preparation_mode"},
+		{"unknown phase", func(in *domain.DedicatedSquadInput) { in.QuotationProfile.IncludedPhases = []string{"other"} }, "included_phases"},
+		{"duplicate phase", func(in *domain.DedicatedSquadInput) {
+			in.QuotationProfile.IncludedPhases = []string{domain.PhaseSIT, domain.PhaseSIT}
+		}, "duplicate"},
+		{"unknown clause", func(in *domain.DedicatedSquadInput) {
+			in.QuotationProfile.DocumentOptions.ClauseCodes = []string{"other"}
+		}, "clause_codes"},
+		{"discount over maximum", func(in *domain.DedicatedSquadInput) {
+			value := int32(10001)
+			in.QuotationProfile.PreparationDiscountBPS = &value
+		}, "preparation_discount_bps"},
+		{"maintenance without lines", func(in *domain.DedicatedSquadInput) {
+			in.QuotationProfile.MaintenanceMode = domain.MaintenanceProfileSeparate
+		}, "maintenance_squad"},
+		{"phases without timeline", func(in *domain.DedicatedSquadInput) {
+			in.QuotationProfile.ScopeTimelineMode = domain.ScopeTimelineNone
+			in.QuotationProfile.IncludedPhases = []string{domain.PhaseDevelopment}
+		}, "included_phases"},
+		{"empty explicit payments", func(in *domain.DedicatedSquadInput) { in.QuotationProfile.PaymentMode = domain.PaymentProfileRows }, "payment_rows"},
+		{"invalid payment bps sum", func(in *domain.DedicatedSquadInput) {
+			in.QuotationProfile.PaymentMode = domain.PaymentProfileRows
+			in.QuotationProfile.PaymentRows = []domain.PaymentRowInput{{WorkPeriod: "Bulan 1", Terms: "Termin", AllocationKind: domain.PaymentAllocationInvestmentBPS, AllocationBPS: 9999}}
+		}, "totaling 10000"},
+		{"net preparation without preparation", func(in *domain.DedicatedSquadInput) {
+			in.QuotationProfile.PreparationMode = domain.PreparationProfileNone
+			in.QuotationProfile.PaymentMode = domain.PaymentProfileRows
+			in.QuotationProfile.PaymentRows = []domain.PaymentRowInput{
+				{WorkPeriod: "Kick off", Terms: "DP", AllocationKind: domain.PaymentAllocationNetPreparation},
+				{WorkPeriod: "Bulan 1", Terms: "Termin", AllocationKind: domain.PaymentAllocationRemainingBPS, AllocationBPS: 10000},
+			}
+		}, "preparation_mode"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := valid
+			input.QuotationProfile = validProfile()
+			tt.mutate(&input)
+			require.ErrorContains(t, input.Validate(), tt.wantErr)
+		})
+	}
+}
+
+func TestDedicatedSquadProfileRejectsForbiddenAndUnknownJSONFields(t *testing.T) {
+	base := `{"model":"1A","requirement":"Build portal","development_squad":[{"role":"backend_programmer","seniority":"senior","headcount_quarters":4,"period_quarters":4}],"payment_count":1,"payment_anchor_date":"2026-09-05","timeline":{"mode":"relative"},"quotation_profile":{"payment_mode":"explicit_rows","payment_rows":[{"work_period":"Kick off","terms":"DP","allocation_kind":"investment_bps","allocation_bps":10000%s}]}}`
+	for _, field := range []string{` ,"nominal":1000`, ` ,"due_date":"2026-09-19"`, ` ,"rate":1000`, ` ,"html":"<p>unsafe</p>"`} {
+		t.Run(field, func(t *testing.T) {
+			var input domain.DedicatedSquadInput
+			payload := []byte(fmt.Sprintf(base, field))
+			require.Error(t, json.Unmarshal(payload, &input))
+		})
+	}
+
+	var input domain.DedicatedSquadInput
+	require.Error(t, json.Unmarshal([]byte(`{"model":"1A","requirement":"Build portal","development_squad":[{"role":"backend_programmer","seniority":"senior","headcount_quarters":4,"period_quarters":4}],"payment_count":1,"payment_anchor_date":"2026-09-05","timeline":{"mode":"relative","unexpected":true}}`), &input))
+}
+
+func TestDedicatedSquadProfileValidatesSprintDates(t *testing.T) {
+	input := validDedicatedInput(domain.ModelSprint)
+	input.Timeline.SprintEndDate = input.Timeline.StartDate
+	input.QuotationProfile = &domain.QuotationProfileInput{ScopeTimelineMode: domain.ScopeTimelineSprint}
+	require.ErrorContains(t, input.Validate(), "workday_count")
+}
+
+func TestDedicatedSquadProfileCanUseProfileSupportedCombinationsOutsideLegacyModelGates(t *testing.T) {
+	input := validDedicatedInput(domain.ModelSOWSmall)
+	input.KickoffDiscountBPS = 0 // retained legacy field is not the profile discount.
+	discount := int32(2500)
+	input.MaintenanceEnabled = true
+	input.MaintenanceSquad = []domain.SquadLineInput{{Role: "quality_assurance", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}}
+	input.QuotationProfile = &domain.QuotationProfileInput{
+		PreparationMode:        domain.PreparationProfileHiring,
+		PreparationDiscountBPS: &discount,
+		MaintenanceMode:        domain.MaintenanceProfileIncluded,
+		ScopeTimelineMode:      domain.ScopeTimelineRelative,
+	}
+	require.NoError(t, input.Validate())
 }
 
 func TestDedicatedSquadInputJSONRoundTrip(t *testing.T) {
@@ -112,4 +242,27 @@ func TestDedicatedSquadInputRejectsValuesAboveOperationalLimits(t *testing.T) {
 			require.ErrorContains(t, input.Validate(), tt.wantErr)
 		})
 	}
+}
+
+func validDedicatedInput(model domain.SquadModel) domain.DedicatedSquadInput {
+	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
+	start := time.Date(2026, time.July, 14, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, time.July, 17, 0, 0, 0, 0, time.UTC)
+	line := domain.SquadLineInput{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}
+	input := domain.DedicatedSquadInput{
+		Model: model, Requirement: "Build a portal", DevelopmentSquad: []domain.SquadLineInput{line}, PaymentCount: 2, PaymentAnchorDate: &anchor,
+	}
+	switch model {
+	case domain.ModelSOWLarge, domain.ModelSOWSmall:
+		input.Timeline = domain.TimelineInput{Mode: domain.TimelineRelative}
+	case domain.ModelStaffAugmentation:
+		input.KickoffDiscountBPS = 5000
+		input.Requirement = "Provide engineering capacity"
+	case domain.ModelSprint:
+		input.Requirement = "Fix checkout validation"
+		input.PaymentCount = 1
+		input.DevelopmentSquad = []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, WorkdayCount: 4}}
+		input.Timeline = domain.TimelineInput{Mode: domain.TimelineSprint, StartDate: &start, SprintEndDate: &end}
+	}
+	return input
 }

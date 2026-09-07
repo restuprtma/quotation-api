@@ -74,7 +74,7 @@ func dedicatedRenderFixture(model domain.SquadModel, rules DedicatedSquadRules) 
 		calc.Maintenance = []domain.SquadLineCalculation{line}
 		calc.MaintenanceSubtotal = line.LineTotal
 	}
-	return DedicatedSquadDocumentInput{Metadata: QuotationMetadata{QuotationNumber: "Q-001", Subject: "Portal <b>", ClientName: "Budi <script>", ClientCompanyName: "PT Aman & Makmur", IssueDate: "4 September 2026"}, Input: domain.DedicatedSquadInput{Model: model}, Calculation: calc, Rules: rules, Timeline: []domain.TimelineRow{{Description: "Development <unsafe>", Timeline: "Bulan 1", Deliverables: []string{"Modul <img>"}}}}
+	return DedicatedSquadDocumentInput{Metadata: QuotationMetadata{QuotationNumber: "Q-001", Subject: "Portal <b>", ClientName: "Budi <script>", ClientCompanyName: "PT Aman & Makmur", IssueDate: "4 September 2026"}, Calculation: calc, Rules: rules, Timeline: []domain.TimelineRow{{Description: "Development <unsafe>", Timeline: "Bulan 1", Deliverables: []string{"Modul <img>"}}}}
 }
 
 func countAttr(nodes []*html.Node, key string) int {

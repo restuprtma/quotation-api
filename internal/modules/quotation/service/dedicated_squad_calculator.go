@@ -24,6 +24,20 @@ func (c *DedicatedSquadCalculator) Calculate(ctx context.Context, companyID, rat
 	if err := input.Validate(); err != nil {
 		return domain.DedicatedSquadCalculation{}, err
 	}
+	profile, err := ResolveDedicatedSquadProfile(input)
+	if err != nil {
+		return domain.DedicatedSquadCalculation{}, err
+	}
+	return c.CalculateWithProfile(ctx, companyID, rateCardID, input, profile)
+}
+
+// CalculateWithProfile is for generation/preview flows that have already
+// resolved a profile. It avoids re-resolving and keeps the commercial snapshot
+// and calculation on exactly the same choices.
+func (c *DedicatedSquadCalculator) CalculateWithProfile(ctx context.Context, companyID, rateCardID string, input domain.DedicatedSquadInput, profile ResolvedQuotationProfile) (domain.DedicatedSquadCalculation, error) {
+	if err := input.Validate(); err != nil {
+		return domain.DedicatedSquadCalculation{}, err
+	}
 
 	result := domain.DedicatedSquadCalculation{Model: input.Model}
 	development, developmentMonthly, err := c.calculateLines(ctx, companyID, rateCardID, input.Model, input.DevelopmentSquad)
@@ -36,7 +50,7 @@ func (c *DedicatedSquadCalculator) Calculate(ctx context.Context, companyID, rat
 		return result, fmt.Errorf("development subtotal: %w", err)
 	}
 
-	rules, err := EvaluateDedicatedSquadRules(input, result.DevelopmentSubtotal)
+	rules, err := EvaluateDedicatedSquadRulesWithProfile(input, profile, result.DevelopmentSubtotal)
 	if err != nil {
 		return result, err
 	}
@@ -160,6 +174,8 @@ func buildDedicatedPayments(input domain.DedicatedSquadInput, rules DedicatedSqu
 		return domain.PaymentRow{WorkPeriod: workPeriod, Terms: terms, InvoiceDate: invoice, DueDate: invoice.AddDate(0, 0, 14), Nominal: nominal}
 	}
 	switch rules.PaymentKind {
+	case PaymentExplicitRows:
+		return buildExplicitDedicatedPayments(input, rules.Profile, calculation)
 	case PaymentSingleSettlement:
 		invoice := anchor
 		if input.Timeline.SprintEndDate != nil {
@@ -189,6 +205,56 @@ func buildDedicatedPayments(input domain.DedicatedSquadInput, rules DedicatedSqu
 	default:
 		return nil, fmt.Errorf("payments: unsupported kind %q", rules.PaymentKind)
 	}
+}
+
+func buildExplicitDedicatedPayments(input domain.DedicatedSquadInput, profile ResolvedQuotationProfile, calculation domain.DedicatedSquadCalculation) ([]domain.PaymentRow, error) {
+	anchor := calculatorDateOnly(*input.PaymentAnchorDate)
+	rows := make([]domain.PaymentRow, len(profile.PaymentRows))
+	remaining, err := checkedAdd(calculation.TotalInvestment, -calculation.Preparation.Net)
+	if err != nil {
+		return nil, err
+	}
+	var allocated int64
+	for i, source := range profile.PaymentRows {
+		invoice := anchor.AddDate(0, int(source.InvoiceMonthOffset), 0)
+		if source.InvoiceAtSprintEnd {
+			if input.Timeline.SprintEndDate == nil {
+				return nil, fmt.Errorf("quotation_profile.payment_rows[%d].invoice_at_sprint_end: sprint end date is required", i)
+			}
+			invoice = calculatorDateOnly(*input.Timeline.SprintEndDate)
+		}
+
+		var nominal int64
+		switch source.AllocationKind {
+		case domain.PaymentAllocationNetPreparation:
+			nominal = calculation.Preparation.Net
+		case domain.PaymentAllocationInvestmentBPS:
+			if i == len(rows)-1 {
+				nominal, err = checkedAdd(calculation.TotalInvestment, -allocated)
+			} else {
+				nominal, err = checkedProductDivide([]int64{calculation.TotalInvestment, int64(source.AllocationBPS)}, 10_000)
+			}
+		case domain.PaymentAllocationRemainingBPS:
+			if i == len(rows)-1 {
+				nominal, err = checkedAdd(remaining, -allocated)
+			} else {
+				nominal, err = checkedProductDivide([]int64{remaining, int64(source.AllocationBPS)}, 10_000)
+			}
+		default:
+			return nil, fmt.Errorf("quotation_profile.payment_rows[%d].allocation_kind: unsupported value %q", i, source.AllocationKind)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("quotation_profile.payment_rows[%d]: %w", i, err)
+		}
+		rows[i] = domain.PaymentRow{WorkPeriod: source.WorkPeriod, Terms: source.Terms, InvoiceDate: invoice, DueDate: invoice.AddDate(0, 0, 14), Nominal: nominal}
+		if source.AllocationKind != domain.PaymentAllocationNetPreparation {
+			allocated, err = checkedAdd(allocated, nominal)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return rows, nil
 }
 
 func equalPaymentRows(total int64, count int32, anchor time.Time, startNextMonth bool) ([]domain.PaymentRow, error) {

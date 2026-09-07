@@ -12,8 +12,8 @@ const DedicatedSquadOpeningParagraph = "Melalui penawaran ini, kami menegaskan k
 
 type DedicatedSquadDocumentInput struct {
 	Metadata    QuotationMetadata
-	Input       domain.DedicatedSquadInput
 	Calculation domain.DedicatedSquadCalculation
+	Profile     ResolvedQuotationProfile
 	Rules       DedicatedSquadRules
 	Timeline    []domain.TimelineRow
 }
@@ -31,22 +31,32 @@ func (r *dedicatedSquadHTMLRenderer) Render(in DedicatedSquadDocumentInput) (str
 		return "", fmt.Errorf("development: calculation lines are empty")
 	}
 	sections := BuildSectionPlan(in.Rules)
+	options := in.Profile.DocumentOptions
+	if options.LetterPrefix == "" {
+		// Retains compatibility for direct renderer callers while generation
+		// always supplies its already-resolved profile.
+		var err error
+		options, err = ResolveDedicatedSquadDocumentOptions(domain.DocumentOptionsInput{})
+		if err != nil {
+			return "", err
+		}
+	}
 	var b strings.Builder
 	b.WriteString(`<article class="quotation-document">`)
-	b.WriteString(renderDedicatedHeader(in.Metadata))
+	b.WriteString(renderDedicatedHeader(in.Metadata, options.LetterPrefix))
 	b.WriteString(`<section data-block-type="opening"><p>` + DedicatedSquadOpeningParagraph + `</p></section>`)
 	for _, section := range sections {
 		switch section.Code {
 		case "development":
-			b.WriteString(renderDedicatedCostSection(section, in.Calculation.Development, in.Calculation, in.Input.Model == domain.ModelSprint))
+			b.WriteString(renderDedicatedCostSection(section, in.Calculation.Development, in.Calculation, in.Calculation.Model == domain.ModelSprint, in.Rules.MaintenanceEmbedded))
 		case "maintenance":
 			b.WriteString(renderMaintenanceSection(section, in.Calculation.Maintenance, in.Calculation.MaintenanceSubtotal))
 		case "timeline":
 			b.WriteString(renderDedicatedTimeline(section, in.Timeline))
 		case "payment":
-			b.WriteString(renderDedicatedPayments(section, in.Calculation.Payments))
+			b.WriteString(renderDedicatedPayments(section, in.Calculation.Payments, options))
 		case "limitations":
-			b.WriteString(renderDedicatedLegal(section))
+			b.WriteString(renderDedicatedLegal(section, options))
 		}
 	}
 	b.WriteString(renderDedicatedSignatures(in.Metadata))
@@ -54,15 +64,19 @@ func (r *dedicatedSquadHTMLRenderer) Render(in DedicatedSquadDocumentInput) (str
 	return b.String(), nil
 }
 
-func renderDedicatedHeader(m QuotationMetadata) string {
+func renderDedicatedHeader(m QuotationMetadata, prefix string) string {
+	displayNumber := m.QuotationNumber
+	if prefix != "" {
+		displayNumber = prefix + "/" + displayNumber
+	}
 	return `<header data-block-type="metadata"><h1>PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD</h1>` +
-		`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + htmlEscape(m.QuotationNumber) + `</span></p>` +
+		`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + htmlEscape(displayNumber) + `</span></p>` +
 		`<p><strong>Perihal:</strong> <span data-field="subject">` + htmlEscape(m.Subject) + `</span></p>` +
 		`<p><strong>Ditujukan kepada:</strong> <span data-field="client_pic">` + htmlEscape(m.ClientName) + `</span></p>` +
 		`<p data-field="client_company">` + htmlEscape(m.ClientCompanyName) + `</p></header>`
 }
 
-func renderDedicatedCostSection(section domain.DocumentSection, lines []domain.SquadLineCalculation, calc domain.DedicatedSquadCalculation, daily bool) string {
+func renderDedicatedCostSection(section domain.DocumentSection, lines []domain.SquadLineCalculation, calc domain.DedicatedSquadCalculation, daily, maintenanceEmbedded bool) string {
 	unit, period := "Rate (Monthly)", "Period (Month)"
 	if daily {
 		unit, period = "Rate (Hari)", "Period (Hari)"
@@ -71,6 +85,9 @@ func renderDedicatedCostSection(section domain.DocumentSection, lines []domain.S
 	writeSectionStart(&b, section, "commercial")
 	b.WriteString(`<table><thead><tr><th>Development Squad</th><th>` + unit + `</th><th>Employee</th><th>` + period + `</th><th>Total</th></tr></thead><tbody>`)
 	renderDedicatedLines(&b, lines, daily)
+	if maintenanceEmbedded {
+		renderDedicatedLines(&b, calc.Maintenance, false)
+	}
 	if calc.Preparation.Gross > 0 {
 		fmt.Fprintf(&b, `<tr data-field="preparation"><td>%s</td><td>-</td><td>-</td><td>-</td><td>Rp %s</td></tr>`, htmlEscape(preparationLabel(calc.Preparation.Kind)), formatNumber(calc.Preparation.Gross))
 	}
@@ -116,22 +133,22 @@ func renderDedicatedTimeline(section domain.DocumentSection, rows []domain.Timel
 	return b.String()
 }
 
-func renderDedicatedPayments(section domain.DocumentSection, rows []domain.PaymentRow) string {
+func renderDedicatedPayments(section domain.DocumentSection, rows []domain.PaymentRow, options ResolvedDocumentOptions) string {
 	var b strings.Builder
 	writeSectionStart(&b, section, "payment")
 	b.WriteString(`<table><thead><tr><th>Work Period</th><th>Terms</th><th>Invoice Date</th><th>Due Date</th><th>Nominal</th></tr></thead><tbody>`)
 	for _, row := range rows {
 		fmt.Fprintf(&b, `<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td data-field="payment_nominal">Rp %s</td></tr>`, htmlEscape(row.WorkPeriod), htmlEscape(row.Terms), formatIndonesianDate(row.InvoiceDate), formatIndonesianDate(row.DueDate), formatNumber(row.Nominal))
 	}
-	b.WriteString(`</tbody></table><p>` + DedicatedTaxClause + `</p><p>` + DedicatedInvoiceClause + `</p><p>` + DedicatedSuspensionClause + `</p></section>`)
+	b.WriteString(`</tbody></table><p>` + htmlEscape(dedicatedTaxClause(options)) + `</p><p>` + htmlEscape(DedicatedInvoiceClause) + `</p><p>` + htmlEscape(DedicatedSuspensionClause) + `</p></section>`)
 	return b.String()
 }
 
-func renderDedicatedLegal(section domain.DocumentSection) string {
+func renderDedicatedLegal(section domain.DocumentSection, options ResolvedDocumentOptions) string {
 	var b strings.Builder
 	writeSectionStart(&b, section, "legal")
 	b.WriteString(`<ol data-field="exclusions">`)
-	for _, clause := range DedicatedExclusionClauses {
+	for _, clause := range dedicatedClauses(options) {
 		b.WriteString(`<li>` + htmlEscape(clause) + `</li>`)
 	}
 	b.WriteString(`</ol><p>` + DedicatedBindingClause + `</p></section>`)

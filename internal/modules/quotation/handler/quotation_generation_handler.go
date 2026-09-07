@@ -66,6 +66,11 @@ func (h *QuotationGenerationHandler) Preview(c *gin.Context) {
 		return
 	}
 
+	profile, err := service.ResolveDedicatedSquadProfile(*req.DedicatedSquad)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad allocation is invalid", service.ErrCodeAllocationInvalid)
+		return
+	}
 	calculation, err := h.previewCalculator.Calculate(c.Request.Context(), companyID.String(), req.RateCardID.String(), *req.DedicatedSquad)
 	if err != nil {
 		if errors.Is(err, dto.ErrMissingRateItem) {
@@ -75,14 +80,14 @@ func (h *QuotationGenerationHandler) Preview(c *gin.Context) {
 		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad allocation is invalid", service.ErrCodeAllocationInvalid)
 		return
 	}
-	rules, err := service.EvaluateDedicatedSquadRules(*req.DedicatedSquad, calculation.DevelopmentSubtotal)
+	rules, err := service.EvaluateDedicatedSquadRulesWithProfile(*req.DedicatedSquad, profile, calculation.DevelopmentSubtotal)
 	if err != nil {
 		response.Error(c, http.StatusUnprocessableEntity, "Dedicated squad allocation is invalid", service.ErrCodeAllocationInvalid)
 		return
 	}
 
 	response.Success(c, http.StatusOK, "Dedicated squad preview calculated successfully", dto.DedicatedSquadPreviewResponse{
-		Calculation: calculation, VisibleSections: service.BuildSectionPlan(rules),
+		Calculation: calculation, ResolvedProfile: profile, VisibleSections: service.BuildSectionPlan(rules),
 		IncludeK6: rules.IncludeK6, IncludePentest: rules.IncludePentest,
 	})
 }

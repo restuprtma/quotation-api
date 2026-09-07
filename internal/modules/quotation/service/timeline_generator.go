@@ -15,7 +15,34 @@ var numberedTaskPrefix = regexp.MustCompile(`^\d+[.)]\s*`)
 // calendar days, while sprint workday labels count Monday-Friday inclusively.
 // National holidays are not deducted because this engine has no holiday calendar.
 func GenerateTimeline(input domain.DedicatedSquadInput, rules DedicatedSquadRules, modules []domain.Module) ([]domain.TimelineRow, error) {
-	if !rules.IncludeTimeline || input.Model == domain.ModelStaffAugmentation {
+	if !rules.IncludeTimeline {
+		return []domain.TimelineRow{}, nil
+	}
+	if rules.Profile.UsesLegacyDefaults || rules.Profile.TimelineMode == "" {
+		return generateLegacyTimeline(input, rules, modules)
+	}
+	if rules.Profile.TimelineMode == domain.ScopeTimelineSprint {
+		return generateSprintTimeline(input)
+	}
+	if rules.Profile.HasPhase(PhaseDevelopment) && len(modules) == 0 {
+		return nil, fmt.Errorf("modules: must contain at least one module for project timeline")
+	}
+
+	switch rules.Profile.TimelineMode {
+	case domain.ScopeTimelineRelative:
+		return generateProfileRelativeTimeline(rules.Profile, modules), nil
+	case domain.ScopeTimelineCalendar:
+		if input.Timeline.StartDate == nil {
+			return nil, fmt.Errorf("timeline.start_date: is required for calendar timeline")
+		}
+		return generateProfileCalendarTimeline(*input.Timeline.StartDate, rules.Profile, modules), nil
+	default:
+		return nil, fmt.Errorf("timeline.mode: unsupported quotation profile timeline mode %q", rules.Profile.TimelineMode)
+	}
+}
+
+func generateLegacyTimeline(input domain.DedicatedSquadInput, rules DedicatedSquadRules, modules []domain.Module) ([]domain.TimelineRow, error) {
+	if input.Model == domain.ModelStaffAugmentation {
 		return []domain.TimelineRow{}, nil
 	}
 	if input.Model == domain.ModelSprint {
@@ -24,7 +51,6 @@ func GenerateTimeline(input domain.DedicatedSquadInput, rules DedicatedSquadRule
 	if len(modules) == 0 {
 		return nil, fmt.Errorf("modules: must contain at least one module for project timeline")
 	}
-
 	switch input.Timeline.Mode {
 	case domain.TimelineRelative:
 		return generateRelativeTimeline(rules, modules), nil
@@ -35,6 +61,90 @@ func GenerateTimeline(input domain.DedicatedSquadInput, rules DedicatedSquadRule
 		return generateCalendarTimeline(*input.Timeline.StartDate, rules, modules), nil
 	default:
 		return nil, fmt.Errorf("timeline.mode: unsupported project timeline mode %q", input.Timeline.Mode)
+	}
+}
+
+func generateProfileRelativeTimeline(profile ResolvedQuotationProfile, modules []domain.Module) []domain.TimelineRow {
+	rows := make([]domain.TimelineRow, 0, len(profile.IncludedPhases))
+	for _, phase := range profile.IncludedPhases {
+		label := relativePhaseLabel(phase)
+		if phase == PhaseDevelopment {
+			rows = append(rows, developmentRow(label, modules))
+			continue
+		}
+		rows = append(rows, phaseRow(phaseDescription(phase), label, phase))
+	}
+	return rows
+}
+
+func generateProfileCalendarTimeline(start time.Time, profile ResolvedQuotationProfile, modules []domain.Module) []domain.TimelineRow {
+	cursor := calendarDate(start)
+	rows := make([]domain.TimelineRow, 0, len(profile.IncludedPhases))
+	for _, phase := range profile.IncludedPhases {
+		end := cursor.AddDate(0, 0, calendarPhaseDays(phase)-1)
+		label := formatIndonesianRange(cursor, end)
+		if phase == PhaseDevelopment {
+			rows = append(rows, developmentRow(label, modules))
+		} else {
+			rows = append(rows, phaseRow(phaseDescription(phase), label, phase))
+		}
+		cursor = end.AddDate(0, 0, 1)
+	}
+	return rows
+}
+
+func phaseDescription(phase PhaseCode) string {
+	switch phase {
+	case PhaseRequirement:
+		return "Requirement Analysis & System Design"
+	case PhaseK6:
+		return "Performance / Load Test"
+	case PhasePentest:
+		return "Penetration Test"
+	case PhaseSIT:
+		return "System Integration Testing (SIT)"
+	case PhaseUAT:
+		return "User Acceptance Testing (UAT)"
+	case PhaseGoLive:
+		return "Go-Live"
+	case PhaseMaintenance:
+		return "Support & Maintenance"
+	default:
+		return string(phase)
+	}
+}
+
+func relativePhaseLabel(phase PhaseCode) string {
+	switch phase {
+	case PhaseRequirement:
+		return "Bulan 1"
+	case PhaseDevelopment:
+		return "Bulan 2, 3"
+	case PhaseK6, PhasePentest, PhaseUAT:
+		return "2 Minggu"
+	case PhaseSIT:
+		return "Bulan 4"
+	case PhaseGoLive:
+		return "Bulan 5"
+	case PhaseMaintenance:
+		return "Bulan 6 - 17"
+	default:
+		return ""
+	}
+}
+
+func calendarPhaseDays(phase PhaseCode) int {
+	switch phase {
+	case PhaseRequirement, PhaseSIT, PhaseUAT, PhaseK6, PhasePentest:
+		return 14
+	case PhaseDevelopment:
+		return 56
+	case PhaseGoLive:
+		return 7
+	case PhaseMaintenance:
+		return 365
+	default:
+		return 1
 	}
 }
 

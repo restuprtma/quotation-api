@@ -305,22 +305,31 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 
 func (s *QuotationGenerationService) generateDedicated(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
 	input := *req.DedicatedSquad
+	profile, err := ResolveDedicatedSquadProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad profile is invalid")
+	}
 	calculator := NewDedicatedSquadCalculator(rateSnapshotLookup{items: cfg.rateCardItems})
-	calculation, err := calculator.Calculate(ctx, companyID.String(), req.RateCardID.String(), input)
+	calculation, err := calculator.CalculateWithProfile(ctx, companyID.String(), req.RateCardID.String(), input, profile)
 	if err != nil {
 		if errors.Is(err, dto.ErrMissingRateItem) {
 			return newGenerationError(ErrCodeRateItemMissing, "rate item is missing for dedicated squad")
 		}
 		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad calculation is invalid")
 	}
-	rules, err := EvaluateDedicatedSquadRules(input, calculation.DevelopmentSubtotal)
+	rules, err := EvaluateDedicatedSquadRulesWithProfile(input, profile, calculation.DevelopmentSubtotal)
 	if err != nil {
 		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad rules are invalid")
 	}
 
-	modules, providerName, model, gerr := s.extractDedicatedModules(ctx, companyID, input)
-	if gerr != nil {
-		return gerr
+	var modules []domain.Module
+	var providerName, model string
+	if rules.IncludeTimeline {
+		var gerr error
+		modules, providerName, model, gerr = s.extractDedicatedModules(ctx, companyID, input)
+		if gerr != nil {
+			return gerr
+		}
 	}
 	timeline, err := GenerateTimeline(input, rules, modules)
 	if err != nil {
@@ -334,9 +343,9 @@ func (s *QuotationGenerationService) generateDedicated(ctx context.Context, comp
 	}
 	return s.renderAndPersistDedicated(ctx, repository.CompleteDedicatedGenerationParams{
 		CompanyID: companyID, RevisionID: revisionID,
-		CalculationSnapshot: mustJSON(calculation), ModuleSnapshot: mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
+		ResolvedProfileSnapshot: mustJSON(profile), CalculationSnapshot: mustJSON(calculation), ModuleSnapshot: mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
 		AiProvider: providerName, AiModel: model,
-	}, DedicatedSquadDocumentInput{Metadata: metadata, Input: input, Calculation: calculation, Rules: rules, Timeline: timeline})
+	}, DedicatedSquadDocumentInput{Metadata: metadata, Profile: profile, Calculation: calculation, Rules: rules, Timeline: timeline})
 }
 
 func (s *QuotationGenerationService) regenerateDedicated(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
@@ -344,18 +353,22 @@ func (s *QuotationGenerationService) regenerateDedicated(ctx context.Context, co
 	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
 	}
+	var profile ResolvedQuotationProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+	var modules []domain.Module
+	if len(draft.ModuleSnapshot) == 0 || json.Unmarshal(draft.ModuleSnapshot, &modules) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	var timeline []domain.TimelineRow
+	if len(draft.TimelineSnapshot) == 0 || json.Unmarshal(draft.TimelineSnapshot, &timeline) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
+	}
 	input := *req.DedicatedSquad
-	rules, err := EvaluateDedicatedSquadRules(input, calculation.DevelopmentSubtotal)
+	rules, err := EvaluateDedicatedSquadRulesWithProfile(input, profile, calculation.DevelopmentSubtotal)
 	if err != nil {
 		return newGenerationError(ErrCodeAllocationInvalid, "stored dedicated squad rules are invalid")
-	}
-	modules, providerName, model, gerr := s.extractDedicatedModules(ctx, companyID, input)
-	if gerr != nil {
-		return gerr
-	}
-	timeline, err := GenerateTimeline(input, rules, modules)
-	if err != nil {
-		return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad timeline is invalid")
 	}
 	metadata := QuotationMetadata{
 		QuotationNumber: draft.QuotationNumber, Subject: strings.TrimSpace(req.Subject),
@@ -364,10 +377,10 @@ func (s *QuotationGenerationService) regenerateDedicated(ctx context.Context, co
 	}
 	return s.renderAndPersistDedicated(ctx, repository.CompleteDedicatedGenerationParams{
 		CompanyID: companyID, RevisionID: draft.RevisionID, Regenerated: true,
+		ResolvedProfileSnapshot: append(json.RawMessage(nil), draft.ResolvedProfileSnapshot...),
 		CalculationSnapshot: append(json.RawMessage(nil), draft.CalculationSnapshot...),
-		ModuleSnapshot:      mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
-		AiProvider: providerName, AiModel: model,
-	}, DedicatedSquadDocumentInput{Metadata: metadata, Input: input, Calculation: calculation, Rules: rules, Timeline: timeline})
+		ModuleSnapshot:      append(json.RawMessage(nil), draft.ModuleSnapshot...), TimelineSnapshot: append(json.RawMessage(nil), draft.TimelineSnapshot...),
+	}, DedicatedSquadDocumentInput{Metadata: metadata, Profile: profile, Calculation: calculation, Rules: rules, Timeline: timeline})
 }
 
 func (s *QuotationGenerationService) extractDedicatedModules(ctx context.Context, companyID uuid.UUID, input domain.DedicatedSquadInput) ([]domain.Module, string, string, error) {

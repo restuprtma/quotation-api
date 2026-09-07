@@ -54,6 +54,19 @@ func TestTimelineGeneratorConditionalRows(t *testing.T) {
 	assert.Contains(t, timelineDescriptions(withSecurity), "Penetration Test")
 }
 
+func TestTimelineGeneratorUsesProfilePhaseOrder(t *testing.T) {
+	input := domain.DedicatedSquadInput{Model: domain.ModelSOWSmall, Timeline: domain.TimelineInput{Mode: domain.TimelineRelative}}
+	profile := ResolvedQuotationProfile{
+		TimelineMode:   domain.ScopeTimelineRelative,
+		IncludedPhases: []PhaseCode{PhaseDevelopment, PhasePentest, PhaseGoLive},
+	}
+	rules := DedicatedSquadRules{Profile: profile, IncludeTimeline: true, IncludePentest: true}
+	rows, err := GenerateTimeline(input, rules, []domain.Module{{Name: "Dashboard", SubFeatures: []string{"Ringkasan"}}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Development", "Penetration Test", "Go-Live"}, timelineDescriptions(rows))
+	assert.Equal(t, []string{"Bulan 2, 3", "2 Minggu", "Bulan 5"}, timelineLabels(rows))
+}
+
 func TestTimelineGeneratorStaffAugmentationIsEmpty(t *testing.T) {
 	got, err := GenerateTimeline(domain.DedicatedSquadInput{Model: domain.ModelStaffAugmentation}, DedicatedSquadRules{}, nil)
 	require.NoError(t, err)

@@ -41,6 +41,7 @@ func TestCredentialResponse_JSONSerialization(t *testing.T) {
 
 func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) {
 	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
+	discount := int32(2500)
 	req := GenerateQuotationRequest{
 		DedicatedSquad: &domain.DedicatedSquadInput{
 			Model:             domain.ModelSOWLarge,
@@ -49,6 +50,17 @@ func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) 
 			PaymentCount:      2,
 			PaymentAnchorDate: &anchor,
 			Timeline:          domain.TimelineInput{Mode: domain.TimelineRelative},
+			QuotationProfile: &domain.QuotationProfileInput{
+				PreparationMode:        domain.PreparationProfileHiring,
+				PreparationDiscountBPS: &discount,
+				ScopeTimelineMode:      domain.ScopeTimelineRelative,
+				IncludedPhases:         []string{domain.PhaseRequirement, domain.PhaseDevelopment},
+				PaymentMode:            domain.PaymentProfileRows,
+				PaymentRows: []domain.PaymentRowInput{{
+					WorkPeriod: "Kick off", Terms: "DP", AllocationKind: domain.PaymentAllocationInvestmentBPS, AllocationBPS: 10000,
+				}},
+				DocumentOptions: domain.DocumentOptionsInput{LetterPrefix: "VEN", TaxTreatment: domain.TaxExclusivePPN, ClauseCodes: []string{"out_of_pocket"}},
+			},
 		},
 	}
 
@@ -63,5 +75,9 @@ func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) 
 	require.NotNil(t, decoded.DedicatedSquad)
 	require.Equal(t, domain.ModelSOWLarge, decoded.DedicatedSquad.Model)
 	require.Equal(t, anchor, *decoded.DedicatedSquad.PaymentAnchorDate)
+	require.NotNil(t, decoded.DedicatedSquad.QuotationProfile)
+	require.Equal(t, domain.PreparationProfileHiring, decoded.DedicatedSquad.QuotationProfile.PreparationMode)
+	require.Equal(t, int32(2500), *decoded.DedicatedSquad.QuotationProfile.PreparationDiscountBPS)
+	require.Equal(t, domain.PaymentAllocationInvestmentBPS, decoded.DedicatedSquad.QuotationProfile.PaymentRows[0].AllocationKind)
 	require.NoError(t, decoded.DedicatedSquad.Validate())
 }

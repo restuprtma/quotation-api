@@ -124,10 +124,11 @@ func TestCompleteDedicatedGenerationRoundTripAndTenantIsolation(t *testing.T) {
 	defer tx.Rollback(ctx)
 	err = repo.CompleteDedicatedGeneration(ctx, tx, repository.CompleteDedicatedGenerationParams{
 		CompanyID: companyID, RevisionID: draft.RevisionID, ContentHTML: "<section>dedicated</section>",
-		CalculationSnapshot: []byte(`{"total_investment":178600000}`),
-		ModuleSnapshot:      []byte(`[{"name":"Reservasi","sub_features":["Booking"]}]`),
-		TimelineSnapshot:    []byte(`[{"description":"Development","timeline":"Bulan 2, 3"}]`),
-		AiProvider:          "openai", AiModel: "test-model",
+		ResolvedProfileSnapshot: []byte(`{"maintenance_mode":"within_development"}`),
+		CalculationSnapshot:     []byte(`{"total_investment":178600000}`),
+		ModuleSnapshot:          []byte(`[{"name":"Reservasi","sub_features":["Booking"]}]`),
+		TimelineSnapshot:        []byte(`[{"description":"Development","timeline":"Bulan 2, 3"}]`),
+		AiProvider:              "openai", AiModel: "test-model",
 	})
 	if err != nil {
 		t.Fatalf("complete dedicated generation: %v", err)
@@ -136,16 +137,16 @@ func TestCompleteDedicatedGenerationRoundTripAndTenantIsolation(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	var calculation, modules, timeline, html, status string
+	var profile, calculation, modules, timeline, html, status string
 	err = pool.QueryRow(ctx, `
-		SELECT calculation_snapshot::text, module_snapshot::text, timeline_snapshot::text,
+		SELECT resolved_profile_snapshot::text, calculation_snapshot::text, module_snapshot::text, timeline_snapshot::text,
 		       content_html, generation_status
 		FROM quotation_revisions WHERE id = $1 AND company_id = $2
-	`, draft.RevisionID, companyID).Scan(&calculation, &modules, &timeline, &html, &status)
+	`, draft.RevisionID, companyID).Scan(&profile, &calculation, &modules, &timeline, &html, &status)
 	if err != nil {
 		t.Fatalf("read snapshots: %v", err)
 	}
-	if calculation == "" || modules == "" || timeline == "" {
+	if profile == "" || calculation == "" || modules == "" || timeline == "" {
 		t.Fatal("all dedicated snapshots must be persisted")
 	}
 	if html != "<section>dedicated</section>" || status != repository.GenerationStatusCompleted {

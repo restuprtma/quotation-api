@@ -69,6 +69,7 @@ type GenerateQuotationRequest struct {
 
 type DedicatedSquadPreviewResponse struct {
 	Calculation     domain.DedicatedSquadCalculation `json:"calculation"`
+	ResolvedProfile any                             `json:"resolved_profile"`
 	VisibleSections []domain.DocumentSection         `json:"visible_sections"`
 	IncludeK6       bool                             `json:"include_k6"`
 	IncludePentest  bool                             `json:"include_pentest"`

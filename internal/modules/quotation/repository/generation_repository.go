@@ -94,16 +94,17 @@ type UpdateGenerationResultParams struct {
 // with the rendered HTML so readers can never observe a partially completed
 // commercial snapshot.
 type CompleteDedicatedGenerationParams struct {
-	CompanyID           uuid.UUID
-	RevisionID          uuid.UUID
-	ContentHTML         string
-	CalculationSnapshot json.RawMessage
-	ModuleSnapshot      json.RawMessage
-	TimelineSnapshot    json.RawMessage
-	AiProvider          string
-	AiModel             string
-	ContentHash         *string
-	Regenerated         bool
+	CompanyID               uuid.UUID
+	RevisionID              uuid.UUID
+	ContentHTML             string
+	ResolvedProfileSnapshot json.RawMessage
+	CalculationSnapshot     json.RawMessage
+	ModuleSnapshot          json.RawMessage
+	TimelineSnapshot        json.RawMessage
+	AiProvider              string
+	AiModel                 string
+	ContentHash             *string
+	Regenerated             bool
 }
 
 // CreateDraftTransaction inserts the quotation master (status queued, stable
@@ -388,26 +389,27 @@ func (r *GenerationRepository) CompleteDedicatedGeneration(ctx context.Context, 
 		WITH updated_rev AS (
 			UPDATE quotation_revisions SET
 				content_html = $1,
-				calculation_snapshot = $2,
-				module_snapshot = $3,
-				timeline_snapshot = $4,
-				ai_provider = NULLIF($5, ''),
-				ai_model = NULLIF($6, ''),
-				content_hash = $7,
-				generation_status = $8,
+				resolved_profile_snapshot = $2,
+				calculation_snapshot = $3,
+				module_snapshot = $4,
+				timeline_snapshot = $5,
+				ai_provider = NULLIF($6, ''),
+				ai_model = NULLIF($7, ''),
+				content_hash = $8,
+				generation_status = $9,
 				generation_error = NULL,
-				content_version = content_version + CASE WHEN $12 THEN 1 ELSE 0 END,
+				content_version = content_version + CASE WHEN $13 THEN 1 ELSE 0 END,
 				generated_at = NOW(),
 				updated_at = NOW()
-			WHERE id = $9 AND company_id = $10
-			  AND publication_status = $11
+			WHERE id = $10 AND company_id = $11
+			  AND publication_status = $12
 			RETURNING quotation_id, updated_at
 		)
 		UPDATE quotations q SET status = $11, updated_at = NOW()
 		FROM updated_rev r
 		WHERE q.id = r.quotation_id AND q.company_id = $10
 		RETURNING r.updated_at
-	`, params.ContentHTML, params.CalculationSnapshot, params.ModuleSnapshot,
+	`, params.ContentHTML, params.ResolvedProfileSnapshot, params.CalculationSnapshot, params.ModuleSnapshot,
 		params.TimelineSnapshot, params.AiProvider, params.AiModel, params.ContentHash,
 		GenerationStatusCompleted, params.RevisionID, params.CompanyID, PublicationStatusDraft,
 		params.Regenerated,
@@ -477,15 +479,16 @@ const (
 // DraftRevision is the minimal projection required to re-run the generation
 // pipeline for an existing draft.
 type DraftRevision struct {
-	RevisionID          uuid.UUID
-	QuotationID         uuid.UUID
-	QuotationNumber     string
-	PublicationStatus   string
-	GenerationStatus    string
-	GenerationInput     json.RawMessage
-	CalculationSnapshot json.RawMessage
-	ModuleSnapshot      json.RawMessage
-	TimelineSnapshot    json.RawMessage
+	RevisionID              uuid.UUID
+	QuotationID             uuid.UUID
+	QuotationNumber         string
+	PublicationStatus       string
+	GenerationStatus        string
+	GenerationInput         json.RawMessage
+	ResolvedProfileSnapshot json.RawMessage
+	CalculationSnapshot     json.RawMessage
+	ModuleSnapshot          json.RawMessage
+	TimelineSnapshot        json.RawMessage
 }
 
 // LoadDraftRevisionForRegeneration resolves the current revision of a
@@ -497,6 +500,7 @@ func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Cont
 	var d DraftRevision
 	err := r.db.QueryRow(ctx, `
 		SELECT r.id, r.quotation_id, q.quotation_number, r.publication_status, r.generation_status, r.generation_input,
+		       COALESCE(r.resolved_profile_snapshot, 'null'::jsonb),
 		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
 		       COALESCE(r.module_snapshot, '[]'::jsonb), COALESCE(r.timeline_snapshot, '[]'::jsonb)
 		FROM quotation_revisions r
@@ -506,7 +510,7 @@ func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Cont
 	`, quotationID, companyID).Scan(
 		&d.RevisionID, &d.QuotationID, &d.QuotationNumber,
 		&d.PublicationStatus, &d.GenerationStatus, &d.GenerationInput,
-		&d.CalculationSnapshot, &d.ModuleSnapshot, &d.TimelineSnapshot,
+		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot, &d.TimelineSnapshot,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
