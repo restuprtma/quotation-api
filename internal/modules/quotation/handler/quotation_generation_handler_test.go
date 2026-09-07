@@ -289,6 +289,7 @@ func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner 
 
 	q := router.Group("/quotation/v1/quotations")
 	{
+		q.POST("/preview/subscription-saas", genHandler.PreviewSubscriptionSaaS)
 		q.GET("/:id", genHandler.GetByID)
 		q.POST("/generate", genHandler.Generate)
 		q.POST("/preview", genHandler.Preview)
@@ -958,4 +959,202 @@ func TestSaveDraft_HTTP_NotFound_Returns404(t *testing.T) {
 	otherCompany := uuid.New()
 	wCrossTenant := doJSON(router, http.MethodPut, "/quotation/v1/quotations/"+genResp.Data.QuotationID.String()+"/draft", &otherCompany, validBody)
 	assert.Equal(t, http.StatusNotFound, wCrossTenant.Code, "Cross-tenant access must return 404 without leaking existence")
+}
+
+func percetakanPreviewRequest() dto.GenerateQuotationRequest {
+	quotationDate := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	return dto.GenerateQuotationRequest{
+		Subject:          "Penawaran AI Percetakan",
+		SolutionType:     "SaaS",
+		CommercialScheme: domain.CommercialSchemeSubscriptionSaaS,
+		SubscriptionSaaS: &domain.SubscriptionSaaSInput{
+			ProductName:       "Subscription AI Percetakan",
+			QuotationDate:     quotationDate,
+			SectionLayout:     domain.SubscriptionLayoutSubscriptionDevelopment,
+			BillingCycle:      domain.SubscriptionBillingQuarterly,
+			TaxTreatment:      domain.SubscriptionTaxNotStated,
+			InitialTermMonths: 12,
+			PricePeriods: []domain.SubscriptionPricePeriodInput{{
+				Label:            "Subscription 12 bulan",
+				StartMonthOffset: 0,
+				DurationMonths:   12,
+				MonthlyRate:      1_250_000,
+			}},
+			PaymentSchedule: []domain.SubscriptionPaymentRowInput{
+				{WorkPeriod: "1 Agustus 2026 - 31 Oktober 2026", StartMonthOffset: 0, CoveredMonths: 3, InvoiceDateLabel: "Saat kontrak ditandatangani", DueDateLabel: "H+14", Nominal: 3_750_000},
+				{WorkPeriod: "1 November 2026 - 31 Januari 2027", StartMonthOffset: 3, CoveredMonths: 3, InvoiceDateLabel: "1 Oktober 2026", DueDateLabel: "15 Oktober 2026", Nominal: 3_750_000},
+				{WorkPeriod: "1 Februari 2027 - 30 April 2027", StartMonthOffset: 6, CoveredMonths: 3, InvoiceDateLabel: "1 Januari 2027", DueDateLabel: "15 Januari 2027", Nominal: 3_750_000},
+				{WorkPeriod: "1 Mei 2027 - 31 Juli 2027", StartMonthOffset: 9, CoveredMonths: 3, InvoiceDateLabel: "1 April 2027", DueDateLabel: "15 April 2027", Nominal: 3_750_000},
+			},
+			IsPartnership: true,
+			IncomeSharing: &domain.IncomeSharingInput{
+				VenturoShareBPS:            5_000,
+				PartnerShareBPS:            5_000,
+				EligibleRevenueDescription: "Penjualan yang berasal dari referensi mitra",
+				SettlementBusinessDays:     30,
+				ProhibitUnilateralDiscount: true,
+			},
+		},
+	}
+}
+
+func TestPreviewSubscriptionSaaS_HTTP_Success(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	// Initializing with nil genSvc and nil genRepo strictly proves
+	// that neither persistence nor AI calls are triggered.
+	h := handler.NewQuotationGenerationHandler(nil, nil)
+
+	router.Use(func(c *gin.Context) {
+		c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+			UserID:    httpTestUser.String(),
+			CompanyID: companyID.String(),
+		})
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/subscription-saas", h.PreviewSubscriptionSaaS)
+
+	reqPayload := percetakanPreviewRequest()
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var responseBody struct {
+		Message string                              `json:"message"`
+		Data    dto.SubscriptionSaaSPreviewResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+	assert.Equal(t, "Subscription SaaS preview calculated successfully", responseBody.Message)
+
+	// Contract total 15.000.000
+	assert.Equal(t, int64(15_000_000), responseBody.Data.Calculation.TotalContract)
+
+	// 4 payment rows of 3.750.000
+	require.Len(t, responseBody.Data.Calculation.Payments, 4)
+	for i, row := range responseBody.Data.Calculation.Payments {
+		assert.Equal(t, int64(3_750_000), row.Nominal, "payment row %d nominal mismatch", i)
+	}
+
+	// 4 visible sections: commercial, payment, rights, legal
+	require.Len(t, responseBody.Data.VisibleSections, 4)
+	assert.Equal(t, "subscription_development", responseBody.Data.VisibleSections[0].Code)
+	assert.Equal(t, 1, responseBody.Data.VisibleSections[0].Number)
+	assert.Equal(t, "payment", responseBody.Data.VisibleSections[1].Code)
+	assert.Equal(t, 2, responseBody.Data.VisibleSections[1].Number)
+	assert.Equal(t, "rights", responseBody.Data.VisibleSections[2].Code)
+	assert.Equal(t, 3, responseBody.Data.VisibleSections[2].Number)
+	assert.Equal(t, "limitations", responseBody.Data.VisibleSections[3].Code)
+	assert.Equal(t, 4, responseBody.Data.VisibleSections[3].Number)
+
+	// Resolved profile verification
+	assert.Equal(t, domain.SubscriptionLayoutSubscriptionDevelopment, responseBody.Data.ResolvedProfile.SectionLayout)
+	assert.Equal(t, domain.SubscriptionBillingQuarterly, responseBody.Data.ResolvedProfile.BillingCycle)
+	assert.True(t, responseBody.Data.ResolvedProfile.HasRights())
+	assert.Contains(t, responseBody.Data.ResolvedProfile.IncomeSharingText, "50%")
+}
+
+func TestPreviewSubscriptionSaaS_HTTP_Guards(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := handler.NewQuotationGenerationHandler(nil, nil)
+
+	router.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Omit-Company") == "" {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+		}
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/subscription-saas", h.PreviewSubscriptionSaaS)
+
+	t.Run("missing payload (bad JSON) returns 400", func(t *testing.T) {
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, []byte("invalid-json-payload"))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid request payload")
+	})
+
+	t.Run("missing subscription_saas returns 422", func(t *testing.T) {
+		payload := dto.GenerateQuotationRequest{
+			CommercialScheme: domain.CommercialSchemeSubscriptionSaaS,
+			SubscriptionSaaS: nil,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Equal(t, service.ErrCodeAllocationInvalid, detailCode(t, w))
+		assert.Contains(t, w.Body.String(), "Subscription SaaS input is required")
+	})
+
+	t.Run("wrong commercial scheme returns 422", func(t *testing.T) {
+		payload := percetakanPreviewRequest()
+		payload.CommercialScheme = "dedicated_squad"
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Equal(t, service.ErrCodeAllocationInvalid, detailCode(t, w))
+		assert.Contains(t, w.Body.String(), "Subscription SaaS input is required")
+	})
+
+	t.Run("invalid payment sum returns 422", func(t *testing.T) {
+		payload := percetakanPreviewRequest()
+		for i := range payload.SubscriptionSaaS.PaymentSchedule {
+			payload.SubscriptionSaaS.PaymentSchedule[i].Nominal = 1_000_000
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Equal(t, service.ErrCodeAllocationInvalid, detailCode(t, w))
+		assert.Contains(t, w.Body.String(), "Subscription SaaS input is invalid")
+	})
+
+	t.Run("invalid partnership returns 422", func(t *testing.T) {
+		payload := percetakanPreviewRequest()
+		payload.SubscriptionSaaS.IncomeSharing.PartnerShareBPS = 4_000
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Equal(t, service.ErrCodeAllocationInvalid, detailCode(t, w))
+		assert.Contains(t, w.Body.String(), "Subscription SaaS input is invalid")
+	})
+
+	t.Run("missing company context returns 403", func(t *testing.T) {
+		payload := percetakanPreviewRequest()
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Omit-Company", "true")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Company context is required")
+	})
+
+	t.Run("verifies no AI provider calls are made", func(t *testing.T) {
+		provider := &adaptiveAIProvider{}
+		hWithMock := handler.NewQuotationGenerationHandler(nil, nil)
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+			c.Next()
+		})
+		r.POST("/quotation/v1/quotations/preview/subscription-saas", hWithMock.PreviewSubscriptionSaaS)
+
+		payload := percetakanPreviewRequest()
+		body, _ := json.Marshal(payload)
+		w := doJSON(r, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 0, provider.calls())
+	})
 }

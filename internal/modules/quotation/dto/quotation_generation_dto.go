@@ -76,6 +76,12 @@ type DedicatedSquadPreviewResponse struct {
 	IncludePentest  bool                             `json:"include_pentest"`
 }
 
+type SubscriptionSaaSPreviewResponse struct {
+	Calculation     domain.SubscriptionSaaSCalculation     `json:"calculation"`
+	ResolvedProfile domain.ResolvedSubscriptionSaaSProfile `json:"resolved_profile"`
+	VisibleSections []domain.DocumentSection               `json:"visible_sections"`
+}
+
 type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`

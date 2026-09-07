@@ -92,6 +92,37 @@ func (h *QuotationGenerationHandler) Preview(c *gin.Context) {
 	})
 }
 
+// PreviewSubscriptionSaaS computes server-authoritative Subscription SaaS figures without AI or persistence.
+func (h *QuotationGenerationHandler) PreviewSubscriptionSaaS(c *gin.Context) {
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeSubscriptionSaaS || req.SubscriptionSaaS == nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Subscription SaaS input is required", service.ErrCodeAllocationInvalid)
+		return
+	}
+	calculation, err := service.CalculateSubscriptionSaaS(*req.SubscriptionSaaS)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Subscription SaaS input is invalid", service.ErrCodeAllocationInvalid)
+		return
+	}
+	profile, err := service.ResolveSubscriptionSaaSProfile(*req.SubscriptionSaaS)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Subscription SaaS profile is invalid", service.ErrCodeAllocationInvalid)
+		return
+	}
+	response.Success(c, http.StatusOK, "Subscription SaaS preview calculated successfully", dto.SubscriptionSaaSPreviewResponse{
+		Calculation:     calculation,
+		ResolvedProfile: profile,
+		VisibleSections: service.BuildSubscriptionSectionPlan(profile),
+	})
+}
+
 // Generate starts the AI-first pipeline and returns 201 with the committed
 // quotation ID. The draft is durable before any provider interaction, so a
 // later failure remains retryable and idempotent replay (same
