@@ -1,0 +1,153 @@
+{
+  "schema_version": "subscription-saas-benchmark-v1",
+  "metadata": {
+    "source_sheet": "officia-subs / mixio-subs",
+    "source_gid": "1298874890",
+    "verified_on": "2026-09-07",
+    "source_status": "structure_only_synthetic_amounts",
+    "source_variance": [
+      "Structure is based on the multi-year development & maintenance model from officia-subs/mixio-subs.",
+      "Amounts are synthetic to demonstrate the multi-year development & maintenance layout with yearly billing without claiming provenance from confidential client spreadsheets."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-ANNUAL-01",
+    "subject": "Penawaran Layanan Development & Maintenance Tahunan",
+    "client_name": "Pimpinan Perusahaan Mitra",
+    "client_company": "PT Solusi Korporat Nusantara",
+    "issue_date": "7 September 2026"
+  },
+  "legal_html": "<ol><li>Ketentuan layanan subscription dan batasan garansi mengikuti SLA resmi Venturo.</li><li>Kerahasiaan data pengguna terjamin sesuai kebijakan privasi.</li></ol>",
+  "input": {
+    "product_name": "Officia Enterprise SaaS",
+    "quotation_date": "2026-09-07",
+    "section_layout": "development_maintenance",
+    "billing_cycle": "yearly",
+    "tax_treatment": "exclusive_ppn",
+    "initial_term_months": 24,
+    "auto_renewal": false,
+    "price_periods": [
+      {
+        "label": "Tahun 1: Development & Deployment",
+        "start_month_offset": 0,
+        "duration_months": 12,
+        "monthly_rate": 5000000
+      },
+      {
+        "label": "Tahun 2: Maintenance & Support",
+        "start_month_offset": 12,
+        "duration_months": 12,
+        "monthly_rate": 2000000
+      }
+    ],
+    "one_time_items": [
+      {
+        "name": "Setup & Cloud Infrastructure",
+        "amount": 10000000
+      }
+    ],
+    "payment_schedule": [
+      {
+        "work_period": "Tahun 1",
+        "start_month_offset": 0,
+        "covered_months": 12,
+        "invoice_date_label": "Saat kontrak ditandatangani",
+        "due_date_label": "H+14",
+        "nominal": 70000000
+      },
+      {
+        "work_period": "Tahun 2",
+        "start_month_offset": 12,
+        "covered_months": 12,
+        "invoice_date_label": "Awal Tahun ke-2",
+        "due_date_label": "H+14",
+        "nominal": 24000000
+      }
+    ],
+    "feature_groups": [
+      {
+        "name": "Fitur Aplikasi Utama",
+        "features": [
+          "Manajemen Pengguna dan Hak Akses",
+          "Modul Operasional dan Transaksi",
+          "Laporan dan Dashboard Analitik"
+        ]
+      }
+    ],
+    "rights_clause_code": "",
+    "is_partnership": false
+  },
+  "expected": {
+    "calculation": {
+      "price_periods": [
+        {
+          "label": "Tahun 1: Development & Deployment",
+          "start_month_offset": 0,
+          "duration_months": 12,
+          "monthly_rate": 5000000,
+          "subtotal": 60000000
+        },
+        {
+          "label": "Tahun 2: Maintenance & Support",
+          "start_month_offset": 12,
+          "duration_months": 12,
+          "monthly_rate": 2000000,
+          "subtotal": 24000000
+        }
+      ],
+      "one_time_items": [
+        {
+          "name": "Setup & Cloud Infrastructure",
+          "amount": 10000000
+        }
+      ],
+      "recurring_total": 84000000,
+      "one_time_total": 10000000,
+      "total_contract": 94000000,
+      "payments": [
+        { "work_period": "Tahun 1", "start_month_offset": 0, "covered_months": 12, "invoice_date_label": "Saat kontrak ditandatangani", "due_date_label": "H+14", "nominal": 70000000 },
+        { "work_period": "Tahun 2", "start_month_offset": 12, "covered_months": 12, "invoice_date_label": "Awal Tahun ke-2", "due_date_label": "H+14", "nominal": 24000000 }
+      ]
+    },
+    "profile": {
+      "section_layout": "development_maintenance",
+      "billing_cycle": "yearly",
+      "tax_treatment": "exclusive_ppn",
+      "tax_clause_text": "Harga belum termasuk PPN.",
+      "rights_clause_code": "",
+      "rights_clause_text": "",
+      "income_sharing_text": "",
+      "auto_renewal_text": "",
+      "legal_catalog_version": "subscription_saas_legal_v1",
+      "has_features": true
+    },
+    "section_titles": [
+      "Biaya Development & Maintenance",
+      "List Features",
+      "Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS",
+      "block_types": ["metadata", "opening", "commercial", "features", "payment", "legal", "signature"],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": [
+        "1. Biaya Development & Maintenance",
+        "2. List Features",
+        "3. Pembayaran",
+        "4. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": ["Fase / Tahun", "Rate (Monthly)", "Period (Month)", "Total"],
+      "payment_headers": ["Work Period", "Invoice Date", "Due Date", "Nominal"],
+      "total_contract": "Rp 94.000.000",
+      "recurring_total": "Rp 84.000.000",
+      "payment_nominals": [
+        "Rp 70.000.000",
+        "Rp 24.000.000"
+      ],
+      "feature_count": 3,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "schema_version": "subscription-saas-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Subscription AI (Percetakan)",
+    "source_gid": "76930723",
+    "verified_on": "2026-09-07",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Quarterly payments use exactly 4 rows totaling Rp15.000.000 from the blueprint."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-PERCETAKAN-01",
+    "subject": "Penawaran Layanan Subscription AI Percetakan dan Kemitraan",
+    "client_name": "Pimpinan Mitra Percetakan",
+    "client_company": "PT Percetakan Mandiri Sejahtera",
+    "issue_date": "7 September 2026"
+  },
+  "legal_html": "<ol><li>Ketentuan layanan subscription dan batasan garansi mengikuti SLA resmi Venturo.</li><li>Kerahasiaan data pengguna terjamin sesuai kebijakan privasi.</li></ol>",
+  "input": {
+    "product_name": "Subscription AI (Percetakan)",
+    "quotation_date": "2026-09-07",
+    "section_layout": "subscription_development",
+    "billing_cycle": "quarterly",
+    "tax_treatment": "not_stated",
+    "initial_term_months": 12,
+    "auto_renewal": false,
+    "price_periods": [
+      {
+        "label": "Subscription AI Percetakan",
+        "start_month_offset": 0,
+        "duration_months": 12,
+        "monthly_rate": 1250000
+      }
+    ],
+    "one_time_items": [],
+    "payment_schedule": [
+      {
+        "work_period": "1 Agustus 2026 - 31 Oktober 2026",
+        "start_month_offset": 0,
+        "covered_months": 3,
+        "invoice_date_label": "Saat kontrak ditandatangani",
+        "due_date_label": "H+14",
+        "nominal": 3750000
+      },
+      {
+        "work_period": "1 November 2026 - 31 Januari 2027",
+        "start_month_offset": 3,
+        "covered_months": 3,
+        "invoice_date_label": "1 Oktober 2026",
+        "due_date_label": "15 Oktober 2026",
+        "nominal": 3750000
+      },
+      {
+        "work_period": "1 Februari 2027 - 30 April 2027",
+        "start_month_offset": 6,
+        "covered_months": 3,
+        "invoice_date_label": "1 Januari 2027",
+        "due_date_label": "15 Januari 2027",
+        "nominal": 3750000
+      },
+      {
+        "work_period": "1 Mei 2027 - 31 Juli 2027",
+        "start_month_offset": 9,
+        "covered_months": 3,
+        "invoice_date_label": "1 April 2027",
+        "due_date_label": "15 April 2027",
+        "nominal": 3750000
+      }
+    ],
+    "feature_groups": [],
+    "rights_clause_code": "",
+    "is_partnership": true,
+    "income_sharing": {
+      "venturo_share_bps": 5000,
+      "partner_share_bps": 5000,
+      "eligible_revenue_description": "penjualan dari referensi klien",
+      "settlement_business_days": 30,
+      "prohibit_unilateral_discount": true
+    }
+  },
+  "expected": {
+    "calculation": {
+      "price_periods": [
+        {
+          "label": "Subscription AI Percetakan",
+          "start_month_offset": 0,
+          "duration_months": 12,
+          "monthly_rate": 1250000,
+          "subtotal": 15000000
+        }
+      ],
+      "recurring_total": 15000000,
+      "one_time_total": 0,
+      "total_contract": 15000000,
+      "payments": [
+        { "work_period": "1 Agustus 2026 - 31 Oktober 2026", "start_month_offset": 0, "covered_months": 3, "invoice_date_label": "Saat kontrak ditandatangani", "due_date_label": "H+14", "nominal": 3750000 },
+        { "work_period": "1 November 2026 - 31 Januari 2027", "start_month_offset": 3, "covered_months": 3, "invoice_date_label": "1 Oktober 2026", "due_date_label": "15 Oktober 2026", "nominal": 3750000 },
+        { "work_period": "1 Februari 2027 - 30 April 2027", "start_month_offset": 6, "covered_months": 3, "invoice_date_label": "1 Januari 2027", "due_date_label": "15 Januari 2027", "nominal": 3750000 },
+        { "work_period": "1 Mei 2027 - 31 Juli 2027", "start_month_offset": 9, "covered_months": 3, "invoice_date_label": "1 April 2027", "due_date_label": "15 April 2027", "nominal": 3750000 }
+      ]
+    },
+    "profile": {
+      "section_layout": "subscription_development",
+      "billing_cycle": "quarterly",
+      "tax_treatment": "not_stated",
+      "tax_clause_text": "",
+      "rights_clause_code": "",
+      "rights_clause_text": "",
+      "income_sharing_text": "Pendapatan dari penjualan dari referensi klien dibagi sebesar 50% untuk Venturo dan 50% untuk Mitra. Pembayaran diselesaikan paling lambat 30 hari kerja. Diskon tidak dapat diberikan secara sepihak.",
+      "auto_renewal_text": "",
+      "legal_catalog_version": "subscription_saas_legal_v1",
+      "has_features": false
+    },
+    "section_titles": [
+      "Biaya Subscription dan Development Aplikasi",
+      "Pembayaran",
+      "Hak Para Pihak",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS",
+      "block_types": ["metadata", "opening", "commercial", "payment", "rights", "legal", "signature"],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": [
+        "1. Biaya Subscription dan Development Aplikasi",
+        "2. Pembayaran",
+        "3. Hak Para Pihak",
+        "4. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": ["Nama Paket / Komponen", "Rate (Monthly)", "Period (Month)", "Total"],
+      "payment_headers": ["Work Period", "Invoice Date", "Due Date", "Nominal"],
+      "total_contract": "Rp 15.000.000",
+      "recurring_total": "Rp 15.000.000",
+      "payment_nominals": [
+        "Rp 3.750.000",
+        "Rp 3.750.000",
+        "Rp 3.750.000",
+        "Rp 3.750.000"
+      ],
+      "feature_count": 0,
+      "has_rights": true,
+      "signature_column_count": 2
+    }
+  }
+}

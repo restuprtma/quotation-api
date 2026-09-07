@@ -1,0 +1,219 @@
+{
+  "schema_version": "subscription-saas-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Hubung - Subscription",
+    "source_gid": "77192877",
+    "verified_on": "2026-09-07",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Monthly payments use standard billing cycle labels and contiguous monthly coverage."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-HUBUNG-01",
+    "subject": "Penawaran Layanan Subscription Software Hubung",
+    "client_name": "Pimpinan Hubung",
+    "client_company": "PT Hubung Teknologi Nusantara",
+    "issue_date": "7 September 2026"
+  },
+  "legal_html": "<ol><li>Ketentuan layanan subscription dan batasan garansi mengikuti SLA resmi Venturo.</li><li>Kerahasiaan data pengguna terjamin sesuai kebijakan privasi.</li></ol>",
+  "input": {
+    "product_name": "Hubung",
+    "quotation_date": "2026-09-07",
+    "section_layout": "subscription_development",
+    "billing_cycle": "monthly",
+    "tax_treatment": "not_stated",
+    "initial_term_months": 12,
+    "auto_renewal": true,
+    "price_periods": [
+      {
+        "label": "Biaya Subscription Hubung",
+        "start_month_offset": 0,
+        "duration_months": 12,
+        "monthly_rate": 1000000
+      }
+    ],
+    "one_time_items": [],
+    "payment_schedule": [
+      {
+        "work_period": "Bulan 1",
+        "start_month_offset": 0,
+        "covered_months": 1,
+        "invoice_date_label": "Saat kontrak ditandatangani",
+        "due_date_label": "H+14",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 2",
+        "start_month_offset": 1,
+        "covered_months": 1,
+        "invoice_date_label": "1 Oktober 2026",
+        "due_date_label": "15 Oktober 2026",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 3",
+        "start_month_offset": 2,
+        "covered_months": 1,
+        "invoice_date_label": "1 November 2026",
+        "due_date_label": "15 November 2026",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 4",
+        "start_month_offset": 3,
+        "covered_months": 1,
+        "invoice_date_label": "1 Desember 2026",
+        "due_date_label": "15 Desember 2026",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 5",
+        "start_month_offset": 4,
+        "covered_months": 1,
+        "invoice_date_label": "1 Januari 2027",
+        "due_date_label": "15 Januari 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 6",
+        "start_month_offset": 5,
+        "covered_months": 1,
+        "invoice_date_label": "1 Februari 2027",
+        "due_date_label": "15 Februari 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 7",
+        "start_month_offset": 6,
+        "covered_months": 1,
+        "invoice_date_label": "1 Maret 2027",
+        "due_date_label": "15 Maret 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 8",
+        "start_month_offset": 7,
+        "covered_months": 1,
+        "invoice_date_label": "1 April 2027",
+        "due_date_label": "15 April 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 9",
+        "start_month_offset": 8,
+        "covered_months": 1,
+        "invoice_date_label": "1 Mei 2027",
+        "due_date_label": "15 Mei 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 10",
+        "start_month_offset": 9,
+        "covered_months": 1,
+        "invoice_date_label": "1 Juni 2027",
+        "due_date_label": "15 Juni 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 11",
+        "start_month_offset": 10,
+        "covered_months": 1,
+        "invoice_date_label": "1 Juli 2027",
+        "due_date_label": "15 Juli 2027",
+        "nominal": 1000000
+      },
+      {
+        "work_period": "Bulan 12",
+        "start_month_offset": 11,
+        "covered_months": 1,
+        "invoice_date_label": "1 Agustus 2027",
+        "due_date_label": "15 Agustus 2027",
+        "nominal": 1000000
+      }
+    ],
+    "feature_groups": [],
+    "rights_clause_code": "venturo_software_ownership_v1",
+    "is_partnership": false
+  },
+  "expected": {
+    "calculation": {
+      "price_periods": [
+        {
+          "label": "Biaya Subscription Hubung",
+          "start_month_offset": 0,
+          "duration_months": 12,
+          "monthly_rate": 1000000,
+          "subtotal": 12000000
+        }
+      ],
+      "recurring_total": 12000000,
+      "one_time_total": 0,
+      "total_contract": 12000000,
+      "payments": [
+        { "work_period": "Bulan 1", "start_month_offset": 0, "covered_months": 1, "invoice_date_label": "Saat kontrak ditandatangani", "due_date_label": "H+14", "nominal": 1000000 },
+        { "work_period": "Bulan 2", "start_month_offset": 1, "covered_months": 1, "invoice_date_label": "1 Oktober 2026", "due_date_label": "15 Oktober 2026", "nominal": 1000000 },
+        { "work_period": "Bulan 3", "start_month_offset": 2, "covered_months": 1, "invoice_date_label": "1 November 2026", "due_date_label": "15 November 2026", "nominal": 1000000 },
+        { "work_period": "Bulan 4", "start_month_offset": 3, "covered_months": 1, "invoice_date_label": "1 Desember 2026", "due_date_label": "15 Desember 2026", "nominal": 1000000 },
+        { "work_period": "Bulan 5", "start_month_offset": 4, "covered_months": 1, "invoice_date_label": "1 Januari 2027", "due_date_label": "15 Januari 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 6", "start_month_offset": 5, "covered_months": 1, "invoice_date_label": "1 Februari 2027", "due_date_label": "15 Februari 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 7", "start_month_offset": 6, "covered_months": 1, "invoice_date_label": "1 Maret 2027", "due_date_label": "15 Maret 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 8", "start_month_offset": 7, "covered_months": 1, "invoice_date_label": "1 April 2027", "due_date_label": "15 April 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 9", "start_month_offset": 8, "covered_months": 1, "invoice_date_label": "1 Mei 2027", "due_date_label": "15 Mei 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 10", "start_month_offset": 9, "covered_months": 1, "invoice_date_label": "1 Juni 2027", "due_date_label": "15 Juni 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 11", "start_month_offset": 10, "covered_months": 1, "invoice_date_label": "1 Juli 2027", "due_date_label": "15 Juli 2027", "nominal": 1000000 },
+        { "work_period": "Bulan 12", "start_month_offset": 11, "covered_months": 1, "invoice_date_label": "1 Agustus 2027", "due_date_label": "15 Agustus 2027", "nominal": 1000000 }
+      ]
+    },
+    "profile": {
+      "section_layout": "subscription_development",
+      "billing_cycle": "monthly",
+      "tax_treatment": "not_stated",
+      "tax_clause_text": "",
+      "rights_clause_code": "venturo_software_ownership_v1",
+      "rights_clause_text": "Aplikasi dan source code merupakan milik Venturo.",
+      "auto_renewal_text": "Masa berlangganan awal adalah 12 bulan dan diperpanjang otomatis untuk periode yang sama kecuali disepakati lain secara tertulis.",
+      "legal_catalog_version": "subscription_saas_legal_v1",
+      "has_features": false
+    },
+    "section_titles": [
+      "Biaya Subscription dan Development Aplikasi",
+      "Pembayaran",
+      "Hak Para Pihak",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS",
+      "block_types": ["metadata", "opening", "commercial", "payment", "rights", "legal", "signature"],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": [
+        "1. Biaya Subscription dan Development Aplikasi",
+        "2. Pembayaran",
+        "3. Hak Para Pihak",
+        "4. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": ["Nama Paket / Komponen", "Rate (Monthly)", "Period (Month)", "Total"],
+      "payment_headers": ["Work Period", "Invoice Date", "Due Date", "Nominal"],
+      "total_contract": "Rp 12.000.000",
+      "recurring_total": "Rp 12.000.000",
+      "payment_nominals": [
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000",
+        "Rp 1.000.000"
+      ],
+      "feature_count": 0,
+      "has_rights": true,
+      "signature_column_count": 2
+    }
+  }
+}
