@@ -204,6 +204,72 @@ func TestSanitize_PreservesCriticalMarkers(t *testing.T) {
 	assert.Contains(t, out, `class="qtr-block qtr-legal"`)
 }
 
+func TestSanitize_PreservesSubscriptionSaaSMarkers(t *testing.T) {
+	s := newSanitizerUnderTest()
+
+	input := `<article class="quotation-document">` +
+		`<header data-block-type="metadata"><h1>PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS</h1><p><span data-field="quotation_number">Q-01</span></p></header>` +
+		`<section data-block-type="opening"><p>Melalui penawaran ini...</p></section>` +
+		`<section data-block-type="commercial" data-section-number="1"><h2>1. Biaya</h2>` +
+		`<table><tbody>` +
+		`<tr data-role="subscription_period_0"><td>Paket 1</td><td>Rp 1.000.000</td><td>12 Bulan</td><td data-field="subscription_line_total">Rp 12.000.000</td></tr>` +
+		`<tr data-role="subscription_one_time_0"><td>Setup</td><td>-</td><td>-</td><td data-field="subscription_line_total">Rp 5.000.000</td></tr>` +
+		`<tr><td colspan="3">TOTAL</td><td data-field="total_contract">Rp 17.000.000</td></tr>` +
+		`</tbody></table></section>` +
+		`<section data-block-type="features" data-section-number="2"><h2>2. List Features</h2><h3>Group A</h3><ul><li>Fitur 1</li></ul></section>` +
+		`<section data-block-type="payment" data-section-number="3"><h2>3. Pembayaran</h2>` +
+		`<table><tbody><tr><td>Q1</td><td>1 Jan</td><td>15 Jan</td><td data-field="payment_nominal">Rp 17.000.000</td></tr></tbody></table>` +
+		`<p data-field="auto_renewal">Perpanjangan otomatis</p>` +
+		`<p data-field="tax_clause">Harga belum termasuk PPN.</p>` +
+		`</section>` +
+		`<section data-block-type="rights" data-section-number="4"><h2>4. Hak Para Pihak</h2>` +
+		`<p data-field="rights_clause">Milik Venturo</p>` +
+		`<p data-field="income_sharing">Bagi hasil 50%</p>` +
+		`</section>` +
+		`<section data-block-type="legal" data-section-number="5"><h2>5. Batasan</h2><ol><li>Ketentuan</li></ol></section>` +
+		`<section data-block-type="signature"><table class="signature-table"><tbody><tr><td>Hormat Kami</td></tr></tbody></table></section>` +
+		`</article>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, `class="quotation-document"`)
+	assert.Contains(t, out, `data-block-type="metadata"`)
+	assert.Contains(t, out, `data-field="quotation_number"`)
+	assert.Contains(t, out, `data-block-type="opening"`)
+	assert.Contains(t, out, `data-block-type="commercial"`)
+	assert.Contains(t, out, `data-section-number="1"`)
+	assert.Contains(t, out, `data-role="subscription_period_0"`)
+	assert.Contains(t, out, `data-role="subscription_one_time_0"`)
+	assert.Contains(t, out, `data-field="subscription_line_total"`)
+	assert.Contains(t, out, `data-field="total_contract"`)
+	assert.Contains(t, out, `data-block-type="features"`)
+	assert.Contains(t, out, `data-section-number="2"`)
+	assert.Contains(t, out, `data-block-type="payment"`)
+	assert.Contains(t, out, `data-section-number="3"`)
+	assert.Contains(t, out, `data-field="payment_nominal"`)
+	assert.Contains(t, out, `data-field="auto_renewal"`)
+	assert.Contains(t, out, `data-field="tax_clause"`)
+	assert.Contains(t, out, `data-block-type="rights"`)
+	assert.Contains(t, out, `data-section-number="4"`)
+	assert.Contains(t, out, `data-field="rights_clause"`)
+	assert.Contains(t, out, `data-field="income_sharing"`)
+	assert.Contains(t, out, `data-block-type="legal"`)
+	assert.Contains(t, out, `data-section-number="5"`)
+	assert.Contains(t, out, `data-block-type="signature"`)
+	assert.Contains(t, out, `class="signature-table"`)
+}
+
+func TestSanitize_StripsScriptInSubscriptionSaaSDocument(t *testing.T) {
+	s := newSanitizerUnderTest()
+	input := `<section data-block-type="commercial"><tr data-role="subscription_period_0"><td data-field="subscription_line_total">Rp 10.000.000<script>alert(1)</script></td></tr></section>`
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "<script")
+	assert.NotContains(t, out, "alert")
+	assert.Contains(t, out, `data-field="subscription_line_total"`)
+}
+
 func TestSanitize_EmptyInput(t *testing.T) {
 	s := newSanitizerUnderTest()
 
