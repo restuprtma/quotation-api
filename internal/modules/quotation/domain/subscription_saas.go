@@ -21,6 +21,7 @@ const (
 
 const (
 	RightsClauseVenturoSoftwareOwnershipV1 = "venturo_software_ownership_v1"
+	SubscriptionLegalCatalogVersion        = "subscription_saas_legal_v1"
 )
 
 type SubscriptionSectionLayout string
@@ -352,6 +353,11 @@ type ResolvedSubscriptionSaaSProfile struct {
 	IncomeSharingText   string                    `json:"income_sharing_text,omitempty"`
 	AutoRenewalText     string                    `json:"auto_renewal_text,omitempty"`
 	LegalCatalogVersion string                    `json:"legal_catalog_version"`
+	HasFeatures         bool                      `json:"has_features,omitempty"`
+}
+
+func (p ResolvedSubscriptionSaaSProfile) HasRights() bool {
+	return p.RightsClauseCode != "" || p.RightsClauseText != "" || p.IncomeSharingText != ""
 }
 
 type SubscriptionPricePeriodCalculation struct {
