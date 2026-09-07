@@ -407,3 +407,54 @@ func TestValidateSubscriptionSaaSIntegrity_OneTimeItemModified(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, commMod)
 }
+
+func TestValidateSubscriptionSaaSIntegrity_DuplicateUnconfiguredMarkersDetected(t *testing.T) {
+	doc, exp := annualDocumentFixture(t)
+	require.False(t, exp.Profile.HasRights())
+	require.Empty(t, exp.Profile.RightsClauseText)
+
+	// Inject duplicate unconfigured markers
+	duplicateMarkers := `<p data-field="rights_clause">Injected 1</p><p data-field="rights_clause">Injected 2</p>`
+	tampered := strings.Replace(doc, "</article>", duplicateMarkers+"</article>", 1)
+
+	legalMod, err := CheckSubscriptionSaaSLegalModified(tampered, exp)
+	require.NoError(t, err)
+	assert.True(t, legalMod, "duplicate unconfigured markers must be detected as legal modified")
+
+	err = ValidateSubscriptionSaaSIntegrity(tampered, exp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsafeHTML)
+}
+
+func TestValidateSubscriptionSaaSIntegrity_UnexpectedRightsBlockDetected(t *testing.T) {
+	doc, exp := annualDocumentFixture(t)
+	require.False(t, exp.Profile.HasRights())
+
+	// Inject an entire rights block when not configured
+	injectedBlock := `<section data-block-type="rights"><h2>Hak Para Pihak</h2><p>Injected rights</p></section>`
+	tampered := strings.Replace(doc, `<section data-block-type="payment"`, injectedBlock+`<section data-block-type="payment"`, 1)
+
+	legalMod, err := CheckSubscriptionSaaSLegalModified(tampered, exp)
+	require.NoError(t, err)
+	assert.True(t, legalMod, "unexpected rights block must be detected as legal modified")
+
+	err = ValidateSubscriptionSaaSIntegrity(tampered, exp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsafeHTML)
+	assert.Contains(t, err.Error(), "rights block is unexpected")
+}
+
+func TestValidateSubscriptionSaaSIntegrity_MonthlyRateExactMatch(t *testing.T) {
+	doc, exp := percetakanDocumentFixture(t)
+
+	// Tamper Rp 1.250.000 to Rp 11.250.000 (which contains 1.250.000 as substring)
+	tampered := strings.Replace(doc, "Rp 1.250.000", "Rp 11.250.000", 1)
+
+	commMod, err := CheckSubscriptionSaaSCommercialModified(tampered, exp)
+	require.NoError(t, err)
+	assert.True(t, commMod, "monthly rate substring match must not bypass detection")
+
+	err = ValidateSubscriptionSaaSIntegrity(tampered, exp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsafeHTML)
+}

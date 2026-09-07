@@ -43,6 +43,14 @@ func ValidateSubscriptionSaaSIntegrity(document string, expected SubscriptionSaa
 		if block == nil {
 			return fmt.Errorf("%w: rights block is missing", ErrUnsafeHTML)
 		}
+	} else {
+		block, err := findExactlyOne(nodes, "data-block-type", "rights")
+		if err != nil {
+			return err
+		}
+		if block != nil {
+			return fmt.Errorf("%w: rights block is unexpected", ErrUnsafeHTML)
+		}
 	}
 
 	if expected.Profile.HasFeatures {
@@ -110,7 +118,7 @@ func CheckSubscriptionSaaSCommercialModified(document string, expected Subscript
 		if len(cells) != 4 {
 			return true, nil
 		}
-		if !strings.Contains(nodeText(cells[1]), formatNumber(period.MonthlyRate)) {
+		if nodeText(cells[1]) != "Rp "+formatNumber(period.MonthlyRate) {
 			return true, nil
 		}
 		if !isMatchingMonthDuration(nodeText(cells[2]), period.DurationMonths) {
@@ -240,6 +248,18 @@ func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSa
 		}
 	}
 
+	if expected.Profile.HasRights() {
+		block, err := findExactlyOne(nodes, "data-block-type", "rights")
+		if err != nil || block == nil {
+			return true, nil
+		}
+	} else {
+		block, err := findExactlyOne(nodes, "data-block-type", "rights")
+		if err != nil || block != nil {
+			return true, nil
+		}
+	}
+
 	if expected.Profile.RightsClauseText != "" {
 		cell, err := findExactlyOne(nodes, "data-field", "rights_clause")
 		if err != nil || cell == nil {
@@ -249,8 +269,8 @@ func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSa
 			return true, nil
 		}
 	} else {
-		cell, _ := findExactlyOne(nodes, "data-field", "rights_clause")
-		if cell != nil {
+		cell, err := findExactlyOne(nodes, "data-field", "rights_clause")
+		if err != nil || cell != nil {
 			return true, nil
 		}
 	}
@@ -264,8 +284,8 @@ func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSa
 			return true, nil
 		}
 	} else {
-		cell, _ := findExactlyOne(nodes, "data-field", "income_sharing")
-		if cell != nil {
+		cell, err := findExactlyOne(nodes, "data-field", "income_sharing")
+		if err != nil || cell != nil {
 			return true, nil
 		}
 	}
@@ -279,8 +299,8 @@ func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSa
 			return true, nil
 		}
 	} else {
-		cell, _ := findExactlyOne(nodes, "data-field", "auto_renewal")
-		if cell != nil {
+		cell, err := findExactlyOne(nodes, "data-field", "auto_renewal")
+		if err != nil || cell != nil {
 			return true, nil
 		}
 	}
@@ -294,8 +314,8 @@ func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSa
 			return true, nil
 		}
 	} else {
-		cell, _ := findExactlyOne(nodes, "data-field", "tax_clause")
-		if cell != nil {
+		cell, err := findExactlyOne(nodes, "data-field", "tax_clause")
+		if err != nil || cell != nil {
 			return true, nil
 		}
 	}
