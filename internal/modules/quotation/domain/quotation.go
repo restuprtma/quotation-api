@@ -7,6 +7,11 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	CommercialSchemeDedicatedSquad   = "dedicated_squad"
+	CommercialSchemeSubscriptionSaaS = "subscription_saas"
+)
+
 // Quotation merepresentasikan data master quotation.
 type Quotation struct {
 	ID                        uuid.UUID  `json:"id" db:"id"`

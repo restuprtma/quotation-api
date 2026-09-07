@@ -46,8 +46,9 @@ type PaymentTermsInput struct {
 }
 
 type GenerateQuotationRequest struct {
-	DedicatedSquad            *domain.DedicatedSquadInput `json:"dedicated_squad,omitempty"`
-	IdempotencyKey            *string                     `json:"idempotency_key,omitempty"`
+	DedicatedSquad            *domain.DedicatedSquadInput   `json:"dedicated_squad,omitempty"`
+	SubscriptionSaaS          *domain.SubscriptionSaaSInput `json:"subscription_saas,omitempty"`
+	IdempotencyKey            *string                       `json:"idempotency_key,omitempty"`
 	SkillID                   uuid.UUID                   `json:"skill_id"`
 	ClientID                  *uuid.UUID                  `json:"client_id,omitempty"`
 	ClientName                string                      `json:"client_name,omitempty"`
