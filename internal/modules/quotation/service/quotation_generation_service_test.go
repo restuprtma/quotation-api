@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
 	"venturo-skeleton-go/internal/modules/quotation/service"
@@ -942,3 +943,256 @@ func TestGenerate_ProviderGenericFailure_MappedToGenerationFailed(t *testing.T) 
 	assert.NotEqual(t, uuid.Nil, qid)
 	assertPendingRevision(t, pool, fx.companyID, fx.key)
 }
+
+func validSubscriptionSaaSInput() domain.SubscriptionSaaSInput {
+	return domain.SubscriptionSaaSInput{
+		ProductName:       "Subscription AI Percetakan",
+		QuotationDate:     time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		SectionLayout:     domain.SubscriptionLayoutSubscriptionDevelopment,
+		BillingCycle:      domain.SubscriptionBillingQuarterly,
+		TaxTreatment:      domain.SubscriptionTaxNotStated,
+		InitialTermMonths: 12,
+		PricePeriods: []domain.SubscriptionPricePeriodInput{
+			{Label: "Subscription 12 bulan", StartMonthOffset: 0, DurationMonths: 12, MonthlyRate: 1_250_000},
+		},
+		PaymentSchedule: []domain.SubscriptionPaymentRowInput{
+			{WorkPeriod: "Agustus-Oktober 2026", StartMonthOffset: 0, CoveredMonths: 3, InvoiceDateLabel: "Saat kontrak ditandatangani", DueDateLabel: "H+14", Nominal: 3_750_000},
+			{WorkPeriod: "November 2026-Januari 2027", StartMonthOffset: 3, CoveredMonths: 3, InvoiceDateLabel: "1 Oktober 2026", DueDateLabel: "15 Oktober 2026", Nominal: 3_750_000},
+			{WorkPeriod: "Februari-April 2027", StartMonthOffset: 6, CoveredMonths: 3, InvoiceDateLabel: "1 Januari 2027", DueDateLabel: "15 Januari 2027", Nominal: 3_750_000},
+			{WorkPeriod: "Mei-Juli 2027", StartMonthOffset: 9, CoveredMonths: 3, InvoiceDateLabel: "1 April 2027", DueDateLabel: "15 April 2027", Nominal: 3_750_000},
+		},
+		FeatureGroups: []domain.SubscriptionFeatureGroupInput{
+			{
+				Name:     "Modul Utama",
+				Features: []string{"Fitur Order", "Pencatatan order percetakan"},
+			},
+		},
+		IsPartnership: true,
+		IncomeSharing: &domain.IncomeSharingInput{
+			VenturoShareBPS:            5_000,
+			PartnerShareBPS:            5_000,
+			EligibleRevenueDescription: "Penjualan dari referensi mitra",
+			SettlementBusinessDays:     30,
+			ProhibitUnilateralDiscount: true,
+		},
+	}
+}
+
+func saasRequest(fx pipelineFixture, input domain.SubscriptionSaaSInput) dto.GenerateQuotationRequest {
+	return dto.GenerateQuotationRequest{
+		IdempotencyKey:   uuidPtrString(fx.key.String()),
+		SkillID:          fx.skillID,
+		ClientID:         &fx.clientID,
+		Subject:          "Penawaran SaaS Percetakan",
+		SolutionType:     "subscription_saas",
+		CommercialScheme: domain.CommercialSchemeSubscriptionSaaS,
+		SubscriptionSaaS: &input,
+	}
+}
+
+func TestGenerateSubscriptionSaaS_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	createdByID := uuid.New()
+	req := saasRequest(fx, validSubscriptionSaaSInput())
+	qid, err := svc.Generate(context.Background(), fx.companyID, &createdByID, req)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, qid)
+
+	assert.Equal(t, 0, mock.callCount(), "provider call count must be 0 for SaaS")
+
+	var scheme, status string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT commercial_scheme, status FROM quotations WHERE id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&scheme, &status))
+	assert.Equal(t, domain.CommercialSchemeSubscriptionSaaS, scheme)
+	assert.Equal(t, "draft", status)
+
+	var (
+		genStatus    string
+		budgetMax    *int64
+		rateSnap     []byte
+		calcSnap     string
+		profileSnap  string
+		moduleSnap   string
+		timelineSnap string
+		contentHTML  string
+		contentHash  *string
+	)
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT generation_status, budget_maximum, rate_card_snapshot,
+		       calculation_snapshot::text, resolved_profile_snapshot::text,
+		       module_snapshot::text, timeline_snapshot::text,
+		       content_html, content_hash
+		FROM quotation_revisions WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(
+		&genStatus, &budgetMax, &rateSnap,
+		&calcSnap, &profileSnap,
+		&moduleSnap, &timelineSnap,
+		&contentHTML, &contentHash,
+	))
+
+	assert.Equal(t, "completed", genStatus)
+	assert.Nil(t, budgetMax, "budget_maximum must be NULL")
+	assert.Nil(t, rateSnap, "rate_card_snapshot must be NULL")
+	assert.Contains(t, calcSnap, "15000000")
+	assert.Contains(t, profileSnap, "section_layout")
+	assert.Contains(t, moduleSnap, "Fitur Order")
+	assert.Equal(t, "[]", timelineSnap, "timeline_snapshot must be []")
+	assert.NotEmpty(t, contentHTML)
+	assert.Contains(t, contentHTML, "Penawaran SaaS Percetakan")
+	assert.Contains(t, contentHTML, `data-block-type="commercial"`)
+	require.NotNil(t, contentHash)
+	assert.NotEmpty(t, *contentHash)
+}
+
+func TestGenerateSubscriptionSaaS_FailureAfterDraft_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validSubscriptionSaaSInput()
+	// Payment total (3.75M*3 + 4M = 15.25M) != TotalContract (15M)
+	// input.Validate() passes, but CalculateSubscriptionSaaS fails after draft creation!
+	input.PaymentSchedule[3].Nominal = 4_000_000
+
+	req := saasRequest(fx, input)
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "allocation_invalid")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT status FROM quotations WHERE id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus))
+	assert.Equal(t, "failed", qStatus)
+
+	var revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT generation_status, COALESCE(generation_error, '')
+		FROM quotation_revisions WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&revStatus, &revError))
+	assert.Equal(t, "failed", revStatus)
+	assert.NotEmpty(t, revError)
+}
+
+func TestRegenerateSubscriptionSaaS_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	req := saasRequest(fx, validSubscriptionSaaSInput())
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	var v1 int
+	var html1 string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html FROM quotation_revisions WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&v1, &html1))
+	assert.Equal(t, 1, v1)
+
+	// Regenerate
+	err = svc.Regenerate(context.Background(), fx.companyID, qid)
+	require.NoError(t, err)
+	assert.Equal(t, 0, mock.callCount(), "provider call count must still be 0 after regenerate")
+
+	var v2 int
+	var html2, genStatus string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html, generation_status FROM quotation_revisions WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&v2, &html2, &genStatus))
+	assert.Equal(t, 2, v2, "regenerate must increment content_version")
+	assert.Equal(t, "completed", genStatus)
+	assert.NotEmpty(t, html2)
+}
+
+func TestRegenerateSubscriptionSaaS_CorruptSnapshot_ReturnsGenerationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	req := saasRequest(fx, validSubscriptionSaaSInput())
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	// Corrupt calculation_snapshot in DB
+	_, err = pool.Exec(context.Background(), `
+		UPDATE quotation_revisions SET calculation_snapshot = '"not-an-object"' WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID)
+	require.NoError(t, err)
+
+	var vBefore int
+	var htmlBefore string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html FROM quotation_revisions WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&vBefore, &htmlBefore))
+
+	err = svc.Regenerate(context.Background(), fx.companyID, qid)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "generation_failed")
+
+	var vAfter int
+	var htmlAfter string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html FROM quotation_revisions WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID).Scan(&vAfter, &htmlAfter))
+	assert.Equal(t, vBefore, vAfter, "corrupt snapshot must not change content_version")
+	assert.Equal(t, htmlBefore, htmlAfter, "corrupt snapshot must not change content_html")
+}
+
+func TestValidateGenerateInput_DiscriminatedUnion(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	t.Run("SubscriptionSaaS_WithRateCardID_RejectsInvalidRateCard", func(t *testing.T) {
+		req := saasRequest(fx, validSubscriptionSaaSInput())
+		req.RateCardID = fx.rateCardID // not accepted for subscription_saas
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "invalid_rate_card")
+	})
+
+	t.Run("SubscriptionSaaS_NilPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := saasRequest(fx, validSubscriptionSaaSInput())
+		req.SubscriptionSaaS = nil
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("SubscriptionSaaS_BothPayloads_RejectsAllocationInvalid", func(t *testing.T) {
+		req := saasRequest(fx, validSubscriptionSaaSInput())
+		req.DedicatedSquad = &domain.DedicatedSquadInput{}
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("DedicatedSquad_WithSubscriptionPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := fx.request()
+		saas := validSubscriptionSaaSInput()
+		req.SubscriptionSaaS = &saas
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("UnsupportedScheme_RejectsGenerationFailed", func(t *testing.T) {
+		req := fx.request()
+		req.CommercialScheme = "unsupported_scheme"
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "generation_failed")
+	})
+}
+
+

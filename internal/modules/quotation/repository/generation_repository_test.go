@@ -105,7 +105,7 @@ func TestGenerationPersistenceSchema(t *testing.T) {
 	})
 }
 
-func TestCompleteDedicatedGenerationRoundTripAndTenantIsolation(t *testing.T) {
+func TestCompleteStructuredGenerationRoundTripAndTenantIsolation(t *testing.T) {
 	pool := getTestPool(t)
 	ctx := context.Background()
 	repo := repository.NewGenerationRepository(pool)
@@ -122,7 +122,7 @@ func TestCompleteDedicatedGenerationRoundTripAndTenantIsolation(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	defer tx.Rollback(ctx)
-	err = repo.CompleteDedicatedGeneration(ctx, tx, repository.CompleteDedicatedGenerationParams{
+	err = repo.CompleteStructuredGeneration(ctx, tx, repository.CompleteStructuredGenerationParams{
 		CompanyID: companyID, RevisionID: draft.RevisionID, ContentHTML: "<section>dedicated</section>",
 		ResolvedProfileSnapshot: []byte(`{"maintenance_mode":"within_development"}`),
 		CalculationSnapshot:     []byte(`{"total_investment":178600000}`),
@@ -158,7 +158,7 @@ func TestCompleteDedicatedGenerationRoundTripAndTenantIsolation(t *testing.T) {
 		t.Fatalf("begin foreign: %v", err)
 	}
 	defer foreignTx.Rollback(ctx)
-	err = repo.CompleteDedicatedGeneration(ctx, foreignTx, repository.CompleteDedicatedGenerationParams{
+	err = repo.CompleteStructuredGeneration(ctx, foreignTx, repository.CompleteStructuredGenerationParams{
 		CompanyID: uuid.New(), RevisionID: draft.RevisionID, ContentHTML: "foreign",
 		CalculationSnapshot: []byte(`{}`), ModuleSnapshot: []byte(`[]`), TimelineSnapshot: []byte(`[]`),
 	})

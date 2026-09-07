@@ -63,9 +63,11 @@ func TestLoadDraftRevision_ReturnsDraftWithInputAndNumber(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fx.revisionID, draft.RevisionID)
 	assert.Equal(t, fx.quotationID, draft.QuotationID)
+	assert.Equal(t, "dedicated_squad", draft.CommercialScheme)
 	assert.Equal(t, "draft", draft.PublicationStatus)
 	assert.NotEmpty(t, draft.GenerationInput)
 	assert.Contains(t, string(draft.GenerationInput), "mandatory_scope")
+	assert.NotNil(t, draft.LegalTemplateSnapshot)
 }
 
 func TestLoadDraftRevision_WrongCompany_IsNotFound(t *testing.T) {

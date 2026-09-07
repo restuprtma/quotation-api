@@ -89,11 +89,11 @@ type UpdateGenerationResultParams struct {
 	SafetyEnvelopeVersion string
 }
 
-// CompleteDedicatedGenerationParams contains the deterministic artefacts of a
-// Dedicated Squad generation. The three JSON documents are stored together
+// CompleteStructuredGenerationParams contains the deterministic artefacts of a
+// structured generation (Dedicated Squad or Subscription SaaS). The snapshots are stored together
 // with the rendered HTML so readers can never observe a partially completed
 // commercial snapshot.
-type CompleteDedicatedGenerationParams struct {
+type CompleteStructuredGenerationParams struct {
 	CompanyID               uuid.UUID
 	RevisionID              uuid.UUID
 	ContentHTML             string
@@ -378,12 +378,12 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 	return nil
 }
 
-// CompleteDedicatedGeneration atomically completes a pending Dedicated Squad
+// CompleteStructuredGeneration atomically completes a pending structured
 // revision and its quotation master. Both revision and company predicates are
 // mandatory tenant boundaries. The caller controls the transaction so future
 // orchestration can compose this update with other writes without weakening
 // atomicity.
-func (r *GenerationRepository) CompleteDedicatedGeneration(ctx context.Context, tx pgx.Tx, params CompleteDedicatedGenerationParams) error {
+func (r *GenerationRepository) CompleteStructuredGeneration(ctx context.Context, tx pgx.Tx, params CompleteStructuredGenerationParams) error {
 	var updatedAt time.Time
 	err := tx.QueryRow(ctx, `
 		WITH updated_rev AS (
@@ -405,9 +405,9 @@ func (r *GenerationRepository) CompleteDedicatedGeneration(ctx context.Context, 
 			  AND publication_status = $12
 			RETURNING quotation_id, updated_at
 		)
-		UPDATE quotations q SET status = $11, updated_at = NOW()
+		UPDATE quotations q SET status = $12, updated_at = NOW()
 		FROM updated_rev r
-		WHERE q.id = r.quotation_id AND q.company_id = $10
+		WHERE q.id = r.quotation_id AND q.company_id = $11
 		RETURNING r.updated_at
 	`, params.ContentHTML, params.ResolvedProfileSnapshot, params.CalculationSnapshot, params.ModuleSnapshot,
 		params.TimelineSnapshot, params.AiProvider, params.AiModel, params.ContentHash,
@@ -482,6 +482,7 @@ type DraftRevision struct {
 	RevisionID              uuid.UUID
 	QuotationID             uuid.UUID
 	QuotationNumber         string
+	CommercialScheme        string
 	PublicationStatus       string
 	GenerationStatus        string
 	GenerationInput         json.RawMessage
@@ -489,6 +490,7 @@ type DraftRevision struct {
 	CalculationSnapshot     json.RawMessage
 	ModuleSnapshot          json.RawMessage
 	TimelineSnapshot        json.RawMessage
+	LegalTemplateSnapshot   json.RawMessage
 }
 
 // LoadDraftRevisionForRegeneration resolves the current revision of a
@@ -499,18 +501,20 @@ type DraftRevision struct {
 func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Context, companyID, quotationID uuid.UUID) (*DraftRevision, error) {
 	var d DraftRevision
 	err := r.db.QueryRow(ctx, `
-		SELECT r.id, r.quotation_id, q.quotation_number, r.publication_status, r.generation_status, r.generation_input,
+		SELECT r.id, r.quotation_id, q.quotation_number, q.commercial_scheme, r.publication_status, r.generation_status, r.generation_input,
 		       COALESCE(r.resolved_profile_snapshot, 'null'::jsonb),
 		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
-		       COALESCE(r.module_snapshot, '[]'::jsonb), COALESCE(r.timeline_snapshot, '[]'::jsonb)
+		       COALESCE(r.module_snapshot, '[]'::jsonb), COALESCE(r.timeline_snapshot, '[]'::jsonb),
+		       COALESCE(r.legal_template_snapshot, '{}'::jsonb)
 		FROM quotation_revisions r
 		JOIN quotations q ON q.id = r.quotation_id
 		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
 		  AND q.deleted_at IS NULL
 	`, quotationID, companyID).Scan(
-		&d.RevisionID, &d.QuotationID, &d.QuotationNumber,
+		&d.RevisionID, &d.QuotationID, &d.QuotationNumber, &d.CommercialScheme,
 		&d.PublicationStatus, &d.GenerationStatus, &d.GenerationInput,
 		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot, &d.TimelineSnapshot,
+		&d.LegalTemplateSnapshot,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

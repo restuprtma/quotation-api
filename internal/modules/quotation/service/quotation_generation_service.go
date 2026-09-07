@@ -162,15 +162,16 @@ func mapProviderError(err error) *GenerationError {
 // ---------------------------------------------------------------------------
 
 type QuotationGenerationService struct {
-	genRepo           *repository.GenerationRepository
-	providerSource    ProviderSource
-	validator         AllocationValidator
-	allocator         RateAllocator
-	renderer          HTMLRenderer
-	sanitizer         HTMLSanitizer
-	domValidator      DOMValidator
-	attemptTimeout    time.Duration
-	dedicatedRenderer DedicatedSquadHTMLRenderer
+	genRepo              *repository.GenerationRepository
+	providerSource       ProviderSource
+	validator            AllocationValidator
+	allocator            RateAllocator
+	renderer             HTMLRenderer
+	sanitizer            HTMLSanitizer
+	domValidator         DOMValidator
+	attemptTimeout       time.Duration
+	dedicatedRenderer    DedicatedSquadHTMLRenderer
+	subscriptionRenderer SubscriptionSaaSHTMLRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -187,15 +188,16 @@ func NewQuotationGenerationService(
 	opts ...GenerationOption,
 ) *QuotationGenerationService {
 	svc := &QuotationGenerationService{
-		genRepo:           genRepo,
-		providerSource:    source,
-		validator:         NewAllocationValidator(),
-		allocator:         NewRateAllocator(),
-		renderer:          NewHTMLRenderer(),
-		sanitizer:         NewHTMLSanitizer(),
-		domValidator:      NewDOMValidator(),
-		dedicatedRenderer: NewDedicatedSquadHTMLRenderer(),
-		attemptTimeout:    DefaultAttemptTimeout,
+		genRepo:              genRepo,
+		providerSource:       source,
+		validator:            NewAllocationValidator(),
+		allocator:            NewRateAllocator(),
+		renderer:             NewHTMLRenderer(),
+		sanitizer:            NewHTMLSanitizer(),
+		domValidator:         NewDOMValidator(),
+		dedicatedRenderer:    NewDedicatedSquadHTMLRenderer(),
+		subscriptionRenderer: NewSubscriptionSaaSHTMLRenderer(),
+		attemptTimeout:       DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -246,7 +248,7 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		CommercialScheme:      req.CommercialScheme,
 		IdempotencyKey:        idemKey,
 		GenerationInput:       inputJSON,
-		BudgetMaximum:         &req.BudgetMaximum,
+		BudgetMaximum:         cfg.budgetMaximum,
 		RateCardSnapshot:      cfg.rateCardSnapshot,
 		LegalTemplateSnapshot: cfg.legalSnapshot,
 		SkillSnapshot:         cfg.skillSnapshot,
@@ -257,11 +259,12 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		return uuid.Nil, newGenerationError(ErrCodeGenerationFailed, "failed to create draft")
 	}
 
-	if req.DedicatedSquad != nil {
-		gerr := s.generateDedicated(ctx, companyID, req, cfg, draft.RevisionID)
+	switch req.CommercialScheme {
+	case domain.CommercialSchemeSubscriptionSaaS:
+		gerr := s.generateSubscriptionSaaS(ctx, companyID, req, cfg, draft.RevisionID)
 		if gerr != nil {
 			var ge *GenerationError
-			reason := "dedicated squad generation failed"
+			reason := "subscription saas generation failed"
 			if errors.As(gerr, &ge) {
 				reason = ge.message
 			}
@@ -269,6 +272,20 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 			return draft.QuotationID, gerr
 		}
 		return draft.QuotationID, nil
+	case domain.CommercialSchemeDedicatedSquad:
+		if req.DedicatedSquad != nil {
+			gerr := s.generateDedicated(ctx, companyID, req, cfg, draft.RevisionID)
+			if gerr != nil {
+				var ge *GenerationError
+				reason := "dedicated squad generation failed"
+				if errors.As(gerr, &ge) {
+					reason = ge.message
+				}
+				_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+				return draft.QuotationID, gerr
+			}
+			return draft.QuotationID, nil
+		}
 	}
 
 	provider, provName, model, perr := s.providerSource.ProviderForCompany(ctx, companyID)
@@ -341,7 +358,7 @@ func (s *QuotationGenerationService) generateDedicated(ctx context.Context, comp
 		ClientName: cfg.clientName, ClientCompanyName: cfg.clientCompanyName,
 		IssueDate: indonesianDate(*input.PaymentAnchorDate),
 	}
-	return s.renderAndPersistDedicated(ctx, repository.CompleteDedicatedGenerationParams{
+	return s.renderAndPersistDedicated(ctx, repository.CompleteStructuredGenerationParams{
 		CompanyID: companyID, RevisionID: revisionID,
 		ResolvedProfileSnapshot: mustJSON(profile), CalculationSnapshot: mustJSON(calculation), ModuleSnapshot: mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
 		AiProvider: providerName, AiModel: model,
@@ -375,7 +392,7 @@ func (s *QuotationGenerationService) regenerateDedicated(ctx context.Context, co
 		ClientName: strings.TrimSpace(req.ClientName), ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
 		IssueDate: indonesianDate(*input.PaymentAnchorDate),
 	}
-	return s.renderAndPersistDedicated(ctx, repository.CompleteDedicatedGenerationParams{
+	return s.renderAndPersistDedicated(ctx, repository.CompleteStructuredGenerationParams{
 		CompanyID: companyID, RevisionID: draft.RevisionID, Regenerated: true,
 		ResolvedProfileSnapshot: append(json.RawMessage(nil), draft.ResolvedProfileSnapshot...),
 		CalculationSnapshot: append(json.RawMessage(nil), draft.CalculationSnapshot...),
@@ -411,7 +428,7 @@ func (s *QuotationGenerationService) extractDedicatedModules(ctx context.Context
 	return modules, providerName, model, nil
 }
 
-func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Context, params repository.CompleteDedicatedGenerationParams, document DedicatedSquadDocumentInput) error {
+func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Context, params repository.CompleteStructuredGenerationParams, document DedicatedSquadDocumentInput) error {
 	rawHTML, err := s.dedicatedRenderer.Render(document)
 	if err != nil {
 		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document failed to render")
@@ -432,13 +449,132 @@ func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Conte
 		return newGenerationError(ErrCodeGenerationFailed, "failed to begin dedicated generation completion")
 	}
 	defer tx.Rollback(ctx)
-	if err := s.genRepo.CompleteDedicatedGeneration(ctx, tx, params); err != nil {
+	if err := s.genRepo.CompleteStructuredGeneration(ctx, tx, params); err != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "failed to persist dedicated generation result")
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "failed to commit dedicated generation result")
 	}
 	return nil
+}
+
+func (s *QuotationGenerationService) generateSubscriptionSaaS(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	input := *req.SubscriptionSaaS
+	calculation, err := CalculateSubscriptionSaaS(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "subscription saas calculation is invalid")
+	}
+	profile, err := ResolveSubscriptionSaaSProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "subscription saas profile is invalid")
+	}
+	document := SubscriptionSaaSDocumentInput{
+		Metadata: QuotationMetadata{
+			QuotationNumber:   cfg.quotationNumber,
+			Subject:           strings.TrimSpace(req.Subject),
+			ClientName:        cfg.clientName,
+			ClientCompanyName: cfg.clientCompanyName,
+			IssueDate:         indonesianDate(input.QuotationDate),
+		},
+		Input:         input,
+		Calculation:   calculation,
+		Profile:       profile,
+		FeatureGroups: input.FeatureGroups,
+		LegalHTML:     cfg.legal.ContentHTML,
+	}
+	return s.renderAndPersistSubscriptionSaaS(ctx, companyID, revisionID, false, cfg, document)
+}
+
+func (s *QuotationGenerationService) renderAndPersistSubscriptionSaaS(
+	ctx context.Context,
+	companyID uuid.UUID,
+	revisionID uuid.UUID,
+	regenerated bool,
+	cfg *generationConfig,
+	document SubscriptionSaaSDocumentInput,
+) error {
+	rawHTML, err := s.subscriptionRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "subscription saas document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "subscription saas document sanitization failed")
+	}
+	if err := ValidateSubscriptionSaaSIntegrity(sanitized, SubscriptionSaaSIntegrityExpectations{
+		Calculation: document.Calculation,
+		Profile:     document.Profile,
+		LegalHTML:   document.LegalHTML,
+	}); err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "subscription saas document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+
+	params := repository.CompleteStructuredGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              revisionID,
+		ContentHTML:             sanitized,
+		ResolvedProfileSnapshot: mustJSON(document.Profile),
+		CalculationSnapshot:     mustJSON(document.Calculation),
+		ModuleSnapshot:          mustJSON(document.FeatureGroups),
+		TimelineSnapshot:        []byte("[]"),
+		AiProvider:              "",
+		AiModel:                 "",
+		ContentHash:             &hashString,
+		Regenerated:             regenerated,
+	}
+
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin subscription saas generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteStructuredGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist subscription saas generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit subscription saas generation result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateSubscriptionSaaS(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	var calculation domain.SubscriptionSaaSCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+	var profile domain.ResolvedSubscriptionSaaSProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+	var featureGroups []domain.SubscriptionFeatureGroupInput
+	if len(draft.ModuleSnapshot) == 0 || json.Unmarshal(draft.ModuleSnapshot, &featureGroups) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	var legalSnap legalSnapshotView
+	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || string(draft.LegalTemplateSnapshot) == "{}" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
+	}
+	if req.SubscriptionSaaS == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing subscription saas")
+	}
+	input := *req.SubscriptionSaaS
+	document := SubscriptionSaaSDocumentInput{
+		Metadata: QuotationMetadata{
+			QuotationNumber:   draft.QuotationNumber,
+			Subject:           strings.TrimSpace(req.Subject),
+			ClientName:        strings.TrimSpace(req.ClientName),
+			ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
+			IssueDate:         indonesianDate(input.QuotationDate),
+		},
+		Input:         input,
+		Calculation:   calculation,
+		Profile:       profile,
+		FeatureGroups: featureGroups,
+		LegalHTML:     legalSnap.ContentHTML,
+	}
+	return s.renderAndPersistSubscriptionSaaS(ctx, companyID, draft.RevisionID, true, nil, document)
 }
 
 type rateSnapshotLookup struct{ items []domain.RateCardItem }
@@ -582,8 +718,18 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 		}
 		return newGenerationError(ErrCodeGenerationFailed, "failed to update regenerate counter")
 	}
-	if req.DedicatedSquad != nil {
-		return s.regenerateDedicated(ctx, companyID, req, draft)
+
+	switch draft.CommercialScheme {
+	case domain.CommercialSchemeSubscriptionSaaS:
+		return s.regenerateSubscriptionSaaS(ctx, companyID, req, draft)
+	case domain.CommercialSchemeDedicatedSquad:
+		if req.DedicatedSquad != nil {
+			return s.regenerateDedicated(ctx, companyID, req, draft)
+		}
+	default:
+		if req.DedicatedSquad != nil {
+			return s.regenerateDedicated(ctx, companyID, req, draft)
+		}
 	}
 
 	cfg, gerr := s.loadConfiguration(ctx, companyID, req)
@@ -824,6 +970,7 @@ type generationConfig struct {
 	clientCompanyName string
 	quotationNumber   string
 	termType          string
+	budgetMaximum     *int64
 	rateCardSnapshot  json.RawMessage
 	legalSnapshot     json.RawMessage
 	skillSnapshot     json.RawMessage
@@ -841,21 +988,43 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	}
 	cfg.skill = skill
 
-	card, items, err := s.genRepo.GetRateCardWithItems(ctx, companyID, req.RateCardID)
-	if err != nil {
-		if errors.Is(err, repository.ErrRateCardNotFound) {
-			return nil, newGenerationError(ErrCodeInvalidRateCard, "rate card is not available")
+	if req.CommercialScheme == domain.CommercialSchemeDedicatedSquad {
+		card, items, err := s.genRepo.GetRateCardWithItems(ctx, companyID, req.RateCardID)
+		if err != nil {
+			if errors.Is(err, repository.ErrRateCardNotFound) {
+				return nil, newGenerationError(ErrCodeInvalidRateCard, "rate card is not available")
+			}
+			return nil, newGenerationError(ErrCodeGenerationFailed, "failed to load rate card")
 		}
-		return nil, newGenerationError(ErrCodeGenerationFailed, "failed to load rate card")
+		if len(items) == 0 {
+			return nil, newGenerationError(ErrCodeInvalidRateCard, "rate card has no rate items")
+		}
+		if req.DedicatedSquad != nil && !isOfficialGeneratorRateCardCode(card.Code) {
+			return nil, newGenerationError(ErrCodeInvalidRateCard, "dedicated squad requires an official generator rate card")
+		}
+		cfg.rateCard = card
+		cfg.rateCardItems = items
+		cfg.budgetMaximum = &req.BudgetMaximum
+		cfg.termType = s.allocator.DetermineTermType(req.ProjectDurationMonths)
+
+		cfg.rateCardSnapshot = mustJSON(rateCardSnapshotView{
+			ID:                    card.ID,
+			Code:                  card.Code,
+			Name:                  card.Name,
+			Market:                card.Market,
+			ClientTier:            card.ClientTier,
+			Currency:              card.Currency,
+			ShortTermSurchargePct: card.ShortTermSurchargePct,
+			EnterpriseMarkupPct:   card.EnterpriseMarkupPct,
+			Items:                 rateCardItemViews(items),
+		})
+	} else {
+		cfg.rateCard = nil
+		cfg.rateCardItems = nil
+		cfg.budgetMaximum = nil
+		cfg.termType = ""
+		cfg.rateCardSnapshot = nil
 	}
-	if len(items) == 0 {
-		return nil, newGenerationError(ErrCodeInvalidRateCard, "rate card has no rate items")
-	}
-	if req.DedicatedSquad != nil && !isOfficialGeneratorRateCardCode(card.Code) {
-		return nil, newGenerationError(ErrCodeInvalidRateCard, "dedicated squad requires an official generator rate card")
-	}
-	cfg.rateCard = card
-	cfg.rateCardItems = items
 
 	legal, err := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, DefaultLegalTemplateCode)
 	if err != nil {
@@ -893,19 +1062,7 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 		return nil, newGenerationError(ErrCodeGenerationFailed, "failed to derive quotation number")
 	}
 	cfg.quotationNumber = number
-	cfg.termType = s.allocator.DetermineTermType(req.ProjectDurationMonths)
 
-	cfg.rateCardSnapshot = mustJSON(rateCardSnapshotView{
-		ID:                    card.ID,
-		Code:                  card.Code,
-		Name:                  card.Name,
-		Market:                card.Market,
-		ClientTier:            card.ClientTier,
-		Currency:              card.Currency,
-		ShortTermSurchargePct: card.ShortTermSurchargePct,
-		EnterpriseMarkupPct:   card.EnterpriseMarkupPct,
-		Items:                 rateCardItemViews(items),
-	})
 	cfg.legalSnapshot = mustJSON(legalSnapshotView{
 		ID:          legal.ID,
 		Code:        legal.Code,
@@ -1336,41 +1493,63 @@ func buildIntegrityExpectations(req dto.GenerateQuotationRequest, cfg *generatio
 // validateGenerateInput rejects structurally impossible requests BEFORE any
 // persistence or AI spend.
 func validateGenerateInput(req dto.GenerateQuotationRequest) error {
-	if req.CommercialScheme != dedicatedSquadScheme {
-		return newGenerationError(ErrCodeGenerationFailed, "only dedicated_squad commercial scheme is supported")
-	}
 	subject := strings.TrimSpace(req.Subject)
 	if subject == "" || utf8.RuneCountInString(subject) > 200 {
 		return newGenerationError(ErrCodeGenerationFailed, "subject must be between 1 and 200 characters")
 	}
-	if req.DedicatedSquad != nil {
+
+	switch req.CommercialScheme {
+	case domain.CommercialSchemeDedicatedSquad:
+		if req.SubscriptionSaaS != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad payload is invalid")
+		}
+		if req.DedicatedSquad != nil {
+			if req.RateCardID == uuid.Nil {
+				return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is required")
+			}
+			if err := req.DedicatedSquad.Validate(); err != nil {
+				return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad input is invalid")
+			}
+			return nil
+		}
 		if req.RateCardID == uuid.Nil {
 			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is required")
 		}
-		if err := req.DedicatedSquad.Validate(); err != nil {
-			return newGenerationError(ErrCodeAllocationInvalid, "dedicated_squad input is invalid")
+		if req.ProjectDurationMonths < 1 || req.ProjectDurationMonths > 24 {
+			return newGenerationError(ErrCodeGenerationFailed, "project_duration_months must be between 1 and 24")
+		}
+		if req.BudgetMaximum < 1 {
+			return newGenerationError(ErrCodeGenerationFailed, "budget_maximum must be positive")
+		}
+		if len(req.MandatoryScope) == 0 {
+			return newGenerationError(ErrCodeGenerationFailed, "mandatory_scope must not be empty")
+		}
+		for _, scope := range req.MandatoryScope {
+			trimmed := strings.TrimSpace(scope)
+			if trimmed == "" || utf8.RuneCountInString(trimmed) > 200 {
+				return newGenerationError(ErrCodeGenerationFailed, "mandatory_scope entries must be non-empty and at most 200 characters")
+			}
+		}
+		if err := validatePaymentTerms(req.PaymentTerms); err != nil {
+			return newGenerationError(ErrCodeGenerationFailed, "payment terms are invalid")
 		}
 		return nil
-	}
-	if req.ProjectDurationMonths < 1 || req.ProjectDurationMonths > 24 {
-		return newGenerationError(ErrCodeGenerationFailed, "project_duration_months must be between 1 and 24")
-	}
-	if req.BudgetMaximum < 1 {
-		return newGenerationError(ErrCodeGenerationFailed, "budget_maximum must be positive")
-	}
-	if len(req.MandatoryScope) == 0 {
-		return newGenerationError(ErrCodeGenerationFailed, "mandatory_scope must not be empty")
-	}
-	for _, scope := range req.MandatoryScope {
-		trimmed := strings.TrimSpace(scope)
-		if trimmed == "" || utf8.RuneCountInString(trimmed) > 200 {
-			return newGenerationError(ErrCodeGenerationFailed, "mandatory_scope entries must be non-empty and at most 200 characters")
+
+	case domain.CommercialSchemeSubscriptionSaaS:
+		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas payload is invalid")
 		}
+		if req.RateCardID != uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is not accepted for subscription_saas")
+		}
+		if err := req.SubscriptionSaaS.Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas input is invalid")
+		}
+		return nil
+
+	default:
+		return newGenerationError(ErrCodeGenerationFailed, "unsupported commercial scheme")
 	}
-	if err := validatePaymentTerms(req.PaymentTerms); err != nil {
-		return newGenerationError(ErrCodeGenerationFailed, "payment terms are invalid")
-	}
-	return nil
 }
 
 // extractJSONObject isolates the outermost JSON object from a provider reply,
