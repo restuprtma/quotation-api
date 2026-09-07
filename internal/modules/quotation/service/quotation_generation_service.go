@@ -835,89 +835,10 @@ func (s *QuotationGenerationService) SaveDraft(
 		return nil, newGenerationError(ErrCodeUnsafeHTML, "document sanitization failed")
 	}
 
-	// 2. Extract snapshot expectations for comparisons
-	var enriched dto.EnrichedAllocation
-	if err := json.Unmarshal(draft.AllocationSnapshot, &enriched); err != nil ||
-		enriched.TotalInvestment <= 0 || strings.TrimSpace(enriched.Currency) == "" || len(enriched.Resources) == 0 {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot is invalid")
-	}
-	for _, resource := range enriched.Resources {
-		if strings.TrimSpace(resource.Role) == "" || strings.TrimSpace(resource.Seniority) == "" ||
-			resource.EmployeeCount <= 0 || resource.PeriodMonths <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
-			return nil, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot resource is invalid")
-		}
-	}
-	var generationInput dto.GenerateQuotationRequest
-	if err := json.Unmarshal(draft.GenerationInput, &generationInput); err != nil || len(generationInput.PaymentTerms.Items) == 0 {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "generation input snapshot is invalid")
-	}
-	percentageTotal := int64(0)
-	for _, item := range generationInput.PaymentTerms.Items {
-		if item.Percentage <= 0 || item.Percentage > 100 {
-			return nil, newGenerationError(ErrCodeUnsafeHTML, "generation input payment terms are invalid")
-		}
-		percentageTotal += item.Percentage
-	}
-	if percentageTotal != 100 {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "generation input payment terms are invalid")
-	}
-	totalInvestment := enriched.TotalInvestment
-
-	// 3. Validate safety (forbidden terms, budget leak)
-	if verr := s.domValidator.ValidateDocumentSafety(sanitized, draft.BudgetMaximum, totalInvestment); verr != nil {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
-	}
-
-	// 4. Check Legal Block modification
-	var legalSnap struct {
-		Code        string `json:"code"`
-		ContentHTML string `json:"content_html"`
-	}
-	if err := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); err != nil {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
-	}
-	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
-	if expectedLegalHTML == "" {
-		if strings.TrimSpace(legalSnap.Code) == "" {
-			return nil, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
-		}
-		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
-		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
-			return nil, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
-		}
-		expectedLegalHTML = tmpl.ContentHTML
-	}
-
-	legalModified, lerr := s.domValidator.CheckLegalModified(sanitized, expectedLegalHTML)
-	if lerr != nil {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
-	}
-
-	// 5. Check Commercial Block modification
-	var expectations IntegrityExpectations
-	if totalInvestment > 0 {
-		expectations = IntegrityExpectations{
-			Currency:        enriched.Currency,
-			TotalInvestment: enriched.TotalInvestment,
-			Lines:           make([]ExpectedLine, 0, len(enriched.Resources)),
-		}
-		for _, res := range enriched.Resources {
-			expectations.Lines = append(expectations.Lines, ExpectedLine{
-				Role:           res.Role,
-				Seniority:      res.Seniority,
-				EmployeeCount:  res.EmployeeCount,
-				PeriodMonths:   res.PeriodMonths,
-				AmountPerMonth: res.AmountPerMonth,
-				LineTotal:      res.LineTotal,
-			})
-		}
-		for _, item := range generationInput.PaymentTerms.Items {
-			expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
-		}
-	}
-	commercialModified, cerr := s.domValidator.CheckCommercialModified(sanitized, expectations)
-	if cerr != nil {
-		return nil, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	// 2. Inspect draft changes
+	legalModified, commercialModified, _, err := s.inspectDraftChanges(ctx, companyID, draft, sanitized)
+	if err != nil {
+		return nil, err
 	}
 
 	// 6. Compute hash
@@ -954,6 +875,155 @@ func (s *QuotationGenerationService) SaveDraft(
 		CommercialContentModified: res.CommercialContentModified,
 		UpdatedAt:                 res.UpdatedAt,
 	}, nil
+}
+
+func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {
+	switch draft.CommercialScheme {
+	case domain.CommercialSchemeSubscriptionSaaS:
+		return s.inspectSubscriptionSaaSDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeDedicatedSquad:
+		return s.inspectDedicatedDraft(ctx, companyID, draft, html)
+	default:
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial scheme snapshot is unsupported")
+	}
+}
+
+func (s *QuotationGenerationService) inspectDedicatedDraft(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {
+	var enriched dto.EnrichedAllocation
+	if err := json.Unmarshal(draft.AllocationSnapshot, &enriched); err != nil ||
+		enriched.TotalInvestment <= 0 || strings.TrimSpace(enriched.Currency) == "" || len(enriched.Resources) == 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot is invalid")
+	}
+	for _, resource := range enriched.Resources {
+		if strings.TrimSpace(resource.Role) == "" || strings.TrimSpace(resource.Seniority) == "" ||
+			resource.EmployeeCount <= 0 || resource.PeriodMonths <= 0 || resource.AmountPerMonth <= 0 || resource.LineTotal <= 0 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "allocation snapshot resource is invalid")
+		}
+	}
+	var generationInput dto.GenerateQuotationRequest
+	if err := json.Unmarshal(draft.GenerationInput, &generationInput); err != nil || len(generationInput.PaymentTerms.Items) == 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "generation input snapshot is invalid")
+	}
+	percentageTotal := int64(0)
+	for _, item := range generationInput.PaymentTerms.Items {
+		if item.Percentage <= 0 || item.Percentage > 100 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "generation input payment terms are invalid")
+		}
+		percentageTotal += item.Percentage
+	}
+	if percentageTotal != 100 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "generation input payment terms are invalid")
+	}
+	totalInvestment := enriched.TotalInvestment
+
+	if verr := s.domValidator.ValidateDocumentSafety(html, draft.BudgetMaximum, totalInvestment); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
+	}
+	if err := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
+	if expectedLegalHTML == "" {
+		if strings.TrimSpace(legalSnap.Code) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
+		}
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
+		}
+		expectedLegalHTML = tmpl.ContentHTML
+	}
+
+	legalMod, lerr := s.domValidator.CheckLegalModified(html, expectedLegalHTML)
+	if lerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+	}
+
+	var expectations IntegrityExpectations
+	if totalInvestment > 0 {
+		expectations = IntegrityExpectations{
+			Currency:        enriched.Currency,
+			TotalInvestment: enriched.TotalInvestment,
+			Lines:           make([]ExpectedLine, 0, len(enriched.Resources)),
+		}
+		for _, res := range enriched.Resources {
+			expectations.Lines = append(expectations.Lines, ExpectedLine{
+				Role:           res.Role,
+				Seniority:      res.Seniority,
+				EmployeeCount:  res.EmployeeCount,
+				PeriodMonths:   res.PeriodMonths,
+				AmountPerMonth: res.AmountPerMonth,
+				LineTotal:      res.LineTotal,
+			})
+		}
+		for _, item := range generationInput.PaymentTerms.Items {
+			expectations.PaymentItems = append(expectations.PaymentItems, ExpectedPayment{Percentage: item.Percentage})
+		}
+	}
+	commercialMod, cerr := s.domValidator.CheckCommercialModified(html, expectations)
+	if cerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	}
+
+	return legalMod, commercialMod, totalInvestment, nil
+}
+
+func (s *QuotationGenerationService) inspectSubscriptionSaaSDraft(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {
+	var calculation domain.SubscriptionSaaSCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalContract <= 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "calculation snapshot is invalid")
+	}
+
+	var profile domain.ResolvedSubscriptionSaaSProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "resolved profile snapshot is invalid")
+	}
+
+	if verr := s.domValidator.ValidateDocumentSafety(html, nil, calculation.TotalContract); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
+	}
+	if err := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
+	if expectedLegalHTML == "" {
+		if strings.TrimSpace(legalSnap.Code) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
+		}
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
+		}
+		expectedLegalHTML = tmpl.ContentHTML
+	}
+
+	expected := SubscriptionSaaSIntegrityExpectations{
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   expectedLegalHTML,
+	}
+
+	commercialModified, cerr := CheckSubscriptionSaaSCommercialModified(html, expected)
+	if cerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	}
+
+	legalModified, lerr := CheckSubscriptionSaaSLegalModified(html, expected)
+	if lerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+	}
+
+	return legalModified, commercialModified, calculation.TotalContract, nil
 }
 
 // ---------------------------------------------------------------------------

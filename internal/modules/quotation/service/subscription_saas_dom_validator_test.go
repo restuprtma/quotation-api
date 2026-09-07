@@ -458,3 +458,66 @@ func TestValidateSubscriptionSaaSIntegrity_MonthlyRateExactMatch(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsafeHTML)
 }
+
+func TestCheckSubscriptionSaaS_SaveDraftAuditFlags(t *testing.T) {
+	doc, exp := percetakanDocumentFixture(t)
+
+	t.Run("NarrativeModified_BothFlagsFalse", func(t *testing.T) {
+		edited := strings.Replace(doc, "Melalui penawaran ini", "Melalui penawaran resmi yang disesuaikan ini", 1)
+		commMod, err := CheckSubscriptionSaaSCommercialModified(edited, exp)
+		require.NoError(t, err)
+		assert.False(t, commMod)
+
+		legalMod, err := CheckSubscriptionSaaSLegalModified(edited, exp)
+		require.NoError(t, err)
+		assert.False(t, legalMod)
+	})
+
+	t.Run("MissingCommercial_CommercialFlagTrue", func(t *testing.T) {
+		edited := strings.Replace(doc, `data-block-type="commercial"`, `data-block-type="other"`, 1)
+		commMod, err := CheckSubscriptionSaaSCommercialModified(edited, exp)
+		require.NoError(t, err)
+		assert.True(t, commMod)
+
+		legalMod, err := CheckSubscriptionSaaSLegalModified(edited, exp)
+		require.NoError(t, err)
+		assert.False(t, legalMod)
+	})
+
+	t.Run("MissingPayment_CommercialFlagTrue", func(t *testing.T) {
+		edited := strings.Replace(doc, `data-block-type="payment"`, `data-block-type="other"`, 1)
+		commMod, err := CheckSubscriptionSaaSCommercialModified(edited, exp)
+		require.NoError(t, err)
+		assert.True(t, commMod)
+
+		legalMod, err := CheckSubscriptionSaaSLegalModified(edited, exp)
+		require.NoError(t, err)
+		assert.False(t, legalMod)
+	})
+
+	t.Run("MissingLegal_LegalFlagTrue", func(t *testing.T) {
+		edited := strings.Replace(doc, `data-block-type="legal"`, `data-block-type="other"`, 1)
+		commMod, err := CheckSubscriptionSaaSCommercialModified(edited, exp)
+		require.NoError(t, err)
+		assert.False(t, commMod)
+
+		legalMod, err := CheckSubscriptionSaaSLegalModified(edited, exp)
+		require.NoError(t, err)
+		assert.True(t, legalMod)
+	})
+
+	t.Run("EmptyLegalHTMLExpectation_ChecksProfileOnly", func(t *testing.T) {
+		expWithoutLegal := exp
+		expWithoutLegal.LegalHTML = ""
+
+		legalMod, err := CheckSubscriptionSaaSLegalModified(doc, expWithoutLegal)
+		require.NoError(t, err)
+		assert.False(t, legalMod)
+
+		// Modify income sharing text in document
+		tampered := strings.Replace(doc, "50% untuk Mitra", "30% untuk Mitra", 1)
+		legalMod, err = CheckSubscriptionSaaSLegalModified(tampered, expWithoutLegal)
+		require.NoError(t, err)
+		assert.True(t, legalMod)
+	})
+}

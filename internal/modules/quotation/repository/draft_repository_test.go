@@ -31,8 +31,55 @@ func TestLoadDraftRevisionForSave_Success(t *testing.T) {
 	assert.Equal(t, 1, draft.RevisionNumber)
 	assert.Equal(t, repository.PublicationStatusDraft, draft.PublicationStatus)
 	assert.Equal(t, 1, draft.ContentVersion)
+	assert.Equal(t, "dedicated_squad", draft.CommercialScheme)
+	assert.JSONEq(t, "null", string(draft.ResolvedProfileSnapshot))
+	assert.JSONEq(t, "null", string(draft.CalculationSnapshot))
+	assert.JSONEq(t, "[]", string(draft.ModuleSnapshot))
 	assert.False(t, draft.LegalContentModified)
 	assert.False(t, draft.CommercialContentModified)
+}
+
+func TestLoadDraftRevisionForSave_SubscriptionSaaS_Success(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "subscription_saas"
+	res, err := repo.CreateDraftTransaction(ctx, params)
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	err = repo.CompleteStructuredGeneration(ctx, tx, repository.CompleteStructuredGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              res.RevisionID,
+		ContentHTML:             "<article>Draft</article>",
+		ResolvedProfileSnapshot: []byte(`{"tax_clause_text":"Tax"}`),
+		CalculationSnapshot:     []byte(`{"total_contract":15000000}`),
+		ModuleSnapshot:          []byte(`[{"name":"Module 1"}]`),
+		TimelineSnapshot:        []byte("[]"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	draft, err := repo.LoadDraftRevisionForSave(ctx, companyID, res.QuotationID)
+	require.NoError(t, err)
+	assert.Equal(t, res.RevisionID, draft.RevisionID)
+	assert.Equal(t, res.QuotationID, draft.QuotationID)
+	assert.Equal(t, "subscription_saas", draft.CommercialScheme)
+	assert.Equal(t, 1, draft.RevisionNumber)
+	assert.Equal(t, repository.PublicationStatusDraft, draft.PublicationStatus)
+	assert.JSONEq(t, `{"tax_clause_text":"Tax"}`, string(draft.ResolvedProfileSnapshot))
+	assert.JSONEq(t, `{"total_contract":15000000}`, string(draft.CalculationSnapshot))
+	assert.JSONEq(t, `[{"name":"Module 1"}]`, string(draft.ModuleSnapshot))
+
+	// Tenant isolation: foreign company cannot load
+	foreignCompanyID := uuid.New()
+	_, err = repo.LoadDraftRevisionForSave(ctx, foreignCompanyID, res.QuotationID)
+	assert.ErrorIs(t, err, repository.ErrRevisionNotFound)
 }
 
 func TestLoadDraftRevisionForSave_NotFound(t *testing.T) {

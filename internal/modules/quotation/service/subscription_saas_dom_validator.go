@@ -86,6 +86,9 @@ func ValidateSubscriptionSaaSIntegrity(document string, expected SubscriptionSaa
 	return nil
 }
 
+// CheckSubscriptionSaaSCommercialModified checks whether commercial or payment
+// structures in document differ from the stored snapshot expectations. Used in
+// generation integrity validation and Save Draft audits.
 func CheckSubscriptionSaaSCommercialModified(document string, expected SubscriptionSaaSIntegrityExpectations) (bool, error) {
 	root, err := html.Parse(strings.NewReader(document))
 	if err != nil {
@@ -211,6 +214,9 @@ func CheckSubscriptionSaaSCommercialModified(document string, expected Subscript
 	return false, nil
 }
 
+// CheckSubscriptionSaaSLegalModified checks whether legal terms, rights, income sharing,
+// auto-renewal, or tax clauses differ from stored snapshot expectations. Used in
+// generation integrity validation and Save Draft audits.
 func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSaaSIntegrityExpectations) (bool, error) {
 	root, err := html.Parse(strings.NewReader(document))
 	if err != nil {

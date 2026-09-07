@@ -620,6 +620,7 @@ func (r *GenerationRepository) UpdateRegeneratedResult(ctx context.Context, q Ex
 type DraftRevisionForSave struct {
 	RevisionID                uuid.UUID
 	QuotationID               uuid.UUID
+	CommercialScheme          string
 	RevisionNumber            int
 	PublicationStatus         string
 	GenerationStatus          string
@@ -628,6 +629,9 @@ type DraftRevisionForSave struct {
 	AllocationSnapshot        json.RawMessage
 	RateCardSnapshot          json.RawMessage
 	LegalTemplateSnapshot     json.RawMessage
+	ResolvedProfileSnapshot   json.RawMessage
+	CalculationSnapshot       json.RawMessage
+	ModuleSnapshot            json.RawMessage
 	GenerationInput           json.RawMessage
 	LegalContentModified      bool
 	CommercialContentModified bool
@@ -663,8 +667,11 @@ type SaveDraftResult struct {
 func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, companyID, quotationID uuid.UUID) (*DraftRevisionForSave, error) {
 	var d DraftRevisionForSave
 	err := r.db.QueryRow(ctx, `
-		SELECT r.id, r.quotation_id, r.revision_number, r.publication_status, r.generation_status,
+		SELECT r.id, r.quotation_id, q.commercial_scheme, r.revision_number, r.publication_status, r.generation_status,
 		       r.content_version, r.budget_maximum, r.allocation_snapshot, r.rate_card_snapshot, r.legal_template_snapshot,
+		       COALESCE(r.resolved_profile_snapshot, 'null'::jsonb),
+		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
+		       COALESCE(r.module_snapshot, '[]'::jsonb),
 		       r.generation_input,
 		       r.legal_content_modified, r.commercial_content_modified
 		FROM quotation_revisions r
@@ -672,8 +679,9 @@ func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, com
 		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
 		  AND q.deleted_at IS NULL
 	`, quotationID, companyID).Scan(
-		&d.RevisionID, &d.QuotationID, &d.RevisionNumber, &d.PublicationStatus, &d.GenerationStatus,
+		&d.RevisionID, &d.QuotationID, &d.CommercialScheme, &d.RevisionNumber, &d.PublicationStatus, &d.GenerationStatus,
 		&d.ContentVersion, &d.BudgetMaximum, &d.AllocationSnapshot, &d.RateCardSnapshot, &d.LegalTemplateSnapshot,
+		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot,
 		&d.GenerationInput,
 		&d.LegalContentModified, &d.CommercialContentModified,
 	)
