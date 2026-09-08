@@ -195,3 +195,99 @@ func TestGenerateQuotationRequest_SubscriptionSaaSJSONSerialization(t *testing.T
 	})
 }
 
+func TestGenerateQuotationRequest_WhiteLabelJSONSerialization(t *testing.T) {
+	quotationDate := time.Date(2026, time.September, 7, 0, 0, 0, 0, time.UTC)
+	req := GenerateQuotationRequest{
+		Subject:          "Penawaran POS Mini Market",
+		SolutionType:     "White Label",
+		CommercialScheme: domain.CommercialSchemeWhiteLabel,
+		WhiteLabel: &domain.WhiteLabelInput{
+			ProductName:   "POS Mini Market",
+			QuotationDate: quotationDate,
+			TaxTreatment:  domain.WhiteLabelTaxExclusive,
+			LicenseItems:  []domain.WhiteLabelLicenseItemInput{{Name: "POS Mini Market", UnitRate: 35_000_000, Quantity: 1}},
+			MaintenanceItems: []domain.WhiteLabelMaintenanceItemInput{
+				{Name: "Senior Web Programmer", MonthlyRate: 16_170_000, FTEQuarters: 2, PeriodMonths: 3},
+			},
+			HostingItems: []domain.WhiteLabelHostingItemInput{
+				{Name: "Shared Hosting Small", MonthlyRate: 350_000, Quantity: 1, PeriodMonths: 3},
+			},
+			ModuleGroups: []domain.WhiteLabelModuleGroupInput{
+				{Name: "Inventory", Features: []string{"Stok masuk", "Stok keluar"}},
+			},
+			TimelineRows: []domain.WhiteLabelTimelineRowInput{
+				{Description: "Persiapan Lingkungan", Timeline: "Minggu 1"},
+			},
+			PaymentSchedule: []domain.WhiteLabelPaymentRowInput{
+				{WorkPeriod: "Pembelian White Label", Terms: "Pelunasan", InvoiceDateLabel: "Saat kontrak ditandatangani", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentLicense, Nominal: 35_000_000},
+				{WorkPeriod: "Maintenance 1", Terms: "Bulanan", InvoiceDateLabel: "Bulan 1", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+			},
+			RightsStatements: []string{"Hak cipta tetap pada Venturo."},
+			LimitationCodes:  []string{"out_of_pocket", "overtime", "third_party", "scope_change"},
+		},
+	}
+
+	t.Run("round trip serialization", func(t *testing.T) {
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		var raw map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(b, &raw))
+		require.Contains(t, raw, "white_label")
+
+		var decoded GenerateQuotationRequest
+		require.NoError(t, json.Unmarshal(b, &decoded))
+		require.NotNil(t, decoded.WhiteLabel)
+		assert.Equal(t, "POS Mini Market", decoded.WhiteLabel.ProductName)
+		assert.Equal(t, quotationDate, decoded.WhiteLabel.QuotationDate.UTC())
+		assert.Equal(t, domain.WhiteLabelTaxExclusive, decoded.WhiteLabel.TaxTreatment)
+		assert.Len(t, decoded.WhiteLabel.LicenseItems, 1)
+		assert.Len(t, decoded.WhiteLabel.MaintenanceItems, 1)
+		assert.Len(t, decoded.WhiteLabel.HostingItems, 1)
+		assert.Len(t, decoded.WhiteLabel.ModuleGroups, 1)
+		assert.Len(t, decoded.WhiteLabel.TimelineRows, 1)
+		assert.Len(t, decoded.WhiteLabel.PaymentSchedule, 2)
+		assert.Len(t, decoded.WhiteLabel.RightsStatements, 1)
+		assert.Equal(t, []string{"out_of_pocket", "overtime", "third_party", "scope_change"}, decoded.WhiteLabel.LimitationCodes)
+		require.NoError(t, decoded.WhiteLabel.Validate())
+	})
+
+	t.Run("rejects request with unknown nested field inside white_label", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "white_label",
+			"white_label": {
+				"product_name": "POS Mini Market",
+				"quotation_date": "2026-09-07",
+				"tax_treatment": "exclusive_ppn",
+				"license_items": [{"name": "POS Mini Market", "unit_rate": 35000000, "quantity": 1}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Pelunasan", "invoice_date_label": "Saat tanda tangan", "due_date_label": "H+14", "component": "license", "nominal": 35000000}],
+				"limitation_codes": ["out_of_pocket"],
+				"unrecognized_field": "disallowed"
+			}
+		}`
+
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside license_items", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "white_label",
+			"white_label": {
+				"product_name": "POS Mini Market",
+				"quotation_date": "2026-09-07",
+				"tax_treatment": "exclusive_ppn",
+				"license_items": [{"name": "POS Mini Market", "unit_rate": 35000000, "quantity": 1, "illegal_field": true}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Pelunasan", "invoice_date_label": "Saat tanda tangan", "due_date_label": "H+14", "component": "license", "nominal": 35000000}],
+				"limitation_codes": ["out_of_pocket"]
+			}
+		}`
+
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+}

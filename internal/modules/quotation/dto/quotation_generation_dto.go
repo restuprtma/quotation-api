@@ -48,29 +48,30 @@ type PaymentTermsInput struct {
 type GenerateQuotationRequest struct {
 	DedicatedSquad            *domain.DedicatedSquadInput   `json:"dedicated_squad,omitempty"`
 	SubscriptionSaaS          *domain.SubscriptionSaaSInput `json:"subscription_saas,omitempty"`
+	WhiteLabel                *domain.WhiteLabelInput       `json:"white_label,omitempty"`
 	IdempotencyKey            *string                       `json:"idempotency_key,omitempty"`
-	SkillID                   uuid.UUID                   `json:"skill_id"`
-	ClientID                  *uuid.UUID                  `json:"client_id,omitempty"`
-	ClientName                string                      `json:"client_name,omitempty"`
-	ClientCompanyName         string                      `json:"client_company_name,omitempty"`
-	Subject                   string                      `json:"subject"`
-	SolutionType              string                      `json:"solution_type"`
-	CommercialScheme          string                      `json:"commercial_scheme"`
-	RateCardID                uuid.UUID                   `json:"rate_card_id"`
-	RateCardCode              string                      `json:"rate_card_code,omitempty"`
-	ProjectDurationMonths     int64                       `json:"project_duration_months"`
-	BudgetMaximum             int64                       `json:"budget_maximum"`
-	Summary                   string                      `json:"summary"`
-	MandatoryScope            []string                    `json:"mandatory_scope"`
-	OptionalScope             []string                    `json:"optional_scope"`
-	AllowedStandardActivities []string                    `json:"allowed_standard_activities,omitempty"`
-	PaymentTerms              PaymentTermsInput           `json:"payment_terms"`
-	AdditionalNotes           string                      `json:"additional_notes,omitempty"`
+	SkillID                   uuid.UUID                     `json:"skill_id"`
+	ClientID                  *uuid.UUID                    `json:"client_id,omitempty"`
+	ClientName                string                        `json:"client_name,omitempty"`
+	ClientCompanyName         string                        `json:"client_company_name,omitempty"`
+	Subject                   string                        `json:"subject"`
+	SolutionType              string                        `json:"solution_type"`
+	CommercialScheme          string                        `json:"commercial_scheme"`
+	RateCardID                uuid.UUID                     `json:"rate_card_id"`
+	RateCardCode              string                        `json:"rate_card_code,omitempty"`
+	ProjectDurationMonths     int64                         `json:"project_duration_months"`
+	BudgetMaximum             int64                         `json:"budget_maximum"`
+	Summary                   string                        `json:"summary"`
+	MandatoryScope            []string                      `json:"mandatory_scope"`
+	OptionalScope             []string                      `json:"optional_scope"`
+	AllowedStandardActivities []string                      `json:"allowed_standard_activities,omitempty"`
+	PaymentTerms              PaymentTermsInput             `json:"payment_terms"`
+	AdditionalNotes           string                        `json:"additional_notes,omitempty"`
 }
 
 type DedicatedSquadPreviewResponse struct {
 	Calculation     domain.DedicatedSquadCalculation `json:"calculation"`
-	ResolvedProfile any                             `json:"resolved_profile"`
+	ResolvedProfile any                              `json:"resolved_profile"`
 	VisibleSections []domain.DocumentSection         `json:"visible_sections"`
 	IncludeK6       bool                             `json:"include_k6"`
 	IncludePentest  bool                             `json:"include_pentest"`
