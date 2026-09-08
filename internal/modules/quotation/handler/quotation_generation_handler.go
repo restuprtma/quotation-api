@@ -123,6 +123,37 @@ func (h *QuotationGenerationHandler) PreviewSubscriptionSaaS(c *gin.Context) {
 	})
 }
 
+// PreviewWhiteLabel computes server-authoritative White Label figures without AI or persistence.
+func (h *QuotationGenerationHandler) PreviewWhiteLabel(c *gin.Context) {
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request", err.Error())
+		return
+	}
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeWhiteLabel || req.WhiteLabel == nil || req.DedicatedSquad != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid white label request", "")
+		return
+	}
+	if err := req.WhiteLabel.Validate(); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid white label input", err.Error())
+		return
+	}
+	calculation, err := service.CalculateWhiteLabel(*req.WhiteLabel)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "White label calculation mismatch", err.Error())
+		return
+	}
+	profile, err := service.ResolveWhiteLabelProfile(*req.WhiteLabel)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid white label profile", err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "White label preview calculated successfully", dto.WhiteLabelPreviewResponse{Calculation: calculation, ResolvedProfile: profile})
+}
+
 // Generate starts the AI-first pipeline and returns 201 with the committed
 // quotation ID. The draft is durable before any provider interaction, so a
 // later failure remains retryable and idempotent replay (same

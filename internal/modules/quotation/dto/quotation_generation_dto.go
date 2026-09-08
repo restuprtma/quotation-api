@@ -83,6 +83,11 @@ type SubscriptionSaaSPreviewResponse struct {
 	VisibleSections []domain.DocumentSection               `json:"visible_sections"`
 }
 
+type WhiteLabelPreviewResponse struct {
+	Calculation     domain.WhiteLabelCalculation     `json:"calculation"`
+	ResolvedProfile domain.ResolvedWhiteLabelProfile `json:"resolved_profile"`
+}
+
 type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`

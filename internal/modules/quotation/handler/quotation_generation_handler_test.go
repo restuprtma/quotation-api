@@ -290,6 +290,7 @@ func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner 
 	q := router.Group("/quotation/v1/quotations")
 	{
 		q.POST("/preview/subscription-saas", genHandler.PreviewSubscriptionSaaS)
+		q.POST("/preview/white-label", genHandler.PreviewWhiteLabel)
 		q.GET("/:id", genHandler.GetByID)
 		q.POST("/generate", genHandler.Generate)
 		q.POST("/preview", genHandler.Preview)
@@ -321,7 +322,8 @@ func TestPreview_HTTP_CalculatesWithoutAIOrPersistence(t *testing.T) {
 	router := newGenerationRouter(pool, provider, fx.companyID)
 	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
 	payload := dto.GenerateQuotationRequest{
-		RateCardID: cardID,
+		CommercialScheme: domain.CommercialSchemeDedicatedSquad,
+		RateCardID:       cardID,
 		DedicatedSquad: &domain.DedicatedSquadInput{
 			Model: domain.ModelSOWSmall, Requirement: "Bangun portal pelanggan",
 			DevelopmentSquad: []domain.SquadLineInput{{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}},
@@ -1156,5 +1158,219 @@ func TestPreviewSubscriptionSaaS_HTTP_Guards(t *testing.T) {
 		w := doJSON(r, http.MethodPost, "/quotation/v1/quotations/preview/subscription-saas", nil, body)
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, 0, provider.calls())
+	})
+}
+
+func ponpesWhiteLabelPreviewRequest() dto.GenerateQuotationRequest {
+	quotationDate := time.Date(2026, time.September, 7, 0, 0, 0, 0, time.UTC)
+	return dto.GenerateQuotationRequest{
+		Subject:          "Penawaran White Label POS Mini Market",
+		SolutionType:     "white_label_product",
+		CommercialScheme: domain.CommercialSchemeWhiteLabel,
+		WhiteLabel: &domain.WhiteLabelInput{
+			ProductName:   "POS Mini Market",
+			QuotationDate: quotationDate,
+			TaxTreatment:  domain.WhiteLabelTaxExclusive,
+			LicenseItems: []domain.WhiteLabelLicenseItemInput{
+				{Name: "POS Mini Market", UnitRate: 35_000_000, Quantity: 1},
+			},
+			MaintenanceItems: []domain.WhiteLabelMaintenanceItemInput{
+				{Name: "Senior Web Programmer", MonthlyRate: 16_170_000, FTEQuarters: 2, PeriodMonths: 3},
+			},
+			HostingItems: []domain.WhiteLabelHostingItemInput{
+				{Name: "Shared Hosting Small", MonthlyRate: 350_000, Quantity: 1, PeriodMonths: 3},
+			},
+			ModuleGroups: []domain.WhiteLabelModuleGroupInput{
+				{Name: "Inventory", Features: []string{"Stok masuk", "Stok keluar"}},
+			},
+			TimelineRows: []domain.WhiteLabelTimelineRowInput{
+				{Description: "Implementasi Sistem", Timeline: "Bulan 1-3"},
+			},
+			PaymentSchedule: []domain.WhiteLabelPaymentRowInput{
+				{WorkPeriod: "Pembelian White Label", Terms: "Pelunasan", InvoiceDateLabel: "Saat kontrak ditandatangani", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentLicense, Nominal: 35_000_000},
+				{WorkPeriod: "Maintenance 1", Terms: "Bulanan", InvoiceDateLabel: "Bulan 1", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+				{WorkPeriod: "Maintenance 2", Terms: "Bulanan", InvoiceDateLabel: "Bulan 2", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+				{WorkPeriod: "Maintenance 3", Terms: "Bulanan", InvoiceDateLabel: "Bulan 3", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+			},
+			RightsStatements: []string{"Hak cipta source code dan re-branding disepakati."},
+			LimitationCodes:  []string{"out_of_pocket", "overtime", "third_party", "scope_change"},
+		},
+	}
+}
+
+type spyDedicatedSquadCalculator struct {
+	calls int
+}
+
+func (s *spyDedicatedSquadCalculator) Calculate(ctx context.Context, companyID, rateCardID string, input domain.DedicatedSquadInput) (domain.DedicatedSquadCalculation, error) {
+	s.calls++
+	return domain.DedicatedSquadCalculation{}, nil
+}
+
+func TestPreviewWhiteLabel_HTTP_Success(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	spyCalc := &spyDedicatedSquadCalculator{}
+	provider := &adaptiveAIProvider{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+
+	router.Use(func(c *gin.Context) {
+		c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+			UserID:    httpTestUser.String(),
+			CompanyID: companyID.String(),
+		})
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/white-label", h.PreviewWhiteLabel)
+
+	reqPayload := ponpesWhiteLabelPreviewRequest()
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var responseBody struct {
+		Message string                        `json:"message"`
+		Data    dto.WhiteLabelPreviewResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+	assert.Equal(t, "White label preview calculated successfully", responseBody.Message)
+
+	// Verification of calculation totals
+	assert.Equal(t, int64(60_305_000), responseBody.Data.Calculation.TotalInvestment)
+	assert.Equal(t, int64(35_000_000), responseBody.Data.Calculation.LicenseSubtotal)
+	assert.Equal(t, int64(24_255_000), responseBody.Data.Calculation.MaintenanceSubtotal)
+	assert.Equal(t, int64(1_050_000), responseBody.Data.Calculation.HostingSubtotal)
+	assert.Equal(t, int64(25_305_000), responseBody.Data.Calculation.MaintenanceHostingSubtotal)
+	assert.Equal(t, int64(35_000_000), responseBody.Data.Calculation.LicensePaymentTotal)
+	assert.Equal(t, int64(25_305_000), responseBody.Data.Calculation.MaintenanceHostingPaymentTotal)
+	assert.Equal(t, int64(60_305_000), responseBody.Data.Calculation.PaymentTotal)
+
+	// Verification of resolved profile
+	assert.Equal(t, domain.WhiteLabelTaxExclusive, responseBody.Data.ResolvedProfile.TaxTreatment)
+	assert.Equal(t, "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.", responseBody.Data.ResolvedProfile.TaxClauseText)
+	assert.True(t, responseBody.Data.ResolvedProfile.ShowMaintenanceHosting)
+	assert.True(t, responseBody.Data.ResolvedProfile.ShowScopeTimeline)
+	assert.True(t, responseBody.Data.ResolvedProfile.ShowRights)
+	require.Len(t, responseBody.Data.ResolvedProfile.Sections, 5)
+	assert.Equal(t, "white_label_cost", responseBody.Data.ResolvedProfile.Sections[0].Code)
+	assert.Equal(t, "maintenance_hosting", responseBody.Data.ResolvedProfile.Sections[1].Code)
+	assert.Equal(t, "scope_timeline", responseBody.Data.ResolvedProfile.Sections[2].Code)
+	assert.Equal(t, "payment", responseBody.Data.ResolvedProfile.Sections[3].Code)
+	assert.Equal(t, "limitations", responseBody.Data.ResolvedProfile.Sections[4].Code)
+
+	// Verify calculator did NOT touch Dedicated Squad calculator and no AI calls made
+	assert.Equal(t, 0, spyCalc.calls, "dedicated squad calculator must not be touched")
+	assert.Equal(t, 0, provider.calls(), "AI provider must not be called")
+}
+
+func TestPreviewWhiteLabel_HTTP_Guards(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+
+	router.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Omit-Company") == "" {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+		}
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/white-label", h.PreviewWhiteLabel)
+
+	t.Run("missing payload (bad JSON) returns 400", func(t *testing.T) {
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, []byte("invalid-json-payload"))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid request")
+	})
+
+	t.Run("missing company context returns 403", func(t *testing.T) {
+		payload := ponpesWhiteLabelPreviewRequest()
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/quotation/v1/quotations/preview/white-label", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Omit-Company", "true")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Company context is required")
+	})
+
+	t.Run("scheme mismatch returns 400", func(t *testing.T) {
+		payload := ponpesWhiteLabelPreviewRequest()
+		payload.CommercialScheme = "subscription_saas"
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid white label request")
+	})
+
+	t.Run("white_label is nil returns 400", func(t *testing.T) {
+		payload := dto.GenerateQuotationRequest{
+			CommercialScheme: domain.CommercialSchemeWhiteLabel,
+			WhiteLabel:       nil,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid white label request")
+	})
+
+	t.Run("dedicated_squad ikut dikirim returns 400", func(t *testing.T) {
+		payload := ponpesWhiteLabelPreviewRequest()
+		payload.DedicatedSquad = &domain.DedicatedSquadInput{
+			Model: domain.ModelSOWSmall,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid white label request")
+	})
+
+	t.Run("invalid nested field returns 400", func(t *testing.T) {
+		payload := ponpesWhiteLabelPreviewRequest()
+		payload.WhiteLabel.TaxTreatment = domain.WhiteLabelTaxTreatment("unsupported_tax")
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid white label input")
+	})
+
+	t.Run("payment mismatch returns 422", func(t *testing.T) {
+		payload := ponpesWhiteLabelPreviewRequest()
+		payload.WhiteLabel.PaymentSchedule[0].Nominal = 10_000_000 // Subtotal is 35_000_000
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "White label calculation mismatch")
+	})
+
+	t.Run("calculator does not touch Dedicated calculator", func(t *testing.T) {
+		spy := &spyDedicatedSquadCalculator{}
+		hWithSpy := handler.NewQuotationGenerationHandler(nil, nil, spy)
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+			c.Next()
+		})
+		r.POST("/quotation/v1/quotations/preview/white-label", hWithSpy.PreviewWhiteLabel)
+
+		payload := ponpesWhiteLabelPreviewRequest()
+		body, _ := json.Marshal(payload)
+		w := doJSON(r, http.MethodPost, "/quotation/v1/quotations/preview/white-label", nil, body)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 0, spy.calls, "dedicated squad calculator must not be called")
 	})
 }
