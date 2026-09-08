@@ -291,3 +291,231 @@ func TestGenerateQuotationRequest_WhiteLabelJSONSerialization(t *testing.T) {
 		assert.Contains(t, err.Error(), "unknown field")
 	})
 }
+
+func TestGenerateQuotationRequest_StandaloneMaintenanceJSONSerialization(t *testing.T) {
+	quotationDate := time.Date(2026, time.July, 7, 0, 0, 0, 0, time.UTC)
+	req := GenerateQuotationRequest{
+		Subject:          "Penawaran Standalone Maintenance Nex Health",
+		SolutionType:     "Maintenance",
+		CommercialScheme: domain.CommercialSchemeStandaloneMaintenance,
+		StandaloneMaintenance: &domain.StandaloneMaintenanceInput{
+			SystemName:    "Aplikasi Nex Health",
+			QuotationDate: quotationDate,
+			Mode:          domain.StandaloneMaintenanceRetainer,
+			TaxTreatment:  domain.StandaloneTaxExclusive,
+			RetainerItems: []domain.MaintenanceRetainerItemInput{
+				{Name: "Senior Web Programmer", MonthlyRate: 16_050_000, FTEQuarters: 4, PeriodMonths: 1},
+				{Name: "Senior Quality Assurance", MonthlyRate: 14_070_000, FTEQuarters: 2, PeriodMonths: 1},
+			},
+			DefectGroups: []domain.MaintenanceDefectGroupInput{{
+				Title: "1. Detail Pasien",
+				Items: []domain.MaintenanceDefectItemInput{{
+					ItemNumber:  "1.1",
+					Priority:    domain.StandalonePriorityP0,
+					Function:    "Melihat riwayat medis pasien di luar sesi konsultasi.",
+					ScreenFlow:  "Pasien > Data Pasien dan Riwayat > Lihat Detail Pasien > Medical History.",
+					Existing:    "Hanya mencantumkan catatan registrasi awal.",
+					Improvement: "Mencantumkan seluruh riwayat SOAP (Dokter, Terapis, dan Perawat).",
+					Reference:   "Ref 1.01",
+				}},
+			}},
+			ShowDiscountRow: true,
+			DiscountAmount:  0,
+			PaymentSchedule: []domain.MaintenancePaymentRowInput{{
+				WorkPeriod:       "13 Juli - 13 Agustus 2026",
+				Terms:            "Maintenance",
+				InvoiceDateLabel: "13 Agustus 2026",
+				DueDateLabel:     "27 Agustus 2026",
+				Nominal:          23_085_000,
+			}},
+			RightsStatements: []string{"Source code tetap menjadi hak milik klien."},
+		},
+	}
+
+	t.Run("round trip serialization for retainer mode", func(t *testing.T) {
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		var raw map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(b, &raw))
+		require.Contains(t, raw, "standalone_maintenance")
+
+		var decoded GenerateQuotationRequest
+		require.NoError(t, json.Unmarshal(b, &decoded))
+		require.NotNil(t, decoded.StandaloneMaintenance)
+		assert.Equal(t, "Aplikasi Nex Health", decoded.StandaloneMaintenance.SystemName)
+		assert.Equal(t, quotationDate, decoded.StandaloneMaintenance.QuotationDate.UTC())
+		assert.Equal(t, domain.StandaloneMaintenanceRetainer, decoded.StandaloneMaintenance.Mode)
+		assert.Equal(t, domain.StandaloneTaxExclusive, decoded.StandaloneMaintenance.TaxTreatment)
+		assert.Len(t, decoded.StandaloneMaintenance.RetainerItems, 2)
+		assert.Len(t, decoded.StandaloneMaintenance.DefectGroups, 1)
+		assert.Len(t, decoded.StandaloneMaintenance.DefectGroups[0].Items, 1)
+		assert.True(t, decoded.StandaloneMaintenance.ShowDiscountRow)
+		assert.Equal(t, int64(0), decoded.StandaloneMaintenance.DiscountAmount)
+		assert.Len(t, decoded.StandaloneMaintenance.PaymentSchedule, 1)
+		assert.Len(t, decoded.StandaloneMaintenance.RightsStatements, 1)
+		require.NoError(t, decoded.StandaloneMaintenance.Validate())
+	})
+
+	t.Run("round trip serialization for hourly mode", func(t *testing.T) {
+		hourlyDate := time.Date(2026, time.July, 10, 0, 0, 0, 0, time.UTC)
+		hourlyReq := GenerateQuotationRequest{
+			Subject:          "Penawaran Standalone Support Liputan6",
+			SolutionType:     "Support",
+			CommercialScheme: domain.CommercialSchemeStandaloneMaintenance,
+			StandaloneMaintenance: &domain.StandaloneMaintenanceInput{
+				SystemName:    "Portal Berita Liputan6",
+				QuotationDate: hourlyDate,
+				Mode:          domain.StandaloneMaintenanceHourlyTask,
+				TaxTreatment:  domain.StandaloneTaxNotStated,
+				HourlyCostItems: []domain.MaintenanceHourlyCostItemInput{
+					{Name: "Senior Mobile", DisplayMonthlyRate: 16_050_000, Headcount: 1, HoursHalfUnits: 16, QuotedLineTotal: 730_000},
+				},
+				HourlyTasks: []domain.MaintenanceHourlyTaskInput{
+					{Description: "Perbaikan bug", Platform: "Mobile Android", HoursHalfUnits: 16},
+				},
+				ShowDiscountRow: false,
+				DiscountAmount:  0,
+				PaymentSchedule: []domain.MaintenancePaymentRowInput{{
+					WorkPeriod:       "Support Juli 2026",
+					Terms:            "Pelunasan",
+					InvoiceDateLabel: "31 Juli 2026",
+					DueDateLabel:     "14 Agustus 2026",
+					Nominal:          730_000,
+				}},
+			},
+		}
+
+		b, err := json.Marshal(hourlyReq)
+		require.NoError(t, err)
+
+		var decoded GenerateQuotationRequest
+		require.NoError(t, json.Unmarshal(b, &decoded))
+		require.NotNil(t, decoded.StandaloneMaintenance)
+		assert.Equal(t, "Portal Berita Liputan6", decoded.StandaloneMaintenance.SystemName)
+		assert.Equal(t, domain.StandaloneMaintenanceHourlyTask, decoded.StandaloneMaintenance.Mode)
+		assert.Len(t, decoded.StandaloneMaintenance.HourlyCostItems, 1)
+		assert.Len(t, decoded.StandaloneMaintenance.HourlyTasks, 1)
+		require.NoError(t, decoded.StandaloneMaintenance.Validate())
+	})
+
+	t.Run("rejects request with unknown nested field inside standalone_maintenance", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "standalone_maintenance",
+			"standalone_maintenance": {
+				"system_name": "Aplikasi Nex Health",
+				"quotation_date": "2026-07-07",
+				"mode": "retainer",
+				"tax_treatment": "exclusive_ppn",
+				"retainer_items": [{"name": "Senior Web Programmer", "monthly_rate": 16050000, "fte_quarters": 4, "period_months": 1}],
+				"defect_groups": [{"title": "1. Detail", "items": [{"item_number": "1.1", "priority": "P0", "function": "F", "screen_flow": "S", "existing": "E", "improvement": "I"}]}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Maint", "invoice_date_label": "Inv", "due_date_label": "Due", "nominal": 16050000}],
+				"unrecognized_field": "disallowed"
+			}
+		}`
+
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside retainer_items", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "standalone_maintenance",
+			"standalone_maintenance": {
+				"system_name": "Aplikasi Nex Health",
+				"quotation_date": "2026-07-07",
+				"mode": "retainer",
+				"tax_treatment": "exclusive_ppn",
+				"retainer_items": [{"name": "Senior Web Programmer", "monthly_rate": 16050000, "fte_quarters": 4, "period_months": 1, "illegal_prop": 999}],
+				"defect_groups": [{"title": "1. Detail", "items": [{"item_number": "1.1", "priority": "P0", "function": "F", "screen_flow": "S", "existing": "E", "improvement": "I"}]}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Maint", "invoice_date_label": "Inv", "due_date_label": "Due", "nominal": 16050000}]
+			}
+		}`
+
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside defect_groups items", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "standalone_maintenance",
+			"standalone_maintenance": {
+				"system_name": "Aplikasi Nex Health",
+				"quotation_date": "2026-07-07",
+				"mode": "retainer",
+				"tax_treatment": "exclusive_ppn",
+				"retainer_items": [{"name": "Senior Web Programmer", "monthly_rate": 16050000, "fte_quarters": 4, "period_months": 1}],
+				"defect_groups": [{"title": "1. Detail", "items": [{"item_number": "1.1", "priority": "P0", "function": "F", "screen_flow": "S", "existing": "E", "improvement": "I", "unknown_nested": true}]}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Maint", "invoice_date_label": "Inv", "due_date_label": "Due", "nominal": 16050000}]
+			}
+		}`
+
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside hourly_tasks", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "standalone_maintenance",
+			"standalone_maintenance": {
+				"system_name": "Portal Berita Liputan6",
+				"quotation_date": "2026-07-10",
+				"mode": "hourly_task",
+				"tax_treatment": "not_stated",
+				"hourly_cost_items": [{"name": "Dev", "display_monthly_rate": 16050000, "headcount": 1, "hours_half_units": 16, "quoted_line_total": 730000}],
+				"hourly_tasks": [{"description": "Fix bug", "platform": "Mobile", "hours_half_units": 16, "unknown_task_attr": "nope"}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Maint", "invoice_date_label": "Inv", "due_date_label": "Due", "nominal": 730000}]
+			}
+		}`
+
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+}
+
+func TestStandaloneMaintenancePreviewResponse_JSONSerialization(t *testing.T) {
+	resp := StandaloneMaintenancePreviewResponse{
+		Calculation: domain.StandaloneMaintenanceCalculation{
+			Mode: domain.StandaloneMaintenanceRetainer,
+			Retainer: []domain.MaintenanceRetainerLineCalculation{{
+				MaintenanceRetainerItemInput: domain.MaintenanceRetainerItemInput{
+					Name: "Senior Web Programmer", MonthlyRate: 16_050_000, FTEQuarters: 4, PeriodMonths: 1,
+				},
+				LineTotal: 16_050_000,
+			}},
+			Subtotal:        16_050_000,
+			DiscountAmount:  0,
+			TotalInvestment: 16_050_000,
+			PaymentTotal:    16_050_000,
+		},
+		ResolvedProfile: domain.ResolvedStandaloneMaintenanceProfile{
+			Mode:            domain.StandaloneMaintenanceRetainer,
+			TaxTreatment:    domain.StandaloneTaxExclusive,
+			TaxClauseText:   "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
+			ShowDiscountRow: true,
+			ShowRights:      false,
+			Sections: []domain.DocumentSection{
+				{Number: 1, Code: "maintenance_cost", Title: "Biaya Maintenance"},
+			},
+		},
+	}
+
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var decoded StandaloneMaintenancePreviewResponse
+	require.NoError(t, json.Unmarshal(b, &decoded))
+	assert.Equal(t, domain.StandaloneMaintenanceRetainer, decoded.Calculation.Mode)
+	assert.Equal(t, int64(16_050_000), decoded.Calculation.TotalInvestment)
+	assert.Equal(t, domain.StandaloneTaxExclusive, decoded.ResolvedProfile.TaxTreatment)
+	assert.Len(t, decoded.ResolvedProfile.Sections, 1)
+	assert.Equal(t, "Biaya Maintenance", decoded.ResolvedProfile.Sections[0].Title)
+}
