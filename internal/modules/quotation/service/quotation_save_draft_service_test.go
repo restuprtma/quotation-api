@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/service"
 )
@@ -284,8 +285,8 @@ func TestSaveDraft_WhiteLabel_Success_UnmodifiedNarrative(t *testing.T) {
 	// Modify narrative in opening paragraph without touching commercial, rights, or legal
 	modifiedHTML := strings.Replace(
 		snap.html,
-		"Melalui penawaran ini, Venturo menyampaikan",
-		"Melalui surat penawaran resmi ini, Venturo menyampaikan",
+		"Melalui penawaran ini, kami menegaskan",
+		"Melalui surat penawaran resmi ini, kami menegaskan",
 		1,
 	)
 	require.NotEqual(t, snap.html, modifiedHTML)
@@ -499,4 +500,544 @@ func TestSaveDraft_WhiteLabel_StaleVersion_FailsWithConflict(t *testing.T) {
 	require.Error(t, err)
 	assertGenerationCode(t, err, service.ErrCodeRevisionConflict)
 }
+
+// ---------------------------------------------------------------------------
+// Standalone Maintenance Save Draft Integration Tests
+// ---------------------------------------------------------------------------
+
+func TestSaveDraft_StandaloneMaintenance_Success_Unmodified(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	require.Equal(t, 1, snap.version)
+	require.NotEmpty(t, snap.html)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, qid, res.QuotationID)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+	assert.False(t, res.UpdatedAt.IsZero())
+
+	// Verify in DB
+	snapAfter := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 2, snapAfter.version)
+
+	var legalMod, commMod bool
+	err = pool.QueryRow(context.Background(), `
+		SELECT legal_content_modified, commercial_content_modified
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&legalMod, &commMod)
+	require.NoError(t, err)
+	assert.False(t, legalMod)
+	assert.False(t, commMod)
+}
+
+func TestSaveDraft_StandaloneMaintenance_ScopeEdits_AllowedWithoutFlag(t *testing.T) {
+	pool := getTestPool(t)
+
+	t.Run("RetainerDefectScopeEdits", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		// Edit function, screen flow, existing, and improvement in defect table
+		modifiedHTML := strings.Replace(
+			snap.html,
+			"Melihat riwayat medis pasien di luar sesi konsultasi.",
+			"Melihat riwayat medis pasien terintegrasi antar departemen rumah sakit.",
+			1,
+		)
+		modifiedHTML = strings.Replace(
+			modifiedHTML,
+			"Pasien &gt; Data Pasien dan Riwayat &gt; Lihat Detail Pasien &gt; Medical History.",
+			"Pasien &gt; Rekam Medis &gt; Riwayat Terpadu.",
+			1,
+		)
+		modifiedHTML = strings.Replace(
+			modifiedHTML,
+			"Hanya mencantumkan catatan registrasi awal.",
+			"Hanya menampilkan ringkasan registrasi kunjungan pertama.",
+			1,
+		)
+		modifiedHTML = strings.Replace(
+			modifiedHTML,
+			"Mencantumkan seluruh riwayat SOAP (Dokter, Terapis, dan Perawat).",
+			"Mencantumkan seluruh riwayat SOAP lengkap beserta catatan tindakan medis.",
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.False(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("HourlyTaskScopeEdits", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool, func(input *domain.StandaloneMaintenanceInput) {
+			*input = liputan6HourlyInputForCalculator()
+		})
+		snap := captureSnapshot(t, pool, qid)
+
+		// Edit hourly task description
+		modifiedHTML := strings.Replace(
+			snap.html,
+			"Perbaikan crash login",
+			"Perbaikan crash login saat SSO OAuth2 Google dan Apple ID",
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.False(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+}
+
+func TestSaveDraft_StandaloneMaintenance_CommercialModified(t *testing.T) {
+	pool := getTestPool(t)
+
+	t.Run("RetainerRateModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(snap.html, "Rp 16.050.000", "Rp 18.000.000", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("RetainerFTEModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(snap.html, "<td>Senior Web Programmer</td><td>Rp 16.050.000</td><td>1</td>", "<td>Senior Web Programmer</td><td>Rp 16.050.000</td><td>2</td>", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("RetainerPeriodMonthsModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(snap.html, "<td>1 Bulan</td>", "<td>3 Bulan</td>", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("RetainerLineTotalModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			`<td data-field="cost_line_total">Rp 16.050.000</td>`,
+			`<td data-field="cost_line_total">Rp 20.000.000</td>`,
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("TotalInvestmentModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			`<td data-field="total_investment"><strong>Rp 23.085.000</strong></td>`,
+			`<td data-field="total_investment"><strong>Rp 30.000.000</strong></td>`,
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("PaymentNominalModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			`<td data-field="payment_nominal">Rp 23.085.000</td>`,
+			`<td data-field="payment_nominal">Rp 25.000.000</td>`,
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("PaymentTotalModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			`<td data-field="payment_total"><strong>Rp 23.085.000</strong></td>`,
+			`<td data-field="payment_total"><strong>Rp 25.000.000</strong></td>`,
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("HourlyRateAndHoursModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool, func(input *domain.StandaloneMaintenanceInput) {
+			*input = liputan6HourlyInputForCalculator()
+		})
+		snap := captureSnapshot(t, pool, qid)
+
+		// Modify hourly display rate
+		modifiedHTML := strings.Replace(snap.html, "Rp 16.050.000", "Rp 18.000.000", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("HourlySubtotalAndDiscountModified", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool, func(input *domain.StandaloneMaintenanceInput) {
+			*input = liputan6HourlyInputForCalculator()
+			input.ShowDiscountRow = true
+			input.DiscountAmount = 70_000
+			input.PaymentSchedule[0].Nominal = 800_000
+		})
+		snap := captureSnapshot(t, pool, qid)
+
+		// Modify discount amount in commercial table
+		modifiedHTML := strings.Replace(
+			snap.html,
+			`<td data-field="discount_amount"><strong>Rp 70.000</strong></td>`,
+			`<td data-field="discount_amount"><strong>Rp 50.000</strong></td>`,
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+}
+
+func TestSaveDraft_StandaloneMaintenance_LegalModified(t *testing.T) {
+	pool := getTestPool(t)
+
+	t.Run("RightsModified_SetsLegalFlag", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool, func(input *domain.StandaloneMaintenanceInput) {
+			input.RightsStatements = []string{"Klien berhak atas akses konfigurasi maintenance."}
+		})
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			"Klien berhak atas akses konfigurasi maintenance.",
+			"Klien memiliki kepemilikan penuh atas seluruh source code dan hak cipta tanpa batas.",
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.LegalContentModified)
+		assert.False(t, res.CommercialContentModified)
+	})
+
+	t.Run("LegalTemplateBlockModified_SetsLegalFlag", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			"Syarat dan ketentuan penawaran resmi berlaku 30 hari.",
+			"Syarat dan ketentuan khusus telah dinegosiasikan 90 hari.",
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.LegalContentModified)
+		assert.False(t, res.CommercialContentModified)
+	})
+}
+
+func TestSaveDraft_StandaloneMaintenance_UnsafeDOM_Rejection(t *testing.T) {
+	pool := getTestPool(t)
+
+	t.Run("DuplicateCommercialBlock", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		before := captureSnapshot(t, pool, qid)
+
+		duplicated := before.html + `<section data-block-type="commercial"><table><tr><td>Duplicate</td></tr></table></section>`
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+		_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+			ContentHTML:    duplicated,
+			ContentVersion: before.version,
+		})
+		require.Error(t, err)
+		assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+		after := captureSnapshot(t, pool, qid)
+		assert.Equal(t, before.version, after.version)
+	})
+
+	t.Run("MissingPaymentBlock", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		before := captureSnapshot(t, pool, qid)
+
+		// Remove payment block
+		start := strings.Index(before.html, `<section data-block-type="payment"`)
+		require.True(t, start > 0)
+		end := strings.Index(before.html[start:], `</section>`)
+		require.True(t, end > 0)
+		withoutPayment := before.html[:start] + before.html[start+end+len("</section>"):]
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+		_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+			ContentHTML:    withoutPayment,
+			ContentVersion: before.version,
+		})
+		require.Error(t, err)
+		assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+		after := captureSnapshot(t, pool, qid)
+		assert.Equal(t, before.version, after.version)
+	})
+
+	t.Run("ScriptOnlyHTML", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		before := captureSnapshot(t, pool, qid)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+		_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+			ContentHTML:    "<script>alert('pwned')</script>",
+			ContentVersion: before.version,
+		})
+		require.Error(t, err)
+		assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+		after := captureSnapshot(t, pool, qid)
+		assert.Equal(t, before.version, after.version)
+	})
+
+	t.Run("IframeOnlyHTML", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		before := captureSnapshot(t, pool, qid)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+		_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+			ContentHTML:    `<iframe src="https://evil.example.com"></iframe>`,
+			ContentVersion: before.version,
+		})
+		require.Error(t, err)
+		assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+		after := captureSnapshot(t, pool, qid)
+		assert.Equal(t, before.version, after.version)
+	})
+
+	t.Run("SanitizationStripsMaliciousScript", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		maliciousHTML := fmt.Sprintf("<script>alert('pwned')</script>%s", snap.html)
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+			ContentHTML:    maliciousHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.NotContains(t, res.ContentHTML, "<script>")
+		assert.NotContains(t, res.ContentHTML, "alert('pwned')")
+	})
+}
+
+func TestSaveDraft_StandaloneMaintenance_SnapshotCorruption_Rejection(t *testing.T) {
+	pool := getTestPool(t)
+
+	cases := []struct {
+		name   string
+		column string
+		value  string
+	}{
+		{name: "calculation_snapshot_null", column: "calculation_snapshot", value: "null"},
+		{name: "calculation_snapshot_zero_investment", column: "calculation_snapshot", value: `{"mode":"retainer","total_investment":0}`},
+		{name: "calculation_snapshot_negative_investment", column: "calculation_snapshot", value: `{"mode":"retainer","total_investment":-100}`},
+		{name: "calculation_snapshot_corrupted_structure", column: "calculation_snapshot", value: `{"invalid_structure":true}`},
+		{name: "generation_input_null", column: "generation_input", value: "null"},
+		{name: "generation_input_nil_maintenance", column: "generation_input", value: `{"standalone_maintenance":null}`},
+		{name: "generation_input_invalid_maintenance", column: "generation_input", value: `{"standalone_maintenance":{"mode":"retainer","system_name":""}}`},
+		{name: "legal_template_snapshot_null", column: "legal_template_snapshot", value: "null"},
+		{name: "legal_template_snapshot_incomplete", column: "legal_template_snapshot", value: `{"code":"","content_html":""}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+			before := captureSnapshot(t, pool, qid)
+
+			// Tamper snapshot in DB
+			_, err := pool.Exec(context.Background(), fmt.Sprintf(
+				`UPDATE quotation_revisions SET %s = $1::jsonb WHERE quotation_id = $2`, tc.column,
+			), tc.value, qid)
+			require.NoError(t, err)
+
+			svc, _ := newSvc(pool, &scriptedAIProvider{})
+			_, err = svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+				ContentHTML:    before.html,
+				ContentVersion: before.version,
+			})
+			require.Error(t, err)
+			assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+			// Assert no JSON or internal SQL error leaking
+			errMsg := err.Error()
+			assert.NotContains(t, errMsg, "{")
+			assert.NotContains(t, errMsg, "}")
+			assert.NotContains(t, errMsg, "SELECT")
+			assert.NotContains(t, errMsg, "UPDATE")
+			assert.NotContains(t, errMsg, "pq:")
+			assert.NotContains(t, errMsg, "pgx:")
+
+			after := captureSnapshot(t, pool, qid)
+			assert.Equal(t, before.version, after.version)
+			assert.Equal(t, before.html, after.html)
+		})
+	}
+}
+
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/net/html"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
@@ -1247,6 +1249,8 @@ func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, co
 		return s.inspectWhiteLabelDraft(ctx, companyID, draft, html)
 	case domain.CommercialSchemeDedicatedSquad:
 		return s.inspectDedicatedDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeStandaloneMaintenance:
+		return s.inspectStandaloneMaintenanceDraft(ctx, companyID, draft, html)
 	default:
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial scheme snapshot is unsupported")
 	}
@@ -1431,7 +1435,7 @@ func (s *QuotationGenerationService) inspectWhiteLabelDraft(ctx context.Context,
 		}
 	}
 
-	stdLegalMod, lerr := s.domValidator.CheckLegalModified(html, expectedLegalHTML)
+	stdLegalMod, lerr := s.checkStandaloneMaintenanceLegalModified(html, expectedLegalHTML)
 	if lerr != nil {
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
 	}
@@ -1451,6 +1455,120 @@ func (s *QuotationGenerationService) inspectWhiteLabelDraft(ctx context.Context,
 	}
 
 	return stdLegalMod || rightsMod, commMod, calculation.TotalInvestment, nil
+}
+
+func (s *QuotationGenerationService) inspectStandaloneMaintenanceDraft(
+	ctx context.Context,
+	companyID uuid.UUID,
+	draft *repository.DraftRevisionForSave,
+	htmlStr string,
+) (legalModified, commercialModified bool, total int64, err error) {
+	var calculation domain.StandaloneMaintenanceCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "standalone maintenance calculation snapshot is invalid")
+	}
+
+	var generationInput dto.GenerateQuotationRequest
+	if len(draft.GenerationInput) == 0 || string(draft.GenerationInput) == "null" || json.Unmarshal(draft.GenerationInput, &generationInput) != nil || generationInput.StandaloneMaintenance == nil || generationInput.StandaloneMaintenance.Validate() != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "standalone maintenance generation input snapshot is invalid")
+	}
+
+	if verr := s.domValidator.ValidateDocumentSafety(htmlStr, nil, calculation.TotalInvestment); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	root, perr := html.Parse(strings.NewReader(htmlStr))
+	if perr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse document")
+	}
+	nodes := collectNodes(root)
+	for _, bType := range []string{"commercial", "payment"} {
+		block, berr := findExactlyOne(nodes, "data-block-type", bType)
+		if berr != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("invalid %s block structure", bType))
+		}
+		if block == nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("%s block is missing", bType))
+		}
+	}
+
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
+	}
+	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
+	if expectedLegalHTML == "" {
+		if strings.TrimSpace(legalSnap.Code) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
+		}
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
+		}
+		expectedLegalHTML = tmpl.ContentHTML
+	}
+
+	stdLegalMod, lerr := s.checkStandaloneMaintenanceLegalModified(htmlStr, expectedLegalHTML)
+	if lerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+	}
+
+	rightsMod, rerr := CheckStandaloneMaintenanceRightsModified(htmlStr, *generationInput.StandaloneMaintenance)
+	if rerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse rights block")
+	}
+
+	commMod, cerr := CheckStandaloneMaintenanceCommercialModified(htmlStr, *generationInput.StandaloneMaintenance, calculation)
+	if cerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	}
+
+	return stdLegalMod || rightsMod, commMod, calculation.TotalInvestment, nil
+}
+
+func (s *QuotationGenerationService) checkStandaloneMaintenanceLegalModified(documentHTML string, expectedLegalHTML string) (bool, error) {
+	if strings.TrimSpace(expectedLegalHTML) == "" {
+		return false, nil
+	}
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return true, fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
+	}
+	nodes := collectNodes(root)
+	legalBlock, err := findExactlyOne(nodes, "data-block-type", "legal")
+	if err != nil {
+		return true, err
+	}
+	if legalBlock == nil {
+		return true, nil
+	}
+
+	var buf bytes.Buffer
+	isFirstH2 := true
+	for child := legalBlock.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.CommentNode {
+			continue
+		}
+		if child.Type == html.ElementNode && child.Data == "h2" && isFirstH2 {
+			isFirstH2 = false
+			continue
+		}
+		if err := html.Render(&buf, child); err != nil {
+			return true, err
+		}
+	}
+	renderedLegal, err := canonicalizeFragmentHTML(buf.String())
+	if err != nil {
+		return true, err
+	}
+	expectedLegal, err := canonicalizeFragmentHTML(expectedLegalHTML)
+	if err != nil {
+		return true, err
+	}
+	return renderedLegal != expectedLegal, nil
 }
 
 // ---------------------------------------------------------------------------
