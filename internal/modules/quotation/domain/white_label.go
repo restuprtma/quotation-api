@@ -417,3 +417,12 @@ type WhiteLabelCalculation struct {
 	MaintenanceHostingPaymentTotal int64                                  `json:"maintenance_hosting_payment_total"`
 	PaymentTotal                   int64                                  `json:"payment_total"`
 }
+
+type ResolvedWhiteLabelProfile struct {
+	TaxTreatment           WhiteLabelTaxTreatment `json:"tax_treatment"`
+	TaxClauseText          string                 `json:"tax_clause_text,omitempty"`
+	ShowMaintenanceHosting bool                   `json:"show_maintenance_hosting"`
+	ShowScopeTimeline      bool                   `json:"show_scope_timeline"`
+	ShowRights             bool                   `json:"show_rights"`
+	Sections               []DocumentSection      `json:"sections"`
+}

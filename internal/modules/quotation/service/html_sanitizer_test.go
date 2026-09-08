@@ -285,3 +285,98 @@ func TestSanitize_PlainTextUntouched(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "teks polos tanpa tag", out)
 }
+
+func TestSanitize_PreservesWhiteLabelMarkers(t *testing.T) {
+	s := newSanitizerUnderTest()
+
+	input := `<article class="quotation-document">` +
+		`<header data-block-type="metadata"><h1>PENAWARAN LAYANAN WHITE LABEL PRODUCT</h1><p><span data-field="quotation_number">Q-01</span></p></header>` +
+		`<section data-block-type="opening"><p>Melalui penawaran ini...</p></section>` +
+		`<section data-block-type="commercial" data-section-number="1"><h2>1. Biaya White Label</h2>` +
+		`<table><tbody>` +
+		`<tr data-role="license_0"><td>POS Mini Market</td><td>Rp 35.000.000</td><td>1</td><td data-field="license_line_total">Rp 35.000.000</td></tr>` +
+		`<tr><td colspan="3"><strong>TOTAL INVESTMENT</strong></td><td data-field="total_license"><strong>Rp 35.000.000</strong></td></tr>` +
+		`</tbody></table></section>` +
+		`<section data-block-type="commercial-maintenance-hosting" data-section-number="2"><h2>2. Biaya Maintenance &amp; Hosting</h2>` +
+		`<table><tbody>` +
+		`<tr data-role="maintenance_0"><td>Senior Web Programmer</td><td>Rp 16.170.000</td><td>0.5</td><td>3 Bulan</td><td data-field="maintenance_line_total">Rp 24.255.000</td></tr>` +
+		`<tr data-role="hosting_0"><td>Shared Hosting Small</td><td>Rp 350.000</td><td>-</td><td>3 Bulan</td><td data-field="hosting_line_total">Rp 1.050.000</td></tr>` +
+		`<tr><td colspan="4"><strong>TOTAL</strong></td><td data-field="maintenance_hosting_total"><strong>Rp 25.305.000</strong></td></tr>` +
+		`</tbody></table></section>` +
+		`<section data-block-type="scope" data-section-number="3"><h2>3. Lingkup Pekerjaan &amp; Timeline</h2>` +
+		`<h3>Master Data</h3><ul><li>Data Produk</li></ul>` +
+		`<section data-block-type="timeline"><table><tbody><tr><td>Setup</td><td>Bulan 1</td></tr></tbody></table></section>` +
+		`</section>` +
+		`<section data-block-type="payment" data-section-number="4"><h2>4. Pembayaran</h2>` +
+		`<table><tbody><tr><td>Pembelian</td><td>Pelunasan</td><td>Kontrak</td><td>H+14</td><td data-field="payment_nominal">Rp 35.000.000</td></tr></tbody></table>` +
+		`<p data-field="tax_clause">Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.</p>` +
+		`</section>` +
+		`<div data-block-type="rights"><p>Hak cipta source code dan re-branding disepakati.</p></div>` +
+		`<section data-block-type="legal" data-section-number="5"><h2>5. Batasan dan Pengecualian</h2><ol><li>Batasan out-of-pocket</li></ol></section>` +
+		`<section data-block-type="signature"><table class="signature-table"><tbody><tr><td>Hormat Kami</td></tr></tbody></table></section>` +
+		`</article>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, `class="quotation-document"`)
+	assert.Contains(t, out, `data-block-type="metadata"`)
+	assert.Contains(t, out, `data-field="quotation_number"`)
+	assert.Contains(t, out, `data-block-type="opening"`)
+	assert.Contains(t, out, `data-block-type="commercial"`)
+	assert.Contains(t, out, `data-section-number="1"`)
+	assert.Contains(t, out, `data-role="license_0"`)
+	assert.Contains(t, out, `data-field="license_line_total"`)
+	assert.Contains(t, out, `data-block-type="commercial-maintenance-hosting"`)
+	assert.Contains(t, out, `data-section-number="2"`)
+	assert.Contains(t, out, `data-role="maintenance_0"`)
+	assert.Contains(t, out, `data-role="hosting_0"`)
+	assert.Contains(t, out, `data-field="maintenance_line_total"`)
+	assert.Contains(t, out, `data-field="hosting_line_total"`)
+	assert.Contains(t, out, `data-block-type="scope"`)
+	assert.Contains(t, out, `data-section-number="3"`)
+	assert.Contains(t, out, `data-block-type="timeline"`)
+	assert.Contains(t, out, `data-block-type="payment"`)
+	assert.Contains(t, out, `data-section-number="4"`)
+	assert.Contains(t, out, `data-field="payment_nominal"`)
+	assert.Contains(t, out, `data-field="tax_clause"`)
+	assert.Contains(t, out, `data-block-type="rights"`)
+	assert.Contains(t, out, `data-block-type="legal"`)
+	assert.Contains(t, out, `data-section-number="5"`)
+	assert.Contains(t, out, `data-block-type="signature"`)
+	assert.Contains(t, out, `class="signature-table"`)
+}
+
+func TestSanitize_StripsUnsafeAttributesAndTagsInWhiteLabelDocument(t *testing.T) {
+	s := newSanitizerUnderTest()
+
+	input := `<article class="quotation-document" style="display:none" data-unknown="evil">` +
+		`<section data-block-type="commercial" data-section-number="1" onclick="alert('click')">` +
+		`<tr data-role="license_0" data-custom="bad"><td data-field="license_line_total">Rp 35.000.000<script>alert('xss')</script></td></tr>` +
+		`</section>` +
+		`<div data-block-type="rights" style="color:red"><p><a href="javascript:alert(1)">klik disini</a></p></div>` +
+		`<section data-block-type="legal" data-section-number="5"><a href="https://evil.com">link</a></section>` +
+		`</article>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+
+	assert.NotContains(t, out, "<script")
+	assert.NotContains(t, out, "alert")
+	assert.NotContains(t, out, "onclick")
+	assert.NotContains(t, out, "href")
+	assert.NotContains(t, out, "style=")
+	assert.NotContains(t, out, "display:none")
+	assert.NotContains(t, out, "color:red")
+	assert.NotContains(t, out, "data-unknown")
+	assert.NotContains(t, out, "data-custom")
+
+	// Markers remain
+	assert.Contains(t, out, `data-block-type="commercial"`)
+	assert.Contains(t, out, `data-section-number="1"`)
+	assert.Contains(t, out, `data-role="license_0"`)
+	assert.Contains(t, out, `data-field="license_line_total"`)
+	assert.Contains(t, out, `data-block-type="rights"`)
+	assert.Contains(t, out, `data-block-type="legal"`)
+	assert.Contains(t, out, `data-section-number="5"`)
+}
