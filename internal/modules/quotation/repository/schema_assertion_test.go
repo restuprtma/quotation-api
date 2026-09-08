@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -202,13 +201,14 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			if !exists {
 				t.Error("expected constraint 'chk_quotations_commercial_scheme' on quotations table")
 			}
-			def, err := constraintDefinition(ctx, pool, "quotations", "chk_quotations_commercial_scheme")
+			definition, err := constraintDefinition(ctx, pool, "quotations", "chk_quotations_commercial_scheme")
 			if err != nil {
 				t.Fatalf("error getting constraint definition: %v", err)
 			}
-			if !strings.Contains(def, "dedicated_squad") || !strings.Contains(def, "subscription_saas") || !strings.Contains(def, "white_label") {
-				t.Errorf("expected constraint to allow 'dedicated_squad', 'subscription_saas', and 'white_label', got: %s", def)
-			}
+			assert.Contains(t, definition, "dedicated_squad")
+			assert.Contains(t, definition, "subscription_saas")
+			assert.Contains(t, definition, "white_label")
+			assert.Contains(t, definition, "standalone_maintenance")
 		})
 
 		t.Run("fk_quotations_active_published_revision", func(t *testing.T) {
