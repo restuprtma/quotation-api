@@ -388,3 +388,32 @@ func validateWhiteLabelLimitationCodes(codes []string) error {
 	}
 	return nil
 }
+
+type WhiteLabelLicenseLineCalculation struct {
+	WhiteLabelLicenseItemInput
+	LineTotal int64 `json:"line_total"`
+}
+
+type WhiteLabelMaintenanceLineCalculation struct {
+	WhiteLabelMaintenanceItemInput
+	LineTotal int64 `json:"line_total"`
+}
+
+type WhiteLabelHostingLineCalculation struct {
+	WhiteLabelHostingItemInput
+	LineTotal int64 `json:"line_total"`
+}
+
+type WhiteLabelCalculation struct {
+	License                        []WhiteLabelLicenseLineCalculation     `json:"license"`
+	Maintenance                    []WhiteLabelMaintenanceLineCalculation `json:"maintenance,omitempty"`
+	Hosting                        []WhiteLabelHostingLineCalculation     `json:"hosting,omitempty"`
+	LicenseSubtotal                int64                                  `json:"license_subtotal"`
+	MaintenanceSubtotal            int64                                  `json:"maintenance_subtotal"`
+	HostingSubtotal                int64                                  `json:"hosting_subtotal"`
+	MaintenanceHostingSubtotal     int64                                  `json:"maintenance_hosting_subtotal"`
+	TotalInvestment                int64                                  `json:"total_investment"`
+	LicensePaymentTotal            int64                                  `json:"license_payment_total"`
+	MaintenanceHostingPaymentTotal int64                                  `json:"maintenance_hosting_payment_total"`
+	PaymentTotal                   int64                                  `json:"payment_total"`
+}
