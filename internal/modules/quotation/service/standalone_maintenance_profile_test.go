@@ -1,0 +1,267 @@
+package service_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"venturo-skeleton-go/internal/modules/quotation/domain"
+	"venturo-skeleton-go/internal/modules/quotation/service"
+)
+
+func nexRetainerInputForProfile() domain.StandaloneMaintenanceInput {
+	return domain.StandaloneMaintenanceInput{
+		SystemName:    "Aplikasi Nex Health",
+		QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+		Mode:          domain.StandaloneMaintenanceRetainer,
+		TaxTreatment:  domain.StandaloneTaxExclusive,
+		RetainerItems: []domain.MaintenanceRetainerItemInput{
+			{Name: "Senior Web Programmer", MonthlyRate: 16_050_000, FTEQuarters: 4, PeriodMonths: 1},
+		},
+		DefectGroups: []domain.MaintenanceDefectGroupInput{{
+			Title: "  1. Detail Pasien  ",
+			Items: []domain.MaintenanceDefectItemInput{{
+				ItemNumber:  " 1.1 ",
+				Priority:    domain.StandalonePriorityP0,
+				Function:    " Melihat riwayat medis pasien di luar sesi konsultasi. ",
+				ScreenFlow:  " Pasien > Medical History. ",
+				Existing:    " Hanya registrasi awal. ",
+				Improvement: " Seluruh SOAP. ",
+				Reference:   " Ref 1.01 ",
+			}},
+		}},
+		ShowDiscountRow:  true,
+		DiscountAmount:   0,
+		RightsStatements: nil,
+	}
+}
+
+func liputan6HourlyInputForProfile() domain.StandaloneMaintenanceInput {
+	return domain.StandaloneMaintenanceInput{
+		SystemName:    "Portal Berita Liputan6",
+		QuotationDate: time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
+		Mode:          domain.StandaloneMaintenanceHourlyTask,
+		TaxTreatment:  domain.StandaloneTaxNotStated,
+		HourlyCostItems: []domain.MaintenanceHourlyCostItemInput{
+			{Name: "Senior Mobile Programmer", DisplayMonthlyRate: 16_050_000, Headcount: 1, HoursHalfUnits: 16, QuotedLineTotal: 730_000},
+		},
+		HourlyTasks: []domain.MaintenanceHourlyTaskInput{
+			{Description: "  Perbaikan crash login  ", Platform: "  Android  ", HoursHalfUnits: 16},
+			{Description: " Regression testing ", Platform: " QA Test ", HoursHalfUnits: 4},
+		},
+		ShowDiscountRow:  false,
+		DiscountAmount:   0,
+		RightsStatements: []string{" Source code dan modul merupakan hak milik bersama. "},
+	}
+}
+
+// Step 6: Profile tests for two modes and rights conditional
+func TestResolveStandaloneMaintenanceProfile_Sections(t *testing.T) {
+	t.Run("retainer without rights produces 4 sections", func(t *testing.T) {
+		input := nexRetainerInputForProfile()
+		input.RightsStatements = nil
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+
+		assert.Equal(t, domain.StandaloneMaintenanceRetainer, profile.Mode)
+		assert.False(t, profile.ShowRights)
+		assert.True(t, profile.ShowDiscountRow)
+
+		expectedSections := []domain.DocumentSection{
+			{Number: 1, Code: "maintenance_cost", Title: "Biaya Maintenance"},
+			{Number: 2, Code: "maintenance_scope", Title: "Lingkup Pekerjaan & Timeline"},
+			{Number: 3, Code: "payment", Title: "Pembayaran"},
+			{Number: 4, Code: "limitations", Title: "Batasan dan Pengecualian"},
+		}
+		assert.Equal(t, expectedSections, profile.Sections)
+	})
+
+	t.Run("hourly without rights produces 4 sections with development_cost", func(t *testing.T) {
+		input := liputan6HourlyInputForProfile()
+		input.RightsStatements = []string{} // empty slice
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+
+		assert.Equal(t, domain.StandaloneMaintenanceHourlyTask, profile.Mode)
+		assert.False(t, profile.ShowRights)
+		assert.False(t, profile.ShowDiscountRow)
+
+		expectedSections := []domain.DocumentSection{
+			{Number: 1, Code: "development_cost", Title: "Biaya Development"},
+			{Number: 2, Code: "maintenance_scope", Title: "Lingkup Pekerjaan & Timeline"},
+			{Number: 3, Code: "payment", Title: "Pembayaran"},
+			{Number: 4, Code: "limitations", Title: "Batasan dan Pengecualian"},
+		}
+		assert.Equal(t, expectedSections, profile.Sections)
+	})
+
+	t.Run("retainer with rights inserts rights as section 4 and limitations becomes section 5", func(t *testing.T) {
+		input := nexRetainerInputForProfile()
+		input.RightsStatements = []string{"Ketentuan hak kekayaan intelektual."}
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+
+		assert.True(t, profile.ShowRights)
+
+		expectedSections := []domain.DocumentSection{
+			{Number: 1, Code: "maintenance_cost", Title: "Biaya Maintenance"},
+			{Number: 2, Code: "maintenance_scope", Title: "Lingkup Pekerjaan & Timeline"},
+			{Number: 3, Code: "payment", Title: "Pembayaran"},
+			{Number: 4, Code: "rights", Title: "Hak Para Pihak"},
+			{Number: 5, Code: "limitations", Title: "Batasan dan Pengecualian"},
+		}
+		assert.Equal(t, expectedSections, profile.Sections)
+	})
+
+	t.Run("hourly with rights inserts rights as section 4 and limitations becomes section 5", func(t *testing.T) {
+		input := liputan6HourlyInputForProfile()
+		input.RightsStatements = []string{"Source code milik bersama."}
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+
+		assert.True(t, profile.ShowRights)
+
+		expectedSections := []domain.DocumentSection{
+			{Number: 1, Code: "development_cost", Title: "Biaya Development"},
+			{Number: 2, Code: "maintenance_scope", Title: "Lingkup Pekerjaan & Timeline"},
+			{Number: 3, Code: "payment", Title: "Pembayaran"},
+			{Number: 4, Code: "rights", Title: "Hak Para Pihak"},
+			{Number: 5, Code: "limitations", Title: "Batasan dan Pengecualian"},
+		}
+		assert.Equal(t, expectedSections, profile.Sections)
+	})
+}
+
+// Step 7: Tax text and normalizer tests
+func TestResolveStandaloneMaintenanceProfile_TaxTreatment(t *testing.T) {
+	t.Run("not_stated produces empty string", func(t *testing.T) {
+		input := nexRetainerInputForProfile()
+		input.TaxTreatment = domain.StandaloneTaxNotStated
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+		assert.Equal(t, "", profile.TaxClauseText)
+	})
+
+	t.Run("exclusive_ppn produces standard exclusive clause", func(t *testing.T) {
+		input := nexRetainerInputForProfile()
+		input.TaxTreatment = domain.StandaloneTaxExclusive
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+		assert.Equal(t, "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.", profile.TaxClauseText)
+	})
+
+	t.Run("inclusive_ppn produces standard inclusive clause", func(t *testing.T) {
+		input := nexRetainerInputForProfile()
+		input.TaxTreatment = domain.StandaloneTaxInclusive
+
+		profile := service.ResolveStandaloneMaintenanceProfile(input)
+		assert.Equal(t, "Total investasi telah termasuk PPN sesuai nilai yang disepakati dalam quotation ini.", profile.TaxClauseText)
+	})
+}
+
+func TestNormalizeStandaloneMaintenanceScope(t *testing.T) {
+	t.Run("retainer mode trims strings, preserves casing/order, and empties hourly tasks to non-nil", func(t *testing.T) {
+		input := nexRetainerInputForProfile()
+		input.DefectGroups = []domain.MaintenanceDefectGroupInput{
+			{
+				Title: "  Group 1  ",
+				Items: []domain.MaintenanceDefectItemInput{
+					{
+						ItemNumber:  " 1.1 ",
+						Priority:    domain.StandalonePriorityP0,
+						Function:    " Func A ",
+						ScreenFlow:  " Flow A ",
+						Existing:    " Exist A ",
+						Improvement: " Impr A ",
+						Reference:   " Ref 1.01 ",
+					},
+					{
+						ItemNumber:  " 1.2 ",
+						Priority:    domain.StandalonePriorityP1,
+						Function:    " Func B ",
+						ScreenFlow:  " Flow B ",
+						Existing:    " Exist B ",
+						Improvement: " Impr B ",
+						Reference:   " REF-P1 ",
+					},
+				},
+			},
+			{
+				Title: " Group 2 ",
+				Items: []domain.MaintenanceDefectItemInput{
+					{
+						ItemNumber:  " 2.1 ",
+						Priority:    domain.StandalonePriorityP2,
+						Function:    " Func C ",
+						ScreenFlow:  " Flow C ",
+						Existing:    " Exist C ",
+						Improvement: " Impr C ",
+						Reference:   "",
+					},
+				},
+			},
+		}
+		// Inactive hourly tasks in input should be emptied in output
+		input.HourlyTasks = []domain.MaintenanceHourlyTaskInput{
+			{Description: "Inactive", Platform: "Web", HoursHalfUnits: 2},
+		}
+
+		snapshot := service.NormalizeStandaloneMaintenanceScope(input)
+
+		// Defect groups order and content
+		assert.Len(t, snapshot.DefectGroups, 2)
+		assert.Equal(t, "Group 1", snapshot.DefectGroups[0].Title)
+		assert.Len(t, snapshot.DefectGroups[0].Items, 2)
+
+		item1 := snapshot.DefectGroups[0].Items[0]
+		assert.Equal(t, "1.1", item1.ItemNumber)
+		assert.Equal(t, domain.StandalonePriorityP0, item1.Priority)
+		assert.Equal(t, "Func A", item1.Function)
+		assert.Equal(t, "Flow A", item1.ScreenFlow)
+		assert.Equal(t, "Exist A", item1.Existing)
+		assert.Equal(t, "Impr A", item1.Improvement)
+		assert.Equal(t, "Ref 1.01", item1.Reference)
+
+		item2 := snapshot.DefectGroups[0].Items[1]
+		assert.Equal(t, "1.2", item2.ItemNumber)
+		assert.Equal(t, domain.StandalonePriorityP1, item2.Priority)
+		assert.Equal(t, "REF-P1", item2.Reference)
+
+		item3 := snapshot.DefectGroups[1].Items[0]
+		assert.Equal(t, "2.1", item3.ItemNumber)
+		assert.Equal(t, domain.StandalonePriorityP2, item3.Priority)
+		assert.Equal(t, "", item3.Reference)
+
+		// Inactive mode array must be non-nil empty slice
+		assert.NotNil(t, snapshot.HourlyTasks)
+		assert.Empty(t, snapshot.HourlyTasks)
+	})
+
+	t.Run("hourly mode trims strings, preserves order, and empties defect groups to non-nil", func(t *testing.T) {
+		input := liputan6HourlyInputForProfile()
+		input.HourlyTasks = []domain.MaintenanceHourlyTaskInput{
+			{Description: "  Perbaikan crash login  ", Platform: "  Android  ", HoursHalfUnits: 16},
+			{Description: " Regression testing ", Platform: " QA Test ", HoursHalfUnits: 4},
+		}
+		// Inactive defect groups in input should be emptied in output
+		input.DefectGroups = []domain.MaintenanceDefectGroupInput{
+			{Title: "Inactive", Items: []domain.MaintenanceDefectItemInput{{ItemNumber: "1"}}},
+		}
+
+		snapshot := service.NormalizeStandaloneMaintenanceScope(input)
+
+		assert.Len(t, snapshot.HourlyTasks, 2)
+		assert.Equal(t, "Perbaikan crash login", snapshot.HourlyTasks[0].Description)
+		assert.Equal(t, "Android", snapshot.HourlyTasks[0].Platform)
+		assert.Equal(t, int32(16), snapshot.HourlyTasks[0].HoursHalfUnits)
+
+		assert.Equal(t, "Regression testing", snapshot.HourlyTasks[1].Description)
+		assert.Equal(t, "QA Test", snapshot.HourlyTasks[1].Platform)
+		assert.Equal(t, int32(4), snapshot.HourlyTasks[1].HoursHalfUnits)
+
+		// Inactive mode array must be non-nil empty slice
+		assert.NotNil(t, snapshot.DefectGroups)
+		assert.Empty(t, snapshot.DefectGroups)
+	})
+}
