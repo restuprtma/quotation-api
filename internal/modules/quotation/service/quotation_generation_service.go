@@ -1435,7 +1435,7 @@ func (s *QuotationGenerationService) inspectWhiteLabelDraft(ctx context.Context,
 		}
 	}
 
-	stdLegalMod, lerr := s.checkStandaloneMaintenanceLegalModified(html, expectedLegalHTML)
+	stdLegalMod, lerr := s.checkSectionLegalModified(html, expectedLegalHTML)
 	if lerr != nil {
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
 	}
@@ -1511,7 +1511,7 @@ func (s *QuotationGenerationService) inspectStandaloneMaintenanceDraft(
 		expectedLegalHTML = tmpl.ContentHTML
 	}
 
-	stdLegalMod, lerr := s.checkStandaloneMaintenanceLegalModified(htmlStr, expectedLegalHTML)
+	stdLegalMod, lerr := s.checkSectionLegalModified(htmlStr, expectedLegalHTML)
 	if lerr != nil {
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
 	}
@@ -1529,7 +1529,7 @@ func (s *QuotationGenerationService) inspectStandaloneMaintenanceDraft(
 	return stdLegalMod || rightsMod, commMod, calculation.TotalInvestment, nil
 }
 
-func (s *QuotationGenerationService) checkStandaloneMaintenanceLegalModified(documentHTML string, expectedLegalHTML string) (bool, error) {
+func (s *QuotationGenerationService) checkSectionLegalModified(documentHTML string, expectedLegalHTML string) (bool, error) {
 	if strings.TrimSpace(expectedLegalHTML) == "" {
 		return false, nil
 	}
