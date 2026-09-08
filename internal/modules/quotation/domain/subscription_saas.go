@@ -189,7 +189,7 @@ func validateSubscriptionPriceCoverage(periods []SubscriptionPricePeriodInput, i
 	if len(periods) > MaxSubscriptionPricePeriods {
 		return fmt.Errorf("price_periods: must contain at most %d periods", MaxSubscriptionPricePeriods)
 	}
-	var currentOffset int32
+	var currentOffset int64
 	for i, period := range periods {
 		if l := len([]rune(strings.TrimSpace(period.Label))); l == 0 || l > MaxSubscriptionLabelRunes {
 			return fmt.Errorf("price_periods[%d].label: must be between 1 and %d characters", i, MaxSubscriptionLabelRunes)
@@ -197,18 +197,21 @@ func validateSubscriptionPriceCoverage(periods []SubscriptionPricePeriodInput, i
 		if period.DurationMonths <= 0 {
 			return fmt.Errorf("price_periods[%d].duration_months: must be greater than zero", i)
 		}
+		if period.DurationMonths > initialTermMonths {
+			return fmt.Errorf("price_periods[%d].duration_months: cannot exceed initial term (%d months)", i, initialTermMonths)
+		}
 		if period.MonthlyRate <= 0 {
 			return fmt.Errorf("price_periods[%d].monthly_rate: must be greater than zero", i)
 		}
 		if period.MonthlyRate > MaxSubscriptionSafeAmount {
 			return fmt.Errorf("price_periods[%d].monthly_rate: exceeds maximum safe amount", i)
 		}
-		if period.StartMonthOffset != currentOffset {
+		if int64(period.StartMonthOffset) != currentOffset {
 			return fmt.Errorf("price_periods[%d].start_month_offset: must be contiguous and start at 0, expected %d got %d", i, currentOffset, period.StartMonthOffset)
 		}
-		currentOffset += period.DurationMonths
+		currentOffset += int64(period.DurationMonths)
 	}
-	if currentOffset != initialTermMonths {
+	if currentOffset != int64(initialTermMonths) {
 		return fmt.Errorf("price_periods: total duration (%d months) must equal initial term (%d months)", currentOffset, initialTermMonths)
 	}
 	return nil
@@ -332,6 +335,9 @@ func validateIncomeSharing(sharing IncomeSharingInput) error {
 	}
 	if sharing.SettlementBusinessDays <= 0 {
 		return fmt.Errorf("income_sharing.settlement_business_days: must be greater than zero")
+	}
+	if sharing.SettlementBusinessDays > 365 {
+		return fmt.Errorf("income_sharing.settlement_business_days: cannot exceed 365 days")
 	}
 	return nil
 }

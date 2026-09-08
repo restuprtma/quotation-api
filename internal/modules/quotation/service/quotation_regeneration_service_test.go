@@ -78,7 +78,7 @@ func TestRegenerate_HappyPath_ReplacesHTMLIncrementsVersionSingleRevision(t *tes
 	// Mock terpisah untuk fase regenerate: alokasi sama, naratif berbeda.
 	regenMock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSON()},
-		{text: `<p>Narasi hasil regenerasi</p><ul><li>Scope diperbarui</li></ul>`},
+		{text: `<section data-block-type="opening"><p>Narasi hasil regenerasi</p><ul><li>Scope diperbarui</li></ul></section>`},
 	}}
 	svc, _ := newSvc(pool, regenMock)
 
@@ -127,7 +127,7 @@ func TestRegenerate_UsesSavedGenerationInput_StableQuotationNumber(t *testing.T)
 
 	regenMock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSON()},
-		{text: `<p>Narasi regenerasi input tersimpan</p>`},
+		{text: `<section data-block-type="opening"><p>Narasi regenerasi input tersimpan</p></section>`},
 	}}
 	svc, _ := newSvc(pool, regenMock)
 
@@ -232,7 +232,7 @@ func TestRegenerate_UnsafeNarrative_OldContentIntactVersionUnchanged(t *testing.
 	// Narrative membocorkan budget maximum => DOM validator menolak di tahap akhir.
 	regenMock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSON()},
-		{text: `<p>Total penawaran kami hanya Rp 150.000.000 semua termasuk.</p>`},
+		{text: `<section data-block-type="opening"><p>Total penawaran kami hanya Rp 150.000.000 semua termasuk.</p></section>`},
 	}}
 	svc, _ := newSvc(pool, regenMock)
 

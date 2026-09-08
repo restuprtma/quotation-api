@@ -658,6 +658,8 @@ func (s *QuotationGenerationService) generateWhiteLabel(ctx context.Context, com
 	}
 	modules := NormalizeWhiteLabelModules(input.ModuleGroups)
 	timeline := NormalizeWhiteLabelTimeline(input.TimelineRows)
+	input.ModuleGroups = modules
+	input.TimelineRows = timeline
 	metadata := QuotationMetadata{
 		QuotationNumber:   cfg.quotationNumber,
 		Subject:           strings.TrimSpace(req.Subject),
@@ -1077,6 +1079,8 @@ func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, co
 	switch draft.CommercialScheme {
 	case domain.CommercialSchemeSubscriptionSaaS:
 		return s.inspectSubscriptionSaaSDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeWhiteLabel:
+		return s.inspectWhiteLabelDraft(ctx, companyID, draft, html)
 	case domain.CommercialSchemeDedicatedSquad:
 		return s.inspectDedicatedDraft(ctx, companyID, draft, html)
 	default:
@@ -1220,6 +1224,58 @@ func (s *QuotationGenerationService) inspectSubscriptionSaaSDraft(ctx context.Co
 	}
 
 	return legalModified, commercialModified, calculation.TotalContract, nil
+}
+
+func (s *QuotationGenerationService) inspectWhiteLabelDraft(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {
+	var calculation domain.WhiteLabelCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "white label calculation snapshot is invalid")
+	}
+
+	var generationInput dto.GenerateQuotationRequest
+	if len(draft.GenerationInput) == 0 || string(draft.GenerationInput) == "null" || json.Unmarshal(draft.GenerationInput, &generationInput) != nil || generationInput.WhiteLabel == nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "white label generation input snapshot is invalid")
+	}
+
+	if verr := s.domValidator.ValidateDocumentSafety(html, nil, calculation.TotalInvestment); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
+	}
+	if err := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
+	if expectedLegalHTML == "" {
+		if strings.TrimSpace(legalSnap.Code) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
+		}
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
+		}
+		expectedLegalHTML = tmpl.ContentHTML
+	}
+
+	stdLegalMod, lerr := s.domValidator.CheckLegalModified(html, expectedLegalHTML)
+	if lerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+	}
+
+	rightsMod, rerr := CheckWhiteLabelRightsModified(html, generationInput.WhiteLabel.RightsStatements)
+	if rerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse rights block")
+	}
+
+	commMod, cerr := CheckWhiteLabelCommercialModified(html, calculation)
+	if cerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	}
+
+	return stdLegalMod || rightsMod, commMod, calculation.TotalInvestment, nil
 }
 
 // ---------------------------------------------------------------------------

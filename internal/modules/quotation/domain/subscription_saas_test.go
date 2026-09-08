@@ -295,6 +295,41 @@ func TestSubscriptionSaaSInput_ValidateMatrix(t *testing.T) {
 			},
 			wantErr: "price_periods[0].monthly_rate: exceeds maximum safe amount",
 		},
+		{
+			name: "duration exceeds initial term fails",
+			mutate: func(in *SubscriptionSaaSInput) {
+				in.InitialTermMonths = 12
+				in.PricePeriods = []SubscriptionPricePeriodInput{
+					{Label: "Period 1", StartMonthOffset: 0, DurationMonths: 13, MonthlyRate: 1_000_000},
+				}
+			},
+			wantErr: "price_periods[0].duration_months: cannot exceed initial term (12 months)",
+		},
+		{
+			name: "extreme duration with overflow potential fails",
+			mutate: func(in *SubscriptionSaaSInput) {
+				in.InitialTermMonths = 12
+				in.PricePeriods = []SubscriptionPricePeriodInput{
+					{Label: "Period 1", StartMonthOffset: 0, DurationMonths: 2147483647, MonthlyRate: 1_000_000},
+				}
+			},
+			wantErr: "price_periods[0].duration_months: cannot exceed initial term (12 months)",
+		},
+		{
+			name: "settlement 365 days accepted",
+			mutate: func(in *SubscriptionSaaSInput) {
+				*in = validPercetakanInput()
+				in.IncomeSharing.SettlementBusinessDays = 365
+			},
+		},
+		{
+			name: "settlement 366 days rejected",
+			mutate: func(in *SubscriptionSaaSInput) {
+				*in = validPercetakanInput()
+				in.IncomeSharing.SettlementBusinessDays = 366
+			},
+			wantErr: "income_sharing.settlement_business_days: cannot exceed 365 days",
+		},
 	}
 
 	for _, tc := range tests {

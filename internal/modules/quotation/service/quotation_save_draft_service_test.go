@@ -269,3 +269,234 @@ func TestSaveDraft_BudgetLeak_RejectsWithUnsafeHTML(t *testing.T) {
 	require.Error(t, err)
 	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
 }
+
+// ---------------------------------------------------------------------------
+// White Label Save Draft Integration Tests
+// ---------------------------------------------------------------------------
+
+func TestSaveDraft_WhiteLabel_Success_UnmodifiedNarrative(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	require.Equal(t, 1, snap.version)
+	require.NotEmpty(t, snap.html)
+
+	// Modify narrative in opening paragraph without touching commercial, rights, or legal
+	modifiedHTML := strings.Replace(
+		snap.html,
+		"Melalui penawaran ini, Venturo menyampaikan",
+		"Melalui surat penawaran resmi ini, Venturo menyampaikan",
+		1,
+	)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, qid, res.QuotationID)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+	assert.False(t, res.UpdatedAt.IsZero())
+
+	// Verify in DB
+	snapAfter := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 2, snapAfter.version)
+}
+
+func TestSaveDraft_WhiteLabel_CommercialModified(t *testing.T) {
+	pool := getTestPool(t)
+
+	t.Run("LicenseRateModified", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(snap.html, "Rp 35.000.000", "Rp 40.000.000", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("MaintenanceRateModified", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(snap.html, "Rp 16.170.000", "Rp 20.000.000", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("HostingRateModified", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(snap.html, "Rp 350.000", "Rp 750.000", 1)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+
+	t.Run("PaymentTotalModified", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		modifiedHTML := strings.Replace(
+			snap.html,
+			`<td data-field="payment_total"><strong>Rp 60.305.000</strong></td>`,
+			`<td data-field="payment_total"><strong>Rp 80.000.000</strong></td>`,
+			1,
+		)
+		require.NotEqual(t, snap.html, modifiedHTML)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		userID := uuid.New()
+
+		res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+			ContentHTML:    modifiedHTML,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.ContentVersion)
+		assert.True(t, res.CommercialContentModified)
+		assert.False(t, res.LegalContentModified)
+	})
+}
+
+func TestSaveDraft_WhiteLabel_RightsModified_SetsLegalFlag(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modifiedHTML := strings.Replace(
+		snap.html,
+		"Klien berhak menggunakan source code untuk kebutuhan internal.",
+		"Klien berhak menjual kembali source code ke pihak ketiga secara bebas.",
+		1,
+	)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.True(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+}
+
+func TestSaveDraft_WhiteLabel_MalformedSnapshots_RejectsWithoutUpdating(t *testing.T) {
+	for _, column := range []string{"calculation_snapshot", "generation_input"} {
+		t.Run(column, func(t *testing.T) {
+			pool := getTestPool(t)
+			qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+			before := captureSnapshot(t, pool, qid)
+
+			_, err := pool.Exec(context.Background(), fmt.Sprintf(
+				`UPDATE quotation_revisions SET %s = 'null'::jsonb WHERE quotation_id = $1`, column,
+			), qid)
+			require.NoError(t, err)
+
+			svc, _ := newSvc(pool, &scriptedAIProvider{})
+			_, err = svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+				ContentHTML:    before.html,
+				ContentVersion: before.version,
+			})
+			require.Error(t, err)
+			assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+			after := captureSnapshot(t, pool, qid)
+			assert.Equal(t, before.version, after.version)
+			assert.Equal(t, before.html, after.html)
+		})
+	}
+}
+
+func TestSaveDraft_WhiteLabel_Sanitization_StripsMaliciousScript(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	maliciousHTML := fmt.Sprintf("<script>alert('pwned')</script>%s", snap.html)
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    maliciousHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, res.ContentHTML, "<script>")
+	assert.NotContains(t, res.ContentHTML, "alert('pwned')")
+}
+
+func TestSaveDraft_WhiteLabel_StaleVersion_FailsWithConflict(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	// Pass stale version 99 (current is 1)
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 99,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeRevisionConflict)
+
+	// Save once to bump version to 2
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+
+	// Attempting to save again with version 1 must now fail
+	_, err = svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 1,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeRevisionConflict)
+}
+
