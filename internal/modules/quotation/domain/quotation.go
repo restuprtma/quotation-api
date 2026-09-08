@@ -10,6 +10,7 @@ import (
 const (
 	CommercialSchemeDedicatedSquad   = "dedicated_squad"
 	CommercialSchemeSubscriptionSaaS = "subscription_saas"
+	CommercialSchemeWhiteLabel       = "white_label"
 )
 
 // Quotation merepresentasikan data master quotation.

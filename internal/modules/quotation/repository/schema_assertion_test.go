@@ -6,11 +6,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func testDB(t *testing.T) *pgxpool.Pool {
+	return getTestPool(t)
+}
 
 func getTestPool(t *testing.T) *pgxpool.Pool {
 	dsn := os.Getenv("DATABASE_URL")
@@ -104,6 +111,19 @@ func constraintExists(ctx context.Context, pool *pgxpool.Pool, table, constraint
 	return exists, err
 }
 
+func constraintDefinition(ctx context.Context, pool *pgxpool.Pool, table, constraintName string) (string, error) {
+	var def string
+	query := `
+		SELECT pg_get_constraintdef(c.oid)
+		FROM pg_constraint c
+		JOIN pg_class t ON c.conrelid = t.oid
+		JOIN pg_namespace n ON t.relnamespace = n.oid
+		WHERE n.nspname = 'public' AND t.relname = $1 AND c.conname = $2
+	`
+	err := pool.QueryRow(ctx, query, table, constraintName).Scan(&def)
+	return def, err
+}
+
 func indexExists(ctx context.Context, pool *pgxpool.Pool, table, indexName string) (bool, error) {
 	var exists bool
 	query := `
@@ -181,6 +201,13 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			}
 			if !exists {
 				t.Error("expected constraint 'chk_quotations_commercial_scheme' on quotations table")
+			}
+			def, err := constraintDefinition(ctx, pool, "quotations", "chk_quotations_commercial_scheme")
+			if err != nil {
+				t.Fatalf("error getting constraint definition: %v", err)
+			}
+			if !strings.Contains(def, "dedicated_squad") || !strings.Contains(def, "subscription_saas") || !strings.Contains(def, "white_label") {
+				t.Errorf("expected constraint to allow 'dedicated_squad', 'subscription_saas', and 'white_label', got: %s", def)
 			}
 		})
 
@@ -1155,4 +1182,105 @@ func TestConstraintViolations(t *testing.T) {
 			t.Logf("correctly rejected invalid completeness_status: %v", err)
 		}
 	})
+}
+
+func TestCommercialSchemeConstraint(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+
+	t.Run("AcceptsSubscriptionSaaS", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("failed to begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx)
+
+		var id string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-SAAS', 'saas', 'subscription_saas', 'Test SaaS Scheme')
+			RETURNING id
+		`).Scan(&id)
+		if err != nil {
+			t.Fatalf("expected insert with subscription_saas to succeed, but failed: %v", err)
+		}
+		if id == "" {
+			t.Errorf("expected returning id, got empty")
+		}
+	})
+
+	t.Run("AcceptsDedicatedSquad", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("failed to begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx)
+
+		var id string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-SQUAD', 'custom_software', 'dedicated_squad', 'Test Squad Scheme')
+			RETURNING id
+		`).Scan(&id)
+		if err != nil {
+			t.Fatalf("expected insert with dedicated_squad to succeed, but failed: %v", err)
+		}
+		if id == "" {
+			t.Errorf("expected returning id, got empty")
+		}
+	})
+
+	t.Run("AcceptsWhiteLabel", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("failed to begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx)
+
+		var id string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-WL', 'custom_software', 'white_label', 'Test White Label Scheme')
+			RETURNING id
+		`).Scan(&id)
+		if err != nil {
+			t.Fatalf("expected insert with white_label to succeed, but failed: %v", err)
+		}
+		if id == "" {
+			t.Errorf("expected returning id, got empty")
+		}
+	})
+
+	t.Run("RejectsUnknownCommercialScheme", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("failed to begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx)
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-UNKNOWN', 'custom_software', 'unknown_scheme', 'Test Unknown Scheme')
+		`)
+		if err == nil {
+			t.Error("expected check constraint error for unknown commercial scheme, but got none")
+		} else {
+			t.Logf("correctly rejected unknown commercial scheme: %v", err)
+		}
+	})
+}
+
+func TestQuotationCommercialSchemeConstraintAllowsWhiteLabel(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	var definition string
+	err := pool.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conname = 'chk_quotations_commercial_scheme'
+	`).Scan(&definition)
+	require.NoError(t, err)
+	assert.Contains(t, definition, "dedicated_squad")
+	assert.Contains(t, definition, "subscription_saas")
+	assert.Contains(t, definition, "white_label")
 }
