@@ -89,11 +89,11 @@ type UpdateGenerationResultParams struct {
 	SafetyEnvelopeVersion string
 }
 
-// CompleteStructuredGenerationParams contains the deterministic artefacts of a
-// structured generation (Dedicated Squad or Subscription SaaS). The snapshots are stored together
-// with the rendered HTML so readers can never observe a partially completed
+// CompleteDeterministicGenerationParams contains the deterministic artefacts of a
+// structured or deterministic generation (Dedicated Squad, Subscription SaaS, or White Label).
+// The snapshots are stored together with the rendered HTML so readers can never observe a partially completed
 // commercial snapshot.
-type CompleteStructuredGenerationParams struct {
+type CompleteDeterministicGenerationParams struct {
 	CompanyID               uuid.UUID
 	RevisionID              uuid.UUID
 	ContentHTML             string
@@ -106,6 +106,9 @@ type CompleteStructuredGenerationParams struct {
 	ContentHash             *string
 	Regenerated             bool
 }
+
+// CompleteStructuredGenerationParams is an alias for backwards compatibility.
+type CompleteStructuredGenerationParams = CompleteDeterministicGenerationParams
 
 // CreateDraftTransaction inserts the quotation master (status queued, stable
 // DB-generated public token) and its Draft Revision 1 (generation pending,
@@ -378,12 +381,12 @@ func (r *GenerationRepository) UpdateGenerationResult(ctx context.Context, q Exe
 	return nil
 }
 
-// CompleteStructuredGeneration atomically completes a pending structured
+// CompleteDeterministicGeneration atomically completes a pending deterministic
 // revision and its quotation master. Both revision and company predicates are
 // mandatory tenant boundaries. The caller controls the transaction so future
 // orchestration can compose this update with other writes without weakening
 // atomicity.
-func (r *GenerationRepository) CompleteStructuredGeneration(ctx context.Context, tx pgx.Tx, params CompleteStructuredGenerationParams) error {
+func (r *GenerationRepository) CompleteDeterministicGeneration(ctx context.Context, tx pgx.Tx, params CompleteDeterministicGenerationParams) error {
 	var updatedAt time.Time
 	err := tx.QueryRow(ctx, `
 		WITH updated_rev AS (
@@ -421,6 +424,11 @@ func (r *GenerationRepository) CompleteStructuredGeneration(ctx context.Context,
 		return err
 	}
 	return nil
+}
+
+// CompleteStructuredGeneration is an alias for backwards compatibility.
+func (r *GenerationRepository) CompleteStructuredGeneration(ctx context.Context, tx pgx.Tx, params CompleteStructuredGenerationParams) error {
+	return r.CompleteDeterministicGeneration(ctx, tx, params)
 }
 
 // UpdateGenerationFailure atomically records a generation failure, storing

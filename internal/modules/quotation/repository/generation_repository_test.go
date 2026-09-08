@@ -105,7 +105,7 @@ func TestGenerationPersistenceSchema(t *testing.T) {
 	})
 }
 
-func TestCompleteStructuredGenerationRoundTripAndTenantIsolation(t *testing.T) {
+func TestCompleteDeterministicGenerationRoundTripAndTenantIsolation(t *testing.T) {
 	pool := getTestPool(t)
 	ctx := context.Background()
 	repo := repository.NewGenerationRepository(pool)
@@ -122,7 +122,7 @@ func TestCompleteStructuredGenerationRoundTripAndTenantIsolation(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	defer tx.Rollback(ctx)
-	err = repo.CompleteStructuredGeneration(ctx, tx, repository.CompleteStructuredGenerationParams{
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
 		CompanyID: companyID, RevisionID: draft.RevisionID, ContentHTML: "<section>dedicated</section>",
 		ResolvedProfileSnapshot: []byte(`{"maintenance_mode":"within_development"}`),
 		CalculationSnapshot:     []byte(`{"total_investment":178600000}`),
@@ -158,7 +158,7 @@ func TestCompleteStructuredGenerationRoundTripAndTenantIsolation(t *testing.T) {
 		t.Fatalf("begin foreign: %v", err)
 	}
 	defer foreignTx.Rollback(ctx)
-	err = repo.CompleteStructuredGeneration(ctx, foreignTx, repository.CompleteStructuredGenerationParams{
+	err = repo.CompleteDeterministicGeneration(ctx, foreignTx, repository.CompleteDeterministicGenerationParams{
 		CompanyID: uuid.New(), RevisionID: draft.RevisionID, ContentHTML: "foreign",
 		CalculationSnapshot: []byte(`{}`), ModuleSnapshot: []byte(`[]`), TimelineSnapshot: []byte(`[]`),
 	})
@@ -448,5 +448,81 @@ func TestUpdateGenerationResultPersistsCompletion(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected ErrRevisionNotFound when updating unknown revision")
+	}
+}
+
+func TestCompleteDeterministicGeneration_WhiteLabelSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "white_label"
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	draft, err := repo.CreateDraftTransaction(ctx, params)
+	if err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              draft.RevisionID,
+		ContentHTML:             "<article class=\"quotation-document\"><section data-block-type=\"commercial\">white_label</section></article>",
+		ResolvedProfileSnapshot: []byte(`{"tax_treatment":"exclusive_ppn"}`),
+		CalculationSnapshot:     []byte(`{"total_investment":60305000}`),
+		ModuleSnapshot:          []byte(`[{"name":"Inventory"}]`),
+		TimelineSnapshot:        []byte(`[{"description":"Setup"}]`),
+		AiProvider:              "",
+		AiModel:                 "",
+		Regenerated:             false,
+	})
+	if err != nil {
+		t.Fatalf("complete white label generation: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var profile, calculation, modules, timeline, html, status string
+	var aiProv, aiModel *string
+	err = pool.QueryRow(ctx, `
+		SELECT resolved_profile_snapshot::text, calculation_snapshot::text,
+		       module_snapshot::text, timeline_snapshot::text,
+		       content_html, generation_status, ai_provider, ai_model
+		FROM quotation_revisions WHERE id = $1 AND company_id = $2
+	`, draft.RevisionID, companyID).Scan(&profile, &calculation, &modules, &timeline, &html, &status, &aiProv, &aiModel)
+	if err != nil {
+		t.Fatalf("query revision: %v", err)
+	}
+
+	if status != repository.GenerationStatusCompleted {
+		t.Fatalf("expected status completed, got %s", status)
+	}
+	if html != "<article class=\"quotation-document\"><section data-block-type=\"commercial\">white_label</section></article>" {
+		t.Fatalf("unexpected content html: %s", html)
+	}
+	if aiProv != nil || aiModel != nil {
+		t.Fatalf("ai provider/model must be nil/empty, got %v, %v", aiProv, aiModel)
+	}
+	if profile != `{"tax_treatment": "exclusive_ppn"}` && profile != `{"tax_treatment":"exclusive_ppn"}` {
+		t.Fatalf("unexpected profile snapshot: %s", profile)
+	}
+	if calculation != `{"total_investment": 60305000}` && calculation != `{"total_investment":60305000}` {
+		t.Fatalf("unexpected calculation snapshot: %s", calculation)
+	}
+	if modules != `[{"name": "Inventory"}]` && modules != `[{"name":"Inventory"}]` {
+		t.Fatalf("unexpected module snapshot: %s", modules)
+	}
+	if timeline != `[{"description": "Setup"}]` && timeline != `[{"description":"Setup"}]` {
+		t.Fatalf("unexpected timeline snapshot: %s", timeline)
 	}
 }

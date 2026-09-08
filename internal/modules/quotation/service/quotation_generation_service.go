@@ -77,7 +77,8 @@ type GenerationError struct {
 	message string
 }
 
-func (e *GenerationError) Error() string { return e.Code }
+func (e *GenerationError) Error() string   { return e.Code }
+func (e *GenerationError) Message() string { return e.message }
 
 func newGenerationError(code, safeMessage string) *GenerationError {
 	return &GenerationError{Code: code, message: safeMessage}
@@ -172,6 +173,7 @@ type QuotationGenerationService struct {
 	attemptTimeout       time.Duration
 	dedicatedRenderer    DedicatedSquadHTMLRenderer
 	subscriptionRenderer SubscriptionSaaSHTMLRenderer
+	whiteLabelRenderer   WhiteLabelHTMLRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -180,6 +182,16 @@ type GenerationOption func(*QuotationGenerationService)
 // value; production keeps DefaultAttemptTimeout).
 func WithAttemptTimeout(d time.Duration) GenerationOption {
 	return func(s *QuotationGenerationService) { s.attemptTimeout = d }
+}
+
+// WithWhiteLabelRenderer overrides the WhiteLabelHTMLRenderer (useful for tests).
+func WithWhiteLabelRenderer(r WhiteLabelHTMLRenderer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.whiteLabelRenderer = r }
+}
+
+// WithHTMLSanitizer overrides the HTMLSanitizer (useful for tests).
+func WithHTMLSanitizer(sanitizer HTMLSanitizer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.sanitizer = sanitizer }
 }
 
 func NewQuotationGenerationService(
@@ -197,6 +209,7 @@ func NewQuotationGenerationService(
 		domValidator:         NewDOMValidator(),
 		dedicatedRenderer:    NewDedicatedSquadHTMLRenderer(),
 		subscriptionRenderer: NewSubscriptionSaaSHTMLRenderer(),
+		whiteLabelRenderer:   NewWhiteLabelHTMLRenderer(),
 		attemptTimeout:       DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
@@ -226,7 +239,13 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		return existing.QuotationID, nil
 	}
 
-	cfg, gerr := s.loadConfiguration(ctx, companyID, req)
+	var cfg *generationConfig
+	var gerr error
+	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel {
+		cfg, gerr = s.loadWhiteLabelConfiguration(ctx, companyID, req)
+	} else {
+		cfg, gerr = s.loadConfiguration(ctx, companyID, req)
+	}
 	if gerr != nil {
 		return uuid.Nil, gerr
 	}
@@ -265,6 +284,18 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		if gerr != nil {
 			var ge *GenerationError
 			reason := "subscription saas generation failed"
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
+	case domain.CommercialSchemeWhiteLabel:
+		gerr := s.generateWhiteLabel(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			var ge *GenerationError
+			reason := "white label generation failed"
 			if errors.As(gerr, &ge) {
 				reason = ge.message
 			}
@@ -358,7 +389,7 @@ func (s *QuotationGenerationService) generateDedicated(ctx context.Context, comp
 		ClientName: cfg.clientName, ClientCompanyName: cfg.clientCompanyName,
 		IssueDate: indonesianDate(*input.PaymentAnchorDate),
 	}
-	return s.renderAndPersistDedicated(ctx, repository.CompleteStructuredGenerationParams{
+	return s.renderAndPersistDedicated(ctx, repository.CompleteDeterministicGenerationParams{
 		CompanyID: companyID, RevisionID: revisionID,
 		ResolvedProfileSnapshot: mustJSON(profile), CalculationSnapshot: mustJSON(calculation), ModuleSnapshot: mustJSON(modules), TimelineSnapshot: mustJSON(timeline),
 		AiProvider: providerName, AiModel: model,
@@ -392,11 +423,11 @@ func (s *QuotationGenerationService) regenerateDedicated(ctx context.Context, co
 		ClientName: strings.TrimSpace(req.ClientName), ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
 		IssueDate: indonesianDate(*input.PaymentAnchorDate),
 	}
-	return s.renderAndPersistDedicated(ctx, repository.CompleteStructuredGenerationParams{
+	return s.renderAndPersistDedicated(ctx, repository.CompleteDeterministicGenerationParams{
 		CompanyID: companyID, RevisionID: draft.RevisionID, Regenerated: true,
 		ResolvedProfileSnapshot: append(json.RawMessage(nil), draft.ResolvedProfileSnapshot...),
-		CalculationSnapshot: append(json.RawMessage(nil), draft.CalculationSnapshot...),
-		ModuleSnapshot:      append(json.RawMessage(nil), draft.ModuleSnapshot...), TimelineSnapshot: append(json.RawMessage(nil), draft.TimelineSnapshot...),
+		CalculationSnapshot:     append(json.RawMessage(nil), draft.CalculationSnapshot...),
+		ModuleSnapshot:          append(json.RawMessage(nil), draft.ModuleSnapshot...), TimelineSnapshot: append(json.RawMessage(nil), draft.TimelineSnapshot...),
 	}, DedicatedSquadDocumentInput{Metadata: metadata, Profile: profile, Calculation: calculation, Rules: rules, Timeline: timeline})
 }
 
@@ -428,7 +459,7 @@ func (s *QuotationGenerationService) extractDedicatedModules(ctx context.Context
 	return modules, providerName, model, nil
 }
 
-func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Context, params repository.CompleteStructuredGenerationParams, document DedicatedSquadDocumentInput) error {
+func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Context, params repository.CompleteDeterministicGenerationParams, document DedicatedSquadDocumentInput) error {
 	rawHTML, err := s.dedicatedRenderer.Render(document)
 	if err != nil {
 		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document failed to render")
@@ -449,7 +480,7 @@ func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Conte
 		return newGenerationError(ErrCodeGenerationFailed, "failed to begin dedicated generation completion")
 	}
 	defer tx.Rollback(ctx)
-	if err := s.genRepo.CompleteStructuredGeneration(ctx, tx, params); err != nil {
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "failed to persist dedicated generation result")
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -511,7 +542,7 @@ func (s *QuotationGenerationService) renderAndPersistSubscriptionSaaS(
 	hash := sha256.Sum256([]byte(sanitized))
 	hashString := hex.EncodeToString(hash[:])
 
-	params := repository.CompleteStructuredGenerationParams{
+	params := repository.CompleteDeterministicGenerationParams{
 		CompanyID:               companyID,
 		RevisionID:              revisionID,
 		ContentHTML:             sanitized,
@@ -530,7 +561,7 @@ func (s *QuotationGenerationService) renderAndPersistSubscriptionSaaS(
 		return newGenerationError(ErrCodeGenerationFailed, "failed to begin subscription saas generation completion")
 	}
 	defer tx.Rollback(ctx)
-	if err := s.genRepo.CompleteStructuredGeneration(ctx, tx, params); err != nil {
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
 		return newGenerationError(ErrCodeGenerationFailed, "failed to persist subscription saas generation result")
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -575,6 +606,169 @@ func (s *QuotationGenerationService) regenerateSubscriptionSaaS(ctx context.Cont
 		LegalHTML:     legalSnap.ContentHTML,
 	}
 	return s.renderAndPersistSubscriptionSaaS(ctx, companyID, draft.RevisionID, true, nil, document)
+}
+
+func NormalizeWhiteLabelModules(groups []domain.WhiteLabelModuleGroupInput) []domain.WhiteLabelModuleGroupInput {
+	if groups == nil {
+		return []domain.WhiteLabelModuleGroupInput{}
+	}
+	normalized := make([]domain.WhiteLabelModuleGroupInput, len(groups))
+	for i, g := range groups {
+		features := g.Features
+		if features == nil {
+			features = []string{}
+		} else {
+			cleanFeatures := make([]string, len(features))
+			for j, f := range features {
+				cleanFeatures[j] = strings.TrimSpace(f)
+			}
+			features = cleanFeatures
+		}
+		normalized[i] = domain.WhiteLabelModuleGroupInput{
+			Name:     strings.TrimSpace(g.Name),
+			Features: features,
+		}
+	}
+	return normalized
+}
+
+func NormalizeWhiteLabelTimeline(rows []domain.WhiteLabelTimelineRowInput) []domain.WhiteLabelTimelineRowInput {
+	if rows == nil {
+		return []domain.WhiteLabelTimelineRowInput{}
+	}
+	normalized := make([]domain.WhiteLabelTimelineRowInput, len(rows))
+	for i, r := range rows {
+		normalized[i] = domain.WhiteLabelTimelineRowInput{
+			Description: strings.TrimSpace(r.Description),
+			Timeline:    strings.TrimSpace(r.Timeline),
+		}
+	}
+	return normalized
+}
+
+func (s *QuotationGenerationService) generateWhiteLabel(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	input := *req.WhiteLabel
+	profile, err := ResolveWhiteLabelProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "white label profile is invalid")
+	}
+	calculation, err := CalculateWhiteLabel(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "white label calculation is invalid")
+	}
+	modules := NormalizeWhiteLabelModules(input.ModuleGroups)
+	timeline := NormalizeWhiteLabelTimeline(input.TimelineRows)
+	metadata := QuotationMetadata{
+		QuotationNumber:   cfg.quotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        cfg.clientName,
+		ClientCompanyName: cfg.clientCompanyName,
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := WhiteLabelDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   cfg.legal.ContentHTML,
+	}
+	return s.renderAndPersistWhiteLabel(ctx, companyID, revisionID, false, document, modules, timeline)
+}
+
+func (s *QuotationGenerationService) renderAndPersistWhiteLabel(
+	ctx context.Context,
+	companyID uuid.UUID,
+	revisionID uuid.UUID,
+	regenerated bool,
+	document WhiteLabelDocumentInput,
+	modules []domain.WhiteLabelModuleGroupInput,
+	timeline []domain.WhiteLabelTimelineRowInput,
+) error {
+	rawHTML, err := s.whiteLabelRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "white label document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "white label document sanitization failed")
+	}
+	if !strings.Contains(sanitized, `class="quotation-document"`) || !strings.Contains(sanitized, `data-block-type="commercial"`) {
+		return newGenerationError(ErrCodeUnsafeHTML, "white label document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+
+	params := repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              revisionID,
+		ContentHTML:             sanitized,
+		ResolvedProfileSnapshot: mustJSON(document.Profile),
+		CalculationSnapshot:     mustJSON(document.Calculation),
+		ModuleSnapshot:          mustJSON(modules),
+		TimelineSnapshot:        mustJSON(timeline),
+		AiProvider:              "",
+		AiModel:                 "",
+		ContentHash:             &hashString,
+		Regenerated:             regenerated,
+	}
+
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin white label generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist white label generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit white label generation result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateWhiteLabel(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	var calculation domain.WhiteLabelCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+	var profile domain.ResolvedWhiteLabelProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+	var modules []domain.WhiteLabelModuleGroupInput
+	if len(draft.ModuleSnapshot) == 0 || json.Unmarshal(draft.ModuleSnapshot, &modules) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	var timeline []domain.WhiteLabelTimelineRowInput
+	if len(draft.TimelineSnapshot) == 0 || json.Unmarshal(draft.TimelineSnapshot, &timeline) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
+	}
+	var legalSnap legalSnapshotView
+	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || string(draft.LegalTemplateSnapshot) == "{}" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
+	}
+	if req.WhiteLabel == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing white label")
+	}
+	input := *req.WhiteLabel
+	input.ModuleGroups = modules
+	input.TimelineRows = timeline
+
+	metadata := QuotationMetadata{
+		QuotationNumber:   draft.QuotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        strings.TrimSpace(req.ClientName),
+		ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := WhiteLabelDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   legalSnap.ContentHTML,
+	}
+	return s.renderAndPersistWhiteLabel(ctx, companyID, draft.RevisionID, true, document, modules, timeline)
 }
 
 type rateSnapshotLookup struct{ items []domain.RateCardItem }
@@ -722,6 +916,8 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 	switch draft.CommercialScheme {
 	case domain.CommercialSchemeSubscriptionSaaS:
 		return s.regenerateSubscriptionSaaS(ctx, companyID, req, draft)
+	case domain.CommercialSchemeWhiteLabel:
+		return s.regenerateWhiteLabel(ctx, companyID, req, draft)
 	case domain.CommercialSchemeDedicatedSquad:
 		if req.DedicatedSquad != nil {
 			return s.regenerateDedicated(ctx, companyID, req, draft)
@@ -1148,6 +1344,58 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	return cfg, nil
 }
 
+func (s *QuotationGenerationService) loadWhiteLabelConfiguration(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest) (*generationConfig, error) {
+	cfg := &generationConfig{companyID: companyID}
+
+	legal, err := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, DefaultLegalTemplateCode)
+	if err != nil {
+		if errors.Is(err, repository.ErrLegalTemplateNotFound) {
+			return nil, newGenerationError(ErrCodeSettingsIncomplete, "legal template is not configured")
+		}
+		return nil, newGenerationError(ErrCodeGenerationFailed, "failed to load legal template")
+	}
+	cfg.legal = legal
+
+	var clientName string
+	var clientCompanyName string
+	if req.ClientID != nil && *req.ClientID != uuid.Nil {
+		var cerr error
+		resolvedName, cerr := s.genRepo.GetClientName(ctx, *req.ClientID)
+		if cerr != nil {
+			logger.Error("Failed to resolve client name", logger.Err(cerr))
+		} else {
+			clientCompanyName = resolvedName
+		}
+	}
+	if req.ClientName != "" {
+		clientName = strings.TrimSpace(req.ClientName)
+	} else if clientCompanyName != "" {
+		clientName = clientCompanyName
+	}
+	if req.ClientCompanyName != "" {
+		clientCompanyName = strings.TrimSpace(req.ClientCompanyName)
+	}
+	cfg.clientName = clientName
+	cfg.clientCompanyName = clientCompanyName
+
+	number, err := s.genRepo.NextQuotationNumber(ctx, companyID)
+	if err != nil {
+		return nil, newGenerationError(ErrCodeGenerationFailed, "failed to derive quotation number")
+	}
+	cfg.quotationNumber = number
+
+	cfg.legalSnapshot = mustJSON(legalSnapshotView{
+		ID:          legal.ID,
+		Code:        legal.Code,
+		Version:     legal.Version,
+		ContentHTML: legal.ContentHTML,
+	})
+	cfg.rateCardSnapshot = []byte("{}")
+	cfg.skillSnapshot = []byte("{}")
+
+	return cfg, nil
+}
+
 // ---------------------------------------------------------------------------
 // Budget optimization loop
 // ---------------------------------------------------------------------------
@@ -1570,7 +1818,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 
 	switch req.CommercialScheme {
 	case domain.CommercialSchemeDedicatedSquad:
-		if req.SubscriptionSaaS != nil {
+		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad payload is invalid")
 		}
 		if req.DedicatedSquad != nil {
@@ -1606,7 +1854,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeSubscriptionSaaS:
-		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil {
+		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas payload is invalid")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -1617,8 +1865,17 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		}
 		return nil
 
+	case domain.CommercialSchemeWhiteLabel:
+		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "white_label requires exactly white_label input")
+		}
+		if err := req.WhiteLabel.Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "white label input is invalid")
+		}
+		return nil
+
 	default:
-		return newGenerationError(ErrCodeGenerationFailed, "unsupported commercial scheme")
+		return newGenerationError(ErrCodeGenerationFailed, "commercial scheme is not supported")
 	}
 }
 

@@ -272,7 +272,7 @@ func assertPendingRevision(t *testing.T, pool *pgxpool.Pool, companyID uuid.UUID
 		JOIN quotations q ON q.id = r.quotation_id
 		WHERE r.company_id = $1 AND r.idempotency_key = $2
 	`, companyID, key).Scan(&status, &html))
-	assert.Equal(t, "pending", status, "revision gagal harus tetap pending/retryable")
+	assert.Equal(t, "failed", status, "revision gagal harus berstatus failed")
 	assert.Empty(t, html, "revision gagal tidak boleh punya content_html")
 }
 
@@ -551,7 +551,7 @@ func TestGenerate_NarrativeWithProtectedMarker_RejectedUnsafeHTML(t *testing.T) 
 	// Narrative mencoba memalsukan blok critical backend => Assemble wajib menolak.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSON()},
-		{text: `<p>Aman.</p><div data-block="investment">blok palsu dari AI</div>`},
+		{text: `<p>Aman.</p><div data-block-type="commercial">blok palsu dari AI</div>`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -802,9 +802,9 @@ func TestWiring_GenerateEndToEnd_RealComponentsOnlyProviderMocked(t *testing.T) 
 	`, qid).Scan(&html, &allocSnap))
 
 	// Renderer nyata: blok metadata + payment + legal + format IDR backend.
-	assert.Contains(t, html, `data-block="metadata"`)
-	assert.Contains(t, html, `data-block="payment_schedule"`)
-	assert.Contains(t, html, `data-block="legal"`)
+	assert.Contains(t, html, `data-block-type="metadata"`)
+	assert.Contains(t, html, `data-block-type="payment"`)
+	assert.Contains(t, html, `data-block-type="legal"`)
 	assert.Contains(t, html, "Rp 63.000.000")
 	// Sanitizer nyata: tidak ada tag berbahaya.
 	lowerHTML := strings.ToLower(html)
@@ -849,7 +849,7 @@ func TestGenerate_NarrativeScriptTag_SanitizedStillCompletes(t *testing.T) {
 	// menghapusnya dan hasil tetap completed tanpa jejak script.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSON()},
-		{text: `<p>Aman</p><script>alert(1)</script><strong>OK</strong>`},
+		{text: `<section data-block-type="opening"><p>Aman</p><script>alert(1)</script><strong>OK</strong></section>`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -870,7 +870,7 @@ func TestGenerate_NarrativeBudgetLeak_DetectedByDOMValidation(t *testing.T) {
 	// defense-in-depth DOM validator harus menolak dokumen final.
 	mock := &scriptedAIProvider{steps: []scriptedStep{
 		{text: allocationJSON()},
-		{text: `<p>Total penawaran kami hanya Rp 150.000.000 semua termasuk.</p>`},
+		{text: `<section data-block-type="opening"><p>Total penawaran kami hanya Rp 150.000.000 semua termasuk.</p></section>`},
 	}}
 	svc, _ := newSvc(pool, mock)
 
@@ -1521,4 +1521,441 @@ func TestSaveDraft_SubscriptionSaaS_MalformedSnapshots_Rejects(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// White Label Product Generation & Regeneration Tests
+// ---------------------------------------------------------------------------
 
+func validWhiteLabelInputForTest() domain.WhiteLabelInput {
+	return domain.WhiteLabelInput{
+		ProductName:   "POS Mini Market",
+		QuotationDate: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC),
+		TaxTreatment:  domain.WhiteLabelTaxExclusive,
+		LicenseItems: []domain.WhiteLabelLicenseItemInput{
+			{Name: "POS Mini Market Core", UnitRate: 35_000_000, Quantity: 1},
+		},
+		MaintenanceItems: []domain.WhiteLabelMaintenanceItemInput{
+			{Name: "Senior Web Programmer", MonthlyRate: 16_170_000, FTEQuarters: 2, PeriodMonths: 3},
+		},
+		HostingItems: []domain.WhiteLabelHostingItemInput{
+			{Name: "Shared Hosting Small", MonthlyRate: 350_000, Quantity: 1, PeriodMonths: 3},
+		},
+		ModuleGroups: []domain.WhiteLabelModuleGroupInput{
+			{Name: "Inventory", Features: []string{"Stok masuk", "Stok keluar"}},
+		},
+		TimelineRows: []domain.WhiteLabelTimelineRowInput{
+			{Description: "Setup Server & Database", Timeline: "Minggu 1"},
+		},
+		PaymentSchedule: []domain.WhiteLabelPaymentRowInput{
+			{WorkPeriod: "Pembelian White Label", Terms: "Pelunasan", InvoiceDateLabel: "Saat kontrak ditandatangani", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentLicense, Nominal: 35_000_000},
+			{WorkPeriod: "Maintenance 1", Terms: "Bulanan", InvoiceDateLabel: "Bulan 1", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+			{WorkPeriod: "Maintenance 2", Terms: "Bulanan", InvoiceDateLabel: "Bulan 2", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+			{WorkPeriod: "Maintenance 3", Terms: "Bulanan", InvoiceDateLabel: "Bulan 3", DueDateLabel: "H+14", Component: domain.WhiteLabelPaymentMaintenanceHosting, Nominal: 8_435_000},
+		},
+		RightsStatements: []string{
+			"Klien berhak menggunakan source code untuk kebutuhan internal.",
+		},
+		LimitationCodes: []string{"out_of_pocket", "overtime", "third_party", "scope_change"},
+	}
+}
+
+func whiteLabelRequest(fx pipelineFixture, input domain.WhiteLabelInput) dto.GenerateQuotationRequest {
+	key := uuid.New().String()
+	return dto.GenerateQuotationRequest{
+		IdempotencyKey:    &key,
+		Subject:           "Penawaran White Label POS",
+		SolutionType:      "white_label",
+		CommercialScheme:  domain.CommercialSchemeWhiteLabel,
+		WhiteLabel:        &input,
+		RateCardID:        uuid.Nil, // rate_card_id boleh zero
+		ClientID:          &fx.clientID,
+		ClientName:        "PT Retail Jaya",
+		ClientCompanyName: "PT Retail Jaya Makmur",
+	}
+}
+
+func generateWhiteLabelDraft(t *testing.T, pool *pgxpool.Pool, customize ...func(input *domain.WhiteLabelInput)) (uuid.UUID, uuid.UUID, pipelineFixture) {
+	t.Helper()
+	fx := seedPipelineFixtures(t, pool)
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validWhiteLabelInputForTest()
+	for _, fn := range customize {
+		fn(&input)
+	}
+	req := whiteLabelRequest(fx, input)
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	return qid, fx.companyID, fx
+}
+
+type failingWhiteLabelRenderer struct{}
+
+func (f *failingWhiteLabelRenderer) Render(_ service.WhiteLabelDocumentInput) (string, error) {
+	return "", errors.New("simulated render failure")
+}
+
+type failingHTMLSanitizer struct{}
+
+func (f *failingHTMLSanitizer) Sanitize(_ string) (string, error) {
+	return "", errors.New("simulated sanitize failure")
+}
+
+func TestGenerateWhiteLabel_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	input := validWhiteLabelInputForTest()
+	req := whiteLabelRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, qid)
+
+	// 1. Valid generate membuat exactly one quotation/revision
+	var qCount, rCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotations WHERE id = $1`, qid).Scan(&qCount))
+	assert.Equal(t, 1, qCount)
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotation_revisions WHERE quotation_id = $1`, qid).Scan(&rCount))
+	assert.Equal(t, 1, rCount)
+
+	// 2. providerSource.ProviderForCompany tidak pernah dipanggil
+	assert.Empty(t, source.requests(), "AI provider tidak boleh dipanggil untuk white_label")
+
+	// 3. rate-card loader tidak dipanggil dan rate_card_id boleh zero
+	assert.Equal(t, uuid.Nil, req.RateCardID)
+
+	var (
+		qStatus, revStatus                 string
+		calcSnap, modSnap, timeSnap, pSnap string
+		contentHTML                        string
+		contentHash                        *string
+		aiProv, aiModel                    string
+		rcSnap, skillSnap                  string
+	)
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status,
+		       r.calculation_snapshot::text, r.module_snapshot::text,
+		       r.timeline_snapshot::text, r.resolved_profile_snapshot::text,
+		       r.content_html, r.content_hash,
+		       COALESCE(r.ai_provider, ''), COALESCE(r.ai_model, ''),
+		       COALESCE(r.rate_card_snapshot::text, '{}'), COALESCE(r.skill_snapshot::text, '{}')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(
+		&qStatus, &revStatus,
+		&calcSnap, &modSnap, &timeSnap, &pSnap,
+		&contentHTML, &contentHash,
+		&aiProv, &aiModel,
+		&rcSnap, &skillSnap,
+	))
+
+	assert.Equal(t, "draft", qStatus)
+	assert.Equal(t, "completed", revStatus)
+	assert.Empty(t, aiProv)
+	assert.Empty(t, aiModel)
+	assert.Equal(t, "{}", rcSnap)
+	assert.Equal(t, "{}", skillSnap)
+
+	// 4. calculation/module/timeline/profile snapshots persis dapat di-unmarshal
+	var calc domain.WhiteLabelCalculation
+	require.NoError(t, json.Unmarshal([]byte(calcSnap), &calc))
+	assert.Equal(t, int64(60_305_000), calc.TotalInvestment)
+	assert.Equal(t, int64(35_000_000), calc.LicenseSubtotal)
+	assert.Equal(t, int64(24_255_000), calc.MaintenanceSubtotal)
+	assert.Equal(t, int64(1_050_000), calc.HostingSubtotal)
+	assert.Equal(t, int64(25_305_000), calc.MaintenanceHostingSubtotal)
+
+	var modules []domain.WhiteLabelModuleGroupInput
+	require.NoError(t, json.Unmarshal([]byte(modSnap), &modules))
+	require.Len(t, modules, 1)
+	assert.Equal(t, "Inventory", modules[0].Name)
+	assert.Equal(t, []string{"Stok masuk", "Stok keluar"}, modules[0].Features)
+
+	var timeline []domain.WhiteLabelTimelineRowInput
+	require.NoError(t, json.Unmarshal([]byte(timeSnap), &timeline))
+	require.Len(t, timeline, 1)
+	assert.Equal(t, "Setup Server & Database", timeline[0].Description)
+
+	var profile domain.ResolvedWhiteLabelProfile
+	require.NoError(t, json.Unmarshal([]byte(pSnap), &profile))
+	assert.Equal(t, domain.WhiteLabelTaxExclusive, profile.TaxTreatment)
+	assert.True(t, profile.ShowMaintenanceHosting)
+	assert.True(t, profile.ShowScopeTimeline)
+	assert.True(t, profile.ShowRights)
+
+	// HTML and Hash assertions
+	assert.NotEmpty(t, contentHTML)
+	assert.Contains(t, contentHTML, "quotation-document")
+	assert.Contains(t, contentHTML, `data-block-type="commercial"`)
+	assert.Contains(t, contentHTML, "POS Mini Market")
+	assert.Contains(t, contentHTML, "Rp 35.000.000")
+	require.NotNil(t, contentHash)
+	assert.NotEmpty(t, *contentHash)
+}
+
+func TestGenerateWhiteLabel_IdempotencyReplay(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validWhiteLabelInputForTest()
+	req := whiteLabelRequest(fx, input)
+
+	qid1, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	// 5. Idempotency replay mengembalikan quotation ID sama
+	qid2, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	assert.Equal(t, qid1, qid2)
+
+	var qCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotations WHERE id = $1`, qid1).Scan(&qCount))
+	assert.Equal(t, 1, qCount)
+}
+
+func TestGenerateWhiteLabel_RendererFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithWhiteLabelRenderer(&failingWhiteLabelRenderer{}))
+
+	input := validWhiteLabelInputForTest()
+	req := whiteLabelRequest(fx, input)
+
+	// 6. Renderer failure meninggalkan revision failed dengan safe message
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "white label document failed to render")
+}
+
+func TestGenerateWhiteLabel_SanitizerFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithHTMLSanitizer(&failingHTMLSanitizer{}))
+
+	input := validWhiteLabelInputForTest()
+	req := whiteLabelRequest(fx, input)
+
+	// 6. Sanitizer failure meninggalkan revision failed dengan safe message
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "white label document sanitization failed")
+}
+
+func TestRegenerateWhiteLabel_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	input := validWhiteLabelInputForTest()
+	req := whiteLabelRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	var initialVersion int
+	var initialHTML string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&initialVersion, &initialHTML))
+	assert.Equal(t, 1, initialVersion)
+
+	// 7. Regenerate memakai snapshot tersimpan dan tidak menghitung ulang harga dari data eksternal
+	err = svc.Regenerate(context.Background(), fx.companyID, qid)
+	require.NoError(t, err)
+
+	// Provider Source tidak boleh dipanggil selama regenerate
+	assert.Empty(t, source.requests())
+
+	var updatedVersion int
+	var updatedHTML string
+	var calcSnap, modSnap, timeSnap, pSnap string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html,
+		       calculation_snapshot::text, module_snapshot::text,
+		       timeline_snapshot::text, resolved_profile_snapshot::text
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&updatedVersion, &updatedHTML, &calcSnap, &modSnap, &timeSnap, &pSnap))
+
+	assert.Equal(t, initialVersion+1, updatedVersion, "content_version harus bertambah 1")
+	assert.NotEmpty(t, updatedHTML)
+
+	// Snapshots remain valid and unmarshaled
+	var calc domain.WhiteLabelCalculation
+	require.NoError(t, json.Unmarshal([]byte(calcSnap), &calc))
+	assert.Equal(t, int64(60_305_000), calc.TotalInvestment)
+
+	var modules []domain.WhiteLabelModuleGroupInput
+	require.NoError(t, json.Unmarshal([]byte(modSnap), &modules))
+	assert.Equal(t, "Inventory", modules[0].Name)
+}
+
+func TestRegenerateWhiteLabel_CorruptSnapshots_RejectsAndPreservesVersion(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+
+	// 8. Corrupt calculation/module/timeline/profile snapshot menolak regenerate dan tidak mengubah HTML/version
+	t.Run("CorruptCalculation", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET calculation_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on corrupt snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on corrupt snapshot")
+	})
+
+	t.Run("CorruptProfile", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET resolved_profile_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptModule", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET module_snapshot = '{"invalid":"json_shape"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptTimeline", func(t *testing.T) {
+		qid, companyID, _ := generateWhiteLabelDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET timeline_snapshot = '{"invalid":"json_shape"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &scriptedAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+}
+
+func TestRegenerateWhiteLabel_CrossTenant_ReturnsNotFound(t *testing.T) {
+	pool := getTestPool(t)
+	qid, _, _ := generateWhiteLabelDraft(t, pool)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	// 9. Cross-tenant regenerate returns not found
+	foreignCompanyID := uuid.New()
+	err := svc.Regenerate(context.Background(), foreignCompanyID, qid)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repository.ErrRevisionNotFound), "cross-tenant regenerate returns not found")
+}
+
+func TestGenerateWhiteLabel_ValidationRejection(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	t.Run("BothWhiteLabelAndDedicatedSquad", func(t *testing.T) {
+		req := whiteLabelRequest(fx, validWhiteLabelInputForTest())
+		req.DedicatedSquad = &domain.DedicatedSquadInput{}
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("BothWhiteLabelAndSubscriptionSaaS", func(t *testing.T) {
+		req := whiteLabelRequest(fx, validWhiteLabelInputForTest())
+		saas := validSubscriptionSaaSInput()
+		req.SubscriptionSaaS = &saas
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("NilWhiteLabelPayload", func(t *testing.T) {
+		req := whiteLabelRequest(fx, validWhiteLabelInputForTest())
+		req.WhiteLabel = nil
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("InvalidWhiteLabelInput", func(t *testing.T) {
+		in := validWhiteLabelInputForTest()
+		in.ProductName = "" // empty product name is invalid
+		req := whiteLabelRequest(fx, in)
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+}

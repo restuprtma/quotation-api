@@ -306,3 +306,45 @@ func TestConsumeQuota_ConcurrentCalls_CounterExact(t *testing.T) {
 		"counter akhir harus persis jumlah gate yang lolos (tidak skip, tidak double)")
 	t.Logf("concurrent quota: %d ok / %d limited", succeeded.Load(), limited.Load())
 }
+
+func TestLoadDraftRevision_WhiteLabel_LoadsDeterministicSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "white_label"
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	res, err := repo.CreateDraftTransaction(ctx, params)
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              res.RevisionID,
+		ContentHTML:             "<article class=\"quotation-document\"><section data-block-type=\"commercial\">wl</section></article>",
+		ResolvedProfileSnapshot: []byte(`{"tax_treatment":"exclusive_ppn"}`),
+		CalculationSnapshot:     []byte(`{"total_investment":60305000}`),
+		ModuleSnapshot:          []byte(`[{"name":"Inventory"}]`),
+		TimelineSnapshot:        []byte(`[{"description":"Setup"}]`),
+		AiProvider:              "",
+		AiModel:                 "",
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	draft, err := repo.LoadDraftRevisionForRegeneration(ctx, companyID, res.QuotationID)
+	require.NoError(t, err)
+	assert.Equal(t, "white_label", draft.CommercialScheme)
+	assert.Equal(t, repository.GenerationStatusCompleted, draft.GenerationStatus)
+	assert.JSONEq(t, `{"tax_treatment":"exclusive_ppn"}`, string(draft.ResolvedProfileSnapshot))
+	assert.JSONEq(t, `{"total_investment":60305000}`, string(draft.CalculationSnapshot))
+	assert.JSONEq(t, `[{"name":"Inventory"}]`, string(draft.ModuleSnapshot))
+	assert.JSONEq(t, `[{"description":"Setup"}]`, string(draft.TimelineSnapshot))
+}
