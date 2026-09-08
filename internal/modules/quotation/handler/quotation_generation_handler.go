@@ -154,6 +154,44 @@ func (h *QuotationGenerationHandler) PreviewWhiteLabel(c *gin.Context) {
 	response.Success(c, http.StatusOK, "White label preview calculated successfully", dto.WhiteLabelPreviewResponse{Calculation: calculation, ResolvedProfile: profile})
 }
 
+// PreviewStandaloneMaintenance computes server-authoritative Standalone Maintenance figures without AI or persistence.
+func (h *QuotationGenerationHandler) PreviewStandaloneMaintenance(c *gin.Context) {
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeStandaloneMaintenance ||
+		req.StandaloneMaintenance == nil ||
+		req.DedicatedSquad != nil ||
+		req.SubscriptionSaaS != nil ||
+		req.WhiteLabel != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid standalone maintenance request", "")
+		return
+	}
+	if req.RateCardID != uuid.Nil {
+		response.Error(c, http.StatusBadRequest, "Rate card is not allowed for standalone maintenance", "")
+		return
+	}
+	if err := req.StandaloneMaintenance.Validate(); err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Invalid standalone maintenance input", "")
+		return
+	}
+	calculation, err := service.CalculateStandaloneMaintenance(*req.StandaloneMaintenance)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Standalone maintenance calculation mismatch", "")
+		return
+	}
+	profile := service.ResolveStandaloneMaintenanceProfile(*req.StandaloneMaintenance)
+	response.Success(c, http.StatusOK, "Standalone maintenance preview calculated successfully", dto.StandaloneMaintenancePreviewResponse{
+		Calculation:     calculation,
+		ResolvedProfile: profile,
+	})
+}
+
 // Generate starts the AI-first pipeline and returns 201 with the committed
 // quotation ID. The draft is durable before any provider interaction, so a
 // later failure remains retryable and idempotent replay (same

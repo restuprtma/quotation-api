@@ -67,6 +67,7 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.POST("", m.Handler.Create)
 		quotations.POST("/preview/subscription-saas", m.GenHandler.PreviewSubscriptionSaaS)
 		quotations.POST("/preview/white-label", m.GenHandler.PreviewWhiteLabel)
+		quotations.POST("/preview/standalone-maintenance", m.GenHandler.PreviewStandaloneMaintenance)
 		// AI-first detail (Fase 6 Session 5): menggantikan target stub yang
 		// sebelumnya selalu "not implemented"; kontrak response bertambah,
 		// tidak ada perilaku lama yang hilang.

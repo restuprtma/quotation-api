@@ -291,6 +291,7 @@ func newGenerationRouter(pool *pgxpool.Pool, provider service.AIProvider, owner 
 	{
 		q.POST("/preview/subscription-saas", genHandler.PreviewSubscriptionSaaS)
 		q.POST("/preview/white-label", genHandler.PreviewWhiteLabel)
+		q.POST("/preview/standalone-maintenance", genHandler.PreviewStandaloneMaintenance)
 		q.GET("/:id", genHandler.GetByID)
 		q.POST("/generate", genHandler.Generate)
 		q.POST("/preview", genHandler.Preview)
@@ -1374,3 +1375,351 @@ func TestPreviewWhiteLabel_HTTP_Guards(t *testing.T) {
 		assert.Equal(t, 0, spy.calls, "dedicated squad calculator must not be called")
 	})
 }
+
+func nexRetainerPreviewRequest() dto.GenerateQuotationRequest {
+	return dto.GenerateQuotationRequest{
+		Subject:          "Penawaran Maintenance Nex Health",
+		SolutionType:     "standalone_maintenance",
+		CommercialScheme: domain.CommercialSchemeStandaloneMaintenance,
+		StandaloneMaintenance: &domain.StandaloneMaintenanceInput{
+			SystemName:    "Aplikasi Nex Health",
+			QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+			Mode:          domain.StandaloneMaintenanceRetainer,
+			TaxTreatment:  domain.StandaloneTaxExclusive,
+			RetainerItems: []domain.MaintenanceRetainerItemInput{
+				{Name: "Senior Web Programmer", MonthlyRate: 16_050_000, FTEQuarters: 4, PeriodMonths: 1},
+				{Name: "Senior Quality Assurance", MonthlyRate: 14_070_000, FTEQuarters: 2, PeriodMonths: 1},
+			},
+			DefectGroups: []domain.MaintenanceDefectGroupInput{{
+				Title: "1. Detail Pasien",
+				Items: []domain.MaintenanceDefectItemInput{{
+					ItemNumber:  "1.1",
+					Priority:    domain.StandalonePriorityP0,
+					Function:    "Melihat riwayat medis pasien di luar sesi konsultasi.",
+					ScreenFlow:  "Pasien > Data Pasien dan Riwayat > Lihat Detail Pasien > Medical History.",
+					Existing:    "Hanya mencantumkan catatan registrasi awal.",
+					Improvement: "Mencantumkan seluruh riwayat SOAP (Dokter, Terapis, dan Perawat).",
+					Reference:   "Ref 1.01",
+				}},
+			}},
+			ShowDiscountRow: true,
+			DiscountAmount:  0,
+			PaymentSchedule: []domain.MaintenancePaymentRowInput{{
+				WorkPeriod:       "13 Juli - 13 Agustus 2026",
+				Terms:            "Maintenance",
+				InvoiceDateLabel: "13 Agustus 2026",
+				DueDateLabel:     "27 Agustus 2026",
+				Nominal:          23_085_000,
+			}},
+		},
+	}
+}
+
+func liputan6HourlyPreviewRequest() dto.GenerateQuotationRequest {
+	return dto.GenerateQuotationRequest{
+		Subject:          "Penawaran Bug Fixing Liputan6",
+		SolutionType:     "standalone_maintenance",
+		CommercialScheme: domain.CommercialSchemeStandaloneMaintenance,
+		StandaloneMaintenance: &domain.StandaloneMaintenanceInput{
+			SystemName:    "Portal Berita Liputan6",
+			QuotationDate: time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
+			Mode:          domain.StandaloneMaintenanceHourlyTask,
+			TaxTreatment:  domain.StandaloneTaxNotStated,
+			HourlyCostItems: []domain.MaintenanceHourlyCostItemInput{
+				{Name: "Senior Mobile Programmer", DisplayMonthlyRate: 16_050_000, Headcount: 1, HoursHalfUnits: 16, QuotedLineTotal: 730_000},
+				{Name: "Senior QA", DisplayMonthlyRate: 12_500_000, Headcount: 1, HoursHalfUnits: 4, QuotedLineTotal: 140_000},
+			},
+			HourlyTasks: []domain.MaintenanceHourlyTaskInput{
+				{Description: "Perbaikan crash login", Platform: "Android", HoursHalfUnits: 16},
+				{Description: "Regression testing", Platform: "QA Test", HoursHalfUnits: 4},
+			},
+			ShowDiscountRow: false,
+			DiscountAmount:  0,
+			PaymentSchedule: []domain.MaintenancePaymentRowInput{{
+				WorkPeriod:       "Support Juli 2026",
+				Terms:            "Pelunasan",
+				InvoiceDateLabel: "31 Juli 2026",
+				DueDateLabel:     "14 Agustus 2026",
+				Nominal:          870_000,
+			}},
+		},
+	}
+}
+
+func TestPreviewStandaloneMaintenance_HTTP_Success(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	spyCalc := &spyDedicatedSquadCalculator{}
+	provider := &adaptiveAIProvider{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+
+	router.Use(func(c *gin.Context) {
+		c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+			UserID:    httpTestUser.String(),
+			CompanyID: companyID.String(),
+		})
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/standalone-maintenance", h.PreviewStandaloneMaintenance)
+
+	t.Run("retainer mode preview success", func(t *testing.T) {
+		reqPayload := nexRetainerPreviewRequest()
+		body, err := json.Marshal(reqPayload)
+		require.NoError(t, err)
+
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var responseBody struct {
+			Message string                                     `json:"message"`
+			Data    dto.StandaloneMaintenancePreviewResponse `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+		assert.Equal(t, "Standalone maintenance preview calculated successfully", responseBody.Message)
+
+		// Verification of calculation totals (Nex Retainer)
+		assert.Equal(t, domain.StandaloneMaintenanceRetainer, responseBody.Data.Calculation.Mode)
+		require.Len(t, responseBody.Data.Calculation.Retainer, 2)
+		assert.Equal(t, int64(16_050_000), responseBody.Data.Calculation.Retainer[0].LineTotal)
+		assert.Equal(t, int64(7_035_000), responseBody.Data.Calculation.Retainer[1].LineTotal)
+		assert.Equal(t, int64(23_085_000), responseBody.Data.Calculation.Subtotal)
+		assert.Equal(t, int64(0), responseBody.Data.Calculation.DiscountAmount)
+		assert.Equal(t, int64(23_085_000), responseBody.Data.Calculation.TotalInvestment)
+		assert.Equal(t, int64(23_085_000), responseBody.Data.Calculation.PaymentTotal)
+		assert.Nil(t, responseBody.Data.Calculation.Hourly)
+
+		// Verification of resolved profile
+		assert.Equal(t, domain.StandaloneMaintenanceRetainer, responseBody.Data.ResolvedProfile.Mode)
+		assert.Equal(t, domain.StandaloneTaxExclusive, responseBody.Data.ResolvedProfile.TaxTreatment)
+		assert.Equal(t, "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.", responseBody.Data.ResolvedProfile.TaxClauseText)
+		assert.True(t, responseBody.Data.ResolvedProfile.ShowDiscountRow)
+		assert.False(t, responseBody.Data.ResolvedProfile.ShowRights)
+
+		// Verification of sections: 4 sections with title "Biaya Maintenance"
+		require.Len(t, responseBody.Data.ResolvedProfile.Sections, 4)
+		assert.Equal(t, 1, responseBody.Data.ResolvedProfile.Sections[0].Number)
+		assert.Equal(t, "maintenance_cost", responseBody.Data.ResolvedProfile.Sections[0].Code)
+		assert.Equal(t, "Biaya Maintenance", responseBody.Data.ResolvedProfile.Sections[0].Title)
+
+		assert.Equal(t, 2, responseBody.Data.ResolvedProfile.Sections[1].Number)
+		assert.Equal(t, "maintenance_scope", responseBody.Data.ResolvedProfile.Sections[1].Code)
+		assert.Equal(t, "Lingkup Pekerjaan & Timeline", responseBody.Data.ResolvedProfile.Sections[1].Title)
+
+		assert.Equal(t, 3, responseBody.Data.ResolvedProfile.Sections[2].Number)
+		assert.Equal(t, "payment", responseBody.Data.ResolvedProfile.Sections[2].Code)
+		assert.Equal(t, "Pembayaran", responseBody.Data.ResolvedProfile.Sections[2].Title)
+
+		assert.Equal(t, 4, responseBody.Data.ResolvedProfile.Sections[3].Number)
+		assert.Equal(t, "limitations", responseBody.Data.ResolvedProfile.Sections[3].Code)
+		assert.Equal(t, "Batasan dan Pengecualian", responseBody.Data.ResolvedProfile.Sections[3].Title)
+	})
+
+	t.Run("hourly task mode preview success", func(t *testing.T) {
+		reqPayload := liputan6HourlyPreviewRequest()
+		body, err := json.Marshal(reqPayload)
+		require.NoError(t, err)
+
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var responseBody struct {
+			Message string                                     `json:"message"`
+			Data    dto.StandaloneMaintenancePreviewResponse `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+		assert.Equal(t, "Standalone maintenance preview calculated successfully", responseBody.Message)
+
+		// Verification of calculation totals (Liputan6 Hourly)
+		assert.Equal(t, domain.StandaloneMaintenanceHourlyTask, responseBody.Data.Calculation.Mode)
+		require.Len(t, responseBody.Data.Calculation.Hourly, 2)
+		assert.Equal(t, int64(730_000), responseBody.Data.Calculation.Hourly[0].LineTotal)
+		assert.Equal(t, int64(140_000), responseBody.Data.Calculation.Hourly[1].LineTotal)
+		assert.Equal(t, int64(870_000), responseBody.Data.Calculation.Subtotal)
+		assert.Equal(t, int64(0), responseBody.Data.Calculation.DiscountAmount)
+		assert.Equal(t, int64(870_000), responseBody.Data.Calculation.TotalInvestment)
+		assert.Equal(t, int64(870_000), responseBody.Data.Calculation.PaymentTotal)
+		assert.Nil(t, responseBody.Data.Calculation.Retainer)
+
+		// Verification of resolved profile
+		assert.Equal(t, domain.StandaloneMaintenanceHourlyTask, responseBody.Data.ResolvedProfile.Mode)
+		assert.Equal(t, domain.StandaloneTaxNotStated, responseBody.Data.ResolvedProfile.TaxTreatment)
+		assert.Empty(t, responseBody.Data.ResolvedProfile.TaxClauseText)
+		assert.False(t, responseBody.Data.ResolvedProfile.ShowDiscountRow)
+		assert.False(t, responseBody.Data.ResolvedProfile.ShowRights)
+
+		// Verification of sections: 4 sections with title "Biaya Development"
+		require.Len(t, responseBody.Data.ResolvedProfile.Sections, 4)
+		assert.Equal(t, 1, responseBody.Data.ResolvedProfile.Sections[0].Number)
+		assert.Equal(t, "development_cost", responseBody.Data.ResolvedProfile.Sections[0].Code)
+		assert.Equal(t, "Biaya Development", responseBody.Data.ResolvedProfile.Sections[0].Title)
+
+		assert.Equal(t, 2, responseBody.Data.ResolvedProfile.Sections[1].Number)
+		assert.Equal(t, "maintenance_scope", responseBody.Data.ResolvedProfile.Sections[1].Code)
+		assert.Equal(t, "Lingkup Pekerjaan & Timeline", responseBody.Data.ResolvedProfile.Sections[1].Title)
+
+		assert.Equal(t, 3, responseBody.Data.ResolvedProfile.Sections[2].Number)
+		assert.Equal(t, "payment", responseBody.Data.ResolvedProfile.Sections[2].Code)
+		assert.Equal(t, "Pembayaran", responseBody.Data.ResolvedProfile.Sections[2].Title)
+
+		assert.Equal(t, 4, responseBody.Data.ResolvedProfile.Sections[3].Number)
+		assert.Equal(t, "limitations", responseBody.Data.ResolvedProfile.Sections[3].Code)
+		assert.Equal(t, "Batasan dan Pengecualian", responseBody.Data.ResolvedProfile.Sections[3].Title)
+	})
+
+	// Verify calculator did NOT touch Dedicated Squad calculator and no AI calls made
+	assert.Equal(t, 0, spyCalc.calls, "dedicated squad calculator must not be touched")
+	assert.Equal(t, 0, provider.calls(), "AI provider must not be called")
+}
+
+func TestPreviewStandaloneMaintenance_HTTP_Guards(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+
+	router.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Omit-Company") == "" {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+		}
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/standalone-maintenance", h.PreviewStandaloneMaintenance)
+
+	t.Run("missing payload (bad JSON) returns 400", func(t *testing.T) {
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, []byte("invalid-json-payload"))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid request payload")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("missing company context returns 403", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Omit-Company", "true")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Company context is required")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("wrong commercial scheme returns 400", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.CommercialScheme = "white_label"
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid standalone maintenance request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("missing standalone_maintenance returns 400", func(t *testing.T) {
+		payload := dto.GenerateQuotationRequest{
+			CommercialScheme:      domain.CommercialSchemeStandaloneMaintenance,
+			StandaloneMaintenance: nil,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid standalone maintenance request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("standalone plus dedicated pointer returns 400", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.DedicatedSquad = &domain.DedicatedSquadInput{
+			Model: domain.ModelSOWSmall,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid standalone maintenance request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("standalone plus white-label pointer returns 400", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.WhiteLabel = &domain.WhiteLabelInput{
+			ProductName:   "WL Product",
+			QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid standalone maintenance request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("standalone plus subscription pointer returns 400", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.SubscriptionSaaS = &domain.SubscriptionSaaSInput{
+			QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid standalone maintenance request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("non-zero rate_card_id returns 400", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.RateCardID = uuid.New()
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Rate card is not allowed for standalone maintenance")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("invalid nested input returns 422", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.StandaloneMaintenance.TaxTreatment = domain.StandaloneMaintenanceTaxTreatment("unsupported_tax")
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid standalone maintenance input")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("payment mismatch returns 422", func(t *testing.T) {
+		payload := nexRetainerPreviewRequest()
+		payload.StandaloneMaintenance.PaymentSchedule[0].Nominal = 10_000_000 // Subtotal is 23_085_000
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "Standalone maintenance calculation mismatch")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("calculator does not touch Dedicated calculator", func(t *testing.T) {
+		spy := &spyDedicatedSquadCalculator{}
+		hWithSpy := handler.NewQuotationGenerationHandler(nil, nil, spy)
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+			c.Next()
+		})
+		r.POST("/quotation/v1/quotations/preview/standalone-maintenance", hWithSpy.PreviewStandaloneMaintenance)
+
+		payload := nexRetainerPreviewRequest()
+		body, _ := json.Marshal(payload)
+		w := doJSON(r, http.MethodPost, "/quotation/v1/quotations/preview/standalone-maintenance", nil, body)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 0, spy.calls, "dedicated squad calculator must not be called")
+	})
+}
+
