@@ -243,3 +243,32 @@ func TestRegenerate_UnsafeNarrative_OldContentIntactVersionUnchanged(t *testing.
 	assert.True(t, strings.Contains(after.html, "Rp 63.000.000"), "konten lama masih tampil")
 	assert.Equal(t, before.version, after.version)
 }
+
+func TestRegenerate_StandaloneMaintenance_HappyPath_ReplacesHTMLIncrementsVersionSingleRevision(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	before := captureSnapshot(t, pool, qid)
+	assert.Equal(t, "completed", before.status)
+	assert.Equal(t, 1, before.version)
+
+	err = svc.Regenerate(context.Background(), fx.companyID, qid)
+	require.NoError(t, err)
+
+	assert.Empty(t, source.requests(), "AI provider must not be called during standalone maintenance regenerate")
+
+	after := captureSnapshot(t, pool, qid)
+	assert.Equal(t, "completed", after.status)
+	assert.Equal(t, before.version+1, after.version, "regenerate must increment content_version")
+	assert.Equal(t, 1, after.revisions, "regenerate must not create a new revision row")
+	assert.Equal(t, before.number, after.number, "quotation_number must be preserved")
+}

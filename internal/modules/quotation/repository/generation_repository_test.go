@@ -526,3 +526,85 @@ func TestCompleteDeterministicGeneration_WhiteLabelSnapshots(t *testing.T) {
 		t.Fatalf("unexpected timeline snapshot: %s", timeline)
 	}
 }
+
+func TestCompleteDeterministicGeneration_StandaloneMaintenanceSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "standalone_maintenance"
+	params.BudgetMaximum = nil
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	draft, err := repo.CreateDraftTransaction(ctx, params)
+	if err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              draft.RevisionID,
+		ContentHTML:             "<article class=\"quotation-document\"><section data-block-type=\"commercial\">standalone_maintenance</section></article>",
+		ResolvedProfileSnapshot: []byte(`{"mode":"retainer","tax_treatment":"exclusive_ppn"}`),
+		CalculationSnapshot:     []byte(`{"mode":"retainer","total_investment":23085000}`),
+		ModuleSnapshot:          []byte(`{"defect_groups":[{"title":"Detail Pasien"}]}`),
+		TimelineSnapshot:        []byte(`[]`),
+		AiProvider:              "",
+		AiModel:                 "",
+		Regenerated:             false,
+	})
+	if err != nil {
+		t.Fatalf("complete standalone maintenance generation: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var profile, calculation, modules, timeline, html, status string
+	var aiProv, aiModel *string
+	var budgetMax *int64
+	err = pool.QueryRow(ctx, `
+		SELECT resolved_profile_snapshot::text, calculation_snapshot::text,
+		       module_snapshot::text, timeline_snapshot::text,
+		       content_html, generation_status, ai_provider, ai_model,
+		       budget_maximum
+		FROM quotation_revisions WHERE id = $1 AND company_id = $2
+	`, draft.RevisionID, companyID).Scan(&profile, &calculation, &modules, &timeline, &html, &status, &aiProv, &aiModel, &budgetMax)
+	if err != nil {
+		t.Fatalf("query revision: %v", err)
+	}
+
+	if status != repository.GenerationStatusCompleted {
+		t.Fatalf("expected status completed, got %s", status)
+	}
+	if html != "<article class=\"quotation-document\"><section data-block-type=\"commercial\">standalone_maintenance</section></article>" {
+		t.Fatalf("unexpected content html: %s", html)
+	}
+	if aiProv != nil || aiModel != nil {
+		t.Fatalf("ai provider/model must be nil/empty, got %v, %v", aiProv, aiModel)
+	}
+	if budgetMax != nil {
+		t.Fatalf("budget_maximum must be nil, got %v", *budgetMax)
+	}
+	if profile != `{"mode": "retainer", "tax_treatment": "exclusive_ppn"}` && profile != `{"mode":"retainer","tax_treatment":"exclusive_ppn"}` {
+		t.Fatalf("unexpected profile snapshot: %s", profile)
+	}
+	if calculation != `{"mode": "retainer", "total_investment": 23085000}` && calculation != `{"mode":"retainer","total_investment":23085000}` {
+		t.Fatalf("unexpected calculation snapshot: %s", calculation)
+	}
+	if modules != `{"defect_groups": [{"title": "Detail Pasien"}]}` && modules != `{"defect_groups":[{"title":"Detail Pasien"}]}` {
+		t.Fatalf("unexpected module snapshot: %s", modules)
+	}
+	if timeline != `[]` {
+		t.Fatalf("unexpected timeline snapshot: %s", timeline)
+	}
+}

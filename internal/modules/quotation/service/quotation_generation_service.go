@@ -163,17 +163,18 @@ func mapProviderError(err error) *GenerationError {
 // ---------------------------------------------------------------------------
 
 type QuotationGenerationService struct {
-	genRepo              *repository.GenerationRepository
-	providerSource       ProviderSource
-	validator            AllocationValidator
-	allocator            RateAllocator
-	renderer             HTMLRenderer
-	sanitizer            HTMLSanitizer
-	domValidator         DOMValidator
-	attemptTimeout       time.Duration
-	dedicatedRenderer    DedicatedSquadHTMLRenderer
-	subscriptionRenderer SubscriptionSaaSHTMLRenderer
-	whiteLabelRenderer   WhiteLabelHTMLRenderer
+	genRepo                       *repository.GenerationRepository
+	providerSource                ProviderSource
+	validator                     AllocationValidator
+	allocator                     RateAllocator
+	renderer                      HTMLRenderer
+	sanitizer                     HTMLSanitizer
+	domValidator                  DOMValidator
+	attemptTimeout                time.Duration
+	dedicatedRenderer             DedicatedSquadHTMLRenderer
+	subscriptionRenderer          SubscriptionSaaSHTMLRenderer
+	whiteLabelRenderer            WhiteLabelHTMLRenderer
+	standaloneMaintenanceRenderer StandaloneMaintenanceHTMLRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -189,6 +190,11 @@ func WithWhiteLabelRenderer(r WhiteLabelHTMLRenderer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.whiteLabelRenderer = r }
 }
 
+// WithStandaloneMaintenanceRenderer overrides the StandaloneMaintenanceHTMLRenderer (useful for tests).
+func WithStandaloneMaintenanceRenderer(r StandaloneMaintenanceHTMLRenderer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.standaloneMaintenanceRenderer = r }
+}
+
 // WithHTMLSanitizer overrides the HTMLSanitizer (useful for tests).
 func WithHTMLSanitizer(sanitizer HTMLSanitizer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.sanitizer = sanitizer }
@@ -200,17 +206,18 @@ func NewQuotationGenerationService(
 	opts ...GenerationOption,
 ) *QuotationGenerationService {
 	svc := &QuotationGenerationService{
-		genRepo:              genRepo,
-		providerSource:       source,
-		validator:            NewAllocationValidator(),
-		allocator:            NewRateAllocator(),
-		renderer:             NewHTMLRenderer(),
-		sanitizer:            NewHTMLSanitizer(),
-		domValidator:         NewDOMValidator(),
-		dedicatedRenderer:    NewDedicatedSquadHTMLRenderer(),
-		subscriptionRenderer: NewSubscriptionSaaSHTMLRenderer(),
-		whiteLabelRenderer:   NewWhiteLabelHTMLRenderer(),
-		attemptTimeout:       DefaultAttemptTimeout,
+		genRepo:                       genRepo,
+		providerSource:                source,
+		validator:                     NewAllocationValidator(),
+		allocator:                     NewRateAllocator(),
+		renderer:                      NewHTMLRenderer(),
+		sanitizer:                     NewHTMLSanitizer(),
+		domValidator:                  NewDOMValidator(),
+		dedicatedRenderer:             NewDedicatedSquadHTMLRenderer(),
+		subscriptionRenderer:          NewSubscriptionSaaSHTMLRenderer(),
+		whiteLabelRenderer:            NewWhiteLabelHTMLRenderer(),
+		standaloneMaintenanceRenderer: NewStandaloneMaintenanceHTMLRenderer(),
+		attemptTimeout:                DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -241,8 +248,8 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 
 	var cfg *generationConfig
 	var gerr error
-	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel {
-		cfg, gerr = s.loadWhiteLabelConfiguration(ctx, companyID, req)
+	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel || req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance {
+		cfg, gerr = s.loadStructuredConfiguration(ctx, companyID, req)
 	} else {
 		cfg, gerr = s.loadConfiguration(ctx, companyID, req)
 	}
@@ -296,6 +303,18 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		if gerr != nil {
 			var ge *GenerationError
 			reason := "white label generation failed"
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
+	case domain.CommercialSchemeStandaloneMaintenance:
+		gerr := s.generateStandaloneMaintenance(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			var ge *GenerationError
+			reason := "standalone maintenance generation failed"
 			if errors.As(gerr, &ge) {
 				reason = ge.message
 			}
@@ -778,6 +797,144 @@ func (s *QuotationGenerationService) regenerateWhiteLabel(ctx context.Context, c
 	return s.renderAndPersistWhiteLabel(ctx, companyID, draft.RevisionID, true, document, modules, timeline)
 }
 
+func (s *QuotationGenerationService) generateStandaloneMaintenance(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	input := *req.StandaloneMaintenance
+	scopeSnapshot := NormalizeStandaloneMaintenanceScope(input)
+	switch input.Mode {
+	case domain.StandaloneMaintenanceRetainer:
+		input.DefectGroups = scopeSnapshot.DefectGroups
+	case domain.StandaloneMaintenanceHourlyTask:
+		input.HourlyTasks = scopeSnapshot.HourlyTasks
+	}
+
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "standalone maintenance input is invalid")
+	}
+	calculation, err := CalculateStandaloneMaintenance(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "standalone maintenance calculation is invalid")
+	}
+	profile := ResolveStandaloneMaintenanceProfile(input)
+	metadata := QuotationMetadata{
+		QuotationNumber:   cfg.quotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        cfg.clientName,
+		ClientCompanyName: cfg.clientCompanyName,
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := StandaloneMaintenanceDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   cfg.legal.ContentHTML,
+	}
+	return s.renderAndPersistStandaloneMaintenance(ctx, companyID, revisionID, false, document, scopeSnapshot)
+}
+
+func (s *QuotationGenerationService) renderAndPersistStandaloneMaintenance(
+	ctx context.Context,
+	companyID uuid.UUID,
+	revisionID uuid.UUID,
+	regenerated bool,
+	document StandaloneMaintenanceDocumentInput,
+	scopeSnapshot domain.StandaloneMaintenanceScopeSnapshot,
+) error {
+	rawHTML, err := s.standaloneMaintenanceRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "standalone maintenance document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "standalone maintenance document sanitization failed")
+	}
+	if err := ValidateStandaloneMaintenanceIntegrity(sanitized, document.Input, document.Calculation, document.Profile, document.LegalHTML); err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "standalone maintenance document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+
+	params := repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              revisionID,
+		ContentHTML:             sanitized,
+		ResolvedProfileSnapshot: mustJSON(document.Profile),
+		CalculationSnapshot:     mustJSON(document.Calculation),
+		ModuleSnapshot:          mustJSON(scopeSnapshot),
+		TimelineSnapshot:        []byte("[]"),
+		AiProvider:              "",
+		AiModel:                 "",
+		ContentHash:             &hashString,
+		Regenerated:             regenerated,
+	}
+
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin standalone maintenance generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist standalone maintenance generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit standalone maintenance generation result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateStandaloneMaintenance(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	var calculation domain.StandaloneMaintenanceCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+	var profile domain.ResolvedStandaloneMaintenanceProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil || len(profile.Sections) == 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+	var scopeSnapshot domain.StandaloneMaintenanceScopeSnapshot
+	if len(draft.ModuleSnapshot) == 0 || string(draft.ModuleSnapshot) == "null" || json.Unmarshal(draft.ModuleSnapshot, &scopeSnapshot) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	var timeline []json.RawMessage
+	if len(draft.TimelineSnapshot) == 0 || json.Unmarshal(draft.TimelineSnapshot, &timeline) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
+	}
+	var legalSnap legalSnapshotView
+	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || string(draft.LegalTemplateSnapshot) == "{}" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
+	}
+	if req.StandaloneMaintenance == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing standalone maintenance")
+	}
+	input := *req.StandaloneMaintenance
+	if (input.Mode == domain.StandaloneMaintenanceRetainer && len(scopeSnapshot.DefectGroups) == 0) ||
+		(input.Mode == domain.StandaloneMaintenanceHourlyTask && len(scopeSnapshot.HourlyTasks) == 0) {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	switch input.Mode {
+	case domain.StandaloneMaintenanceRetainer:
+		input.DefectGroups = scopeSnapshot.DefectGroups
+	case domain.StandaloneMaintenanceHourlyTask:
+		input.HourlyTasks = scopeSnapshot.HourlyTasks
+	}
+
+	metadata := QuotationMetadata{
+		QuotationNumber:   draft.QuotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        strings.TrimSpace(req.ClientName),
+		ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := StandaloneMaintenanceDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   legalSnap.ContentHTML,
+	}
+	return s.renderAndPersistStandaloneMaintenance(ctx, companyID, draft.RevisionID, true, document, scopeSnapshot)
+}
+
 type rateSnapshotLookup struct{ items []domain.RateCardItem }
 
 func (l rateSnapshotLookup) ResolveItem(_ context.Context, _, _, role, seniority, termType string) (*domain.RateCardItem, error) {
@@ -925,6 +1082,8 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 		return s.regenerateSubscriptionSaaS(ctx, companyID, req, draft)
 	case domain.CommercialSchemeWhiteLabel:
 		return s.regenerateWhiteLabel(ctx, companyID, req, draft)
+	case domain.CommercialSchemeStandaloneMaintenance:
+		return s.regenerateStandaloneMaintenance(ctx, companyID, req, draft)
 	case domain.CommercialSchemeDedicatedSquad:
 		if req.DedicatedSquad != nil {
 			return s.regenerateDedicated(ctx, companyID, req, draft)
@@ -1265,6 +1424,13 @@ func (s *QuotationGenerationService) inspectWhiteLabelDraft(ctx context.Context,
 		expectedLegalHTML = tmpl.ContentHTML
 	}
 
+	if expectedLegalHTML != "" && generationInput.WhiteLabel != nil {
+		resolved, rerr := ResolveWhiteLabelLegalHTML(expectedLegalHTML, generationInput.WhiteLabel.TaxTreatment)
+		if rerr == nil {
+			expectedLegalHTML = resolved
+		}
+	}
+
 	stdLegalMod, lerr := s.domValidator.CheckLegalModified(html, expectedLegalHTML)
 	if lerr != nil {
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
@@ -1273,6 +1439,10 @@ func (s *QuotationGenerationService) inspectWhiteLabelDraft(ctx context.Context,
 	rightsMod, rerr := CheckWhiteLabelRightsModified(html, generationInput.WhiteLabel.RightsStatements)
 	if rerr != nil {
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse rights block")
+	}
+
+	if len(calculation.PaymentSchedule) == 0 && generationInput.WhiteLabel != nil && len(generationInput.WhiteLabel.PaymentSchedule) > 0 {
+		calculation.PaymentSchedule = generationInput.WhiteLabel.PaymentSchedule
 	}
 
 	commMod, cerr := CheckWhiteLabelCommercialModified(html, calculation)
@@ -1405,7 +1575,7 @@ func (s *QuotationGenerationService) loadConfiguration(ctx context.Context, comp
 	return cfg, nil
 }
 
-func (s *QuotationGenerationService) loadWhiteLabelConfiguration(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest) (*generationConfig, error) {
+func (s *QuotationGenerationService) loadStructuredConfiguration(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest) (*generationConfig, error) {
 	cfg := &generationConfig{companyID: companyID}
 
 	legal, err := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, DefaultLegalTemplateCode)
@@ -1879,7 +2049,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 
 	switch req.CommercialScheme {
 	case domain.CommercialSchemeDedicatedSquad:
-		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil {
+		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad payload is invalid")
 		}
 		if req.DedicatedSquad != nil {
@@ -1915,7 +2085,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeSubscriptionSaaS:
-		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil {
+		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas payload is invalid")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -1927,11 +2097,23 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeWhiteLabel:
-		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil {
+		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "white_label requires exactly white_label input")
 		}
 		if err := req.WhiteLabel.Validate(); err != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "white label input is invalid")
+		}
+		return nil
+
+	case domain.CommercialSchemeStandaloneMaintenance:
+		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "standalone_maintenance requires exactly standalone_maintenance input")
+		}
+		if req.RateCardID != uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is not accepted for standalone_maintenance")
+		}
+		if err := req.StandaloneMaintenance.Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "standalone maintenance input is invalid")
 		}
 		return nil
 

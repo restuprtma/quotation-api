@@ -1959,3 +1959,518 @@ func TestGenerateWhiteLabel_ValidationRejection(t *testing.T) {
 		assertGenerationCode(t, err, "allocation_invalid")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Standalone Maintenance Generation & Regeneration Tests
+// ---------------------------------------------------------------------------
+
+type panicAIProvider struct{}
+
+func (p *panicAIProvider) Generate(_ context.Context, _ service.GenerateRequest) (service.GenerateResult, error) {
+	panic("AI provider must not be called for standalone_maintenance")
+}
+
+type panicProviderSource struct{}
+
+func (p *panicProviderSource) ProviderForCompany(_ context.Context, _ uuid.UUID) (service.AIProvider, string, string, error) {
+	panic("ProviderForCompany must not be called for standalone_maintenance")
+}
+
+type failingStandaloneMaintenanceRenderer struct{}
+
+func (f *failingStandaloneMaintenanceRenderer) Render(_ service.StandaloneMaintenanceDocumentInput) (string, error) {
+	return "", errors.New("simulated standalone maintenance render failure")
+}
+
+type missingBlockStandaloneMaintenanceRenderer struct{}
+
+func (m *missingBlockStandaloneMaintenanceRenderer) Render(_ service.StandaloneMaintenanceDocumentInput) (string, error) {
+	return `<article class="quotation-document"><section data-block-type="metadata">Meta</section></article>`, nil
+}
+
+func standaloneMaintenanceRequest(fx pipelineFixture, input domain.StandaloneMaintenanceInput) dto.GenerateQuotationRequest {
+	key := uuid.New().String()
+	return dto.GenerateQuotationRequest{
+		IdempotencyKey:        &key,
+		Subject:               "Penawaran Maintenance Aplikasi Nex Health",
+		SolutionType:          "maintenance",
+		CommercialScheme:      domain.CommercialSchemeStandaloneMaintenance,
+		StandaloneMaintenance: &input,
+		RateCardID:            uuid.Nil,
+		ClientID:              &fx.clientID,
+		ClientName:            "Nex Health Hospital",
+		ClientCompanyName:     "PT Nex Health Medika",
+	}
+}
+
+func generateStandaloneMaintenanceDraft(t *testing.T, pool *pgxpool.Pool, customize ...func(input *domain.StandaloneMaintenanceInput)) (uuid.UUID, uuid.UUID, pipelineFixture) {
+	t.Helper()
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := nexRetainerInputForCalculator()
+	for _, fn := range customize {
+		fn(&input)
+	}
+	req := standaloneMaintenanceRequest(fx, input)
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	return qid, fx.companyID, fx
+}
+
+func TestGenerateStandaloneMaintenance_ValidationRejection(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	t.Run("NilStandaloneMaintenancePayload", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		req.StandaloneMaintenance = nil
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("BothStandaloneMaintenanceAndDedicatedSquad", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		req.DedicatedSquad = &domain.DedicatedSquadInput{}
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("BothStandaloneMaintenanceAndSubscriptionSaaS", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		saas := validSubscriptionSaaSInput()
+		req.SubscriptionSaaS = &saas
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("BothStandaloneMaintenanceAndWhiteLabel", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		wl := validWhiteLabelInputForTest()
+		req.WhiteLabel = &wl
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("NonZeroRateCardID", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		req.RateCardID = uuid.New()
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "invalid_rate_card")
+	})
+
+	t.Run("InvalidStandaloneNestedInput", func(t *testing.T) {
+		in := nexRetainerInputForCalculator()
+		in.SystemName = ""
+		req := standaloneMaintenanceRequest(fx, in)
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("DedicatedSquadRejectsStandaloneMaintenance", func(t *testing.T) {
+		req := fx.request()
+		in := nexRetainerInputForCalculator()
+		req.StandaloneMaintenance = &in
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("SubscriptionSaaSRejectsStandaloneMaintenance", func(t *testing.T) {
+		saas := validSubscriptionSaaSInput()
+		req := saasRequest(fx, saas)
+		in := nexRetainerInputForCalculator()
+		req.StandaloneMaintenance = &in
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WhiteLabelRejectsStandaloneMaintenance", func(t *testing.T) {
+		req := whiteLabelRequest(fx, validWhiteLabelInputForTest())
+		in := nexRetainerInputForCalculator()
+		req.StandaloneMaintenance = &in
+
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+}
+
+func TestGenerateStandaloneMaintenance_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	svc := service.NewQuotationGenerationService(
+		repository.NewGenerationRepository(pool),
+		&panicProviderSource{},
+		service.WithAttemptTimeout(2*time.Second),
+	)
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qCount, rCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotations WHERE id = $1`, qid).Scan(&qCount))
+	assert.Equal(t, 1, qCount)
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotation_revisions WHERE quotation_id = $1`, qid).Scan(&rCount))
+	assert.Equal(t, 1, rCount)
+
+	var (
+		qScheme                            string
+		qStatus, revStatus                 string
+		budgetMax                          *int64
+		calcSnap, modSnap, timeSnap, pSnap string
+		contentHTML                        string
+		contentHash                        *string
+		aiProv, aiModel                    *string
+		rcSnap, skillSnap                  string
+	)
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.commercial_scheme,
+		       q.status, r.generation_status,
+		       r.budget_maximum,
+		       r.calculation_snapshot::text, r.module_snapshot::text,
+		       r.timeline_snapshot::text, r.resolved_profile_snapshot::text,
+		       r.content_html, r.content_hash,
+		       r.ai_provider, r.ai_model,
+		       COALESCE(r.rate_card_snapshot::text, '{}'), COALESCE(r.skill_snapshot::text, '{}')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(
+		&qScheme,
+		&qStatus, &revStatus,
+		&budgetMax,
+		&calcSnap, &modSnap, &timeSnap, &pSnap,
+		&contentHTML, &contentHash,
+		&aiProv, &aiModel,
+		&rcSnap, &skillSnap,
+	))
+
+	assert.Equal(t, "standalone_maintenance", qScheme)
+	assert.Equal(t, "draft", qStatus)
+	assert.Equal(t, "completed", revStatus)
+	assert.Nil(t, budgetMax, "budget_maximum must be NULL")
+	assert.Nil(t, aiProv, "ai_provider must be empty/null")
+	assert.Nil(t, aiModel, "ai_model must be empty/null")
+	assert.Equal(t, "{}", rcSnap, "rate_card_snapshot must be {}")
+	assert.Equal(t, "{}", skillSnap, "skill_snapshot must be {}")
+
+	// Calculation total = 23085000
+	var calc domain.StandaloneMaintenanceCalculation
+	require.NoError(t, json.Unmarshal([]byte(calcSnap), &calc))
+	assert.Equal(t, int64(23_085_000), calc.TotalInvestment)
+	assert.Equal(t, domain.StandaloneMaintenanceRetainer, calc.Mode)
+
+	// Module snapshot mode data = defect_groups only
+	var scopeSnap domain.StandaloneMaintenanceScopeSnapshot
+	require.NoError(t, json.Unmarshal([]byte(modSnap), &scopeSnap))
+	assert.NotEmpty(t, scopeSnap.DefectGroups)
+	assert.Empty(t, scopeSnap.HourlyTasks, "module snapshot must contain defect_groups only in retainer mode")
+	assert.Equal(t, "1. Detail Pasien", scopeSnap.DefectGroups[0].Title)
+
+	// Timeline snapshot = []
+	var timelineSnap []json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(timeSnap), &timelineSnap))
+	assert.Empty(t, timelineSnap)
+
+	// Resolved profile snapshot
+	var profile domain.ResolvedStandaloneMaintenanceProfile
+	require.NoError(t, json.Unmarshal([]byte(pSnap), &profile))
+	assert.Equal(t, domain.StandaloneMaintenanceRetainer, profile.Mode)
+	assert.Equal(t, domain.StandaloneTaxExclusive, profile.TaxTreatment)
+
+	// HTML and Hash assertions
+	assert.NotEmpty(t, contentHTML)
+	assert.Contains(t, contentHTML, "quotation-document")
+	assert.Contains(t, contentHTML, `data-block-type="commercial"`)
+	assert.Contains(t, contentHTML, "Aplikasi Nex Health")
+	assert.Contains(t, contentHTML, "23.085.000")
+	require.NotNil(t, contentHash)
+	assert.NotEmpty(t, *contentHash)
+}
+
+func TestGenerateStandaloneMaintenance_IdempotencyReplay(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid1, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	qid2, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	assert.Equal(t, qid1, qid2)
+
+	var qCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotations WHERE id = $1`, qid1).Scan(&qCount))
+	assert.Equal(t, 1, qCount)
+}
+
+func TestGenerateStandaloneMaintenance_RendererFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithStandaloneMaintenanceRenderer(&failingStandaloneMaintenanceRenderer{}))
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "standalone maintenance document failed to render")
+}
+
+func TestGenerateStandaloneMaintenance_SanitizerFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithHTMLSanitizer(&failingHTMLSanitizer{}))
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "standalone maintenance document sanitization failed")
+}
+
+func TestGenerateStandaloneMaintenance_IntegrityFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithStandaloneMaintenanceRenderer(&missingBlockStandaloneMaintenanceRenderer{}))
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "standalone maintenance document integrity validation failed")
+}
+
+func TestRegenerateStandaloneMaintenance_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	input := nexRetainerInputForCalculator()
+	req := standaloneMaintenanceRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	var initialVersion int
+	var initialHTML string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&initialVersion, &initialHTML))
+	assert.Equal(t, 1, initialVersion)
+
+	// Change active legal template in DB
+	_, err = pool.Exec(context.Background(), `
+		UPDATE legal_templates SET content_html = '<p>Changed active legal terms that should not affect regenerate</p>'
+		WHERE company_id = $1
+	`, fx.companyID)
+	require.NoError(t, err)
+
+	err = svc.Regenerate(context.Background(), fx.companyID, qid)
+	require.NoError(t, err)
+
+	assert.Empty(t, source.requests(), "AI provider must not be called during regenerate")
+
+	var updatedVersion int
+	var updatedHTML string
+	var calcSnap, modSnap, timeSnap, pSnap string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html,
+		       calculation_snapshot::text, module_snapshot::text,
+		       timeline_snapshot::text, resolved_profile_snapshot::text
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&updatedVersion, &updatedHTML, &calcSnap, &modSnap, &timeSnap, &pSnap))
+
+	assert.Equal(t, initialVersion+1, updatedVersion, "content_version must increment by 1")
+	assert.NotEmpty(t, updatedHTML)
+	assert.NotContains(t, updatedHTML, "Changed active legal terms that should not affect regenerate", "regenerate must use stored legal snapshot")
+	assert.Contains(t, updatedHTML, "Syarat dan ketentuan penawaran resmi berlaku 30 hari", "must use original legal snapshot text")
+
+	var calc domain.StandaloneMaintenanceCalculation
+	require.NoError(t, json.Unmarshal([]byte(calcSnap), &calc))
+	assert.Equal(t, int64(23_085_000), calc.TotalInvestment)
+
+	var scopeSnap domain.StandaloneMaintenanceScopeSnapshot
+	require.NoError(t, json.Unmarshal([]byte(modSnap), &scopeSnap))
+	assert.NotEmpty(t, scopeSnap.DefectGroups)
+}
+
+func TestRegenerateStandaloneMaintenance_CorruptSnapshots_RejectsAndPreservesVersion(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+
+	t.Run("CorruptCalculation", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET calculation_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on corrupt snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on corrupt snapshot")
+	})
+
+	t.Run("CorruptProfile", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET resolved_profile_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptModule", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET module_snapshot = '{"invalid":"json_shape"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptLegal", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET legal_template_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("MissingStandaloneGenerationInput", func(t *testing.T) {
+		qid, companyID, _ := generateStandaloneMaintenanceDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET generation_input = '{"subject":"corrupted","commercial_scheme":"standalone_maintenance"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+}
+
+func TestRegenerateStandaloneMaintenance_CrossTenant_ReturnsNotFound(t *testing.T) {
+	pool := getTestPool(t)
+	qid, _, _ := generateStandaloneMaintenanceDraft(t, pool)
+
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	foreignCompanyID := uuid.New()
+	err := svc.Regenerate(context.Background(), foreignCompanyID, qid)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repository.ErrRevisionNotFound), "cross-tenant regenerate returns not found")
+}

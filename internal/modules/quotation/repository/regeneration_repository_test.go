@@ -348,3 +348,46 @@ func TestLoadDraftRevision_WhiteLabel_LoadsDeterministicSnapshots(t *testing.T) 
 	assert.JSONEq(t, `[{"name":"Inventory"}]`, string(draft.ModuleSnapshot))
 	assert.JSONEq(t, `[{"description":"Setup"}]`, string(draft.TimelineSnapshot))
 }
+
+func TestLoadDraftRevision_StandaloneMaintenance_LoadsDeterministicSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "standalone_maintenance"
+	params.BudgetMaximum = nil
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	res, err := repo.CreateDraftTransaction(ctx, params)
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              res.RevisionID,
+		ContentHTML:             "<article class=\"quotation-document\"><section data-block-type=\"commercial\">sm</section></article>",
+		ResolvedProfileSnapshot: []byte(`{"mode":"retainer","tax_treatment":"exclusive_ppn"}`),
+		CalculationSnapshot:     []byte(`{"mode":"retainer","total_investment":23085000}`),
+		ModuleSnapshot:          []byte(`{"defect_groups":[{"title":"Detail Pasien"}]}`),
+		TimelineSnapshot:        []byte(`[]`),
+		AiProvider:              "",
+		AiModel:                 "",
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	draft, err := repo.LoadDraftRevisionForRegeneration(ctx, companyID, res.QuotationID)
+	require.NoError(t, err)
+	assert.Equal(t, "standalone_maintenance", draft.CommercialScheme)
+	assert.Equal(t, repository.GenerationStatusCompleted, draft.GenerationStatus)
+	assert.JSONEq(t, `{"mode":"retainer","tax_treatment":"exclusive_ppn"}`, string(draft.ResolvedProfileSnapshot))
+	assert.JSONEq(t, `{"mode":"retainer","total_investment":23085000}`, string(draft.CalculationSnapshot))
+	assert.JSONEq(t, `{"defect_groups":[{"title":"Detail Pasien"}]}`, string(draft.ModuleSnapshot))
+	assert.JSONEq(t, `[]`, string(draft.TimelineSnapshot))
+}
