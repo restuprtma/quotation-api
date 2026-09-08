@@ -1,0 +1,110 @@
+{
+  "schema_version": "white-label-benchmark-v1",
+  "metadata": {
+    "source_sheet": "White Label License Only (Synthetic)",
+    "source_gid": "synthetic-license-only",
+    "verified_on": "2026-09-07",
+    "source_status": "structure_only_synthetic_amounts",
+    "source_variance": [
+      "Synthetic benchmark fixture with license-only scope."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-LICENSE-ONLY-01",
+    "subject": "Penawaran Lisensi Software Standalone",
+    "client_name": "Direktur Utama",
+    "client_company": "PT Teknologi Mandiri",
+    "issue_date": "7 September 2026"
+  },
+  "legal_html": "<ol><li>Out of pocket expenses ditanggung oleh klien.</li><li>Pekerjaan di luar jam kerja normal dikenakan biaya overtime.</li></ol>",
+  "input": {
+    "product_name": "Standalone Software License",
+    "quotation_date": "2026-09-07",
+    "tax_treatment": "exclusive_ppn",
+    "license_items": [
+      {
+        "name": "Standard Core Software License",
+        "unit_rate": 50000000,
+        "quantity": 1
+      }
+    ],
+    "payment_schedule": [
+      {
+        "work_period": "Pembelian Lisensi",
+        "terms": "Pelunasan di awal",
+        "invoice_date_label": "Saat kontrak ditandatangani",
+        "due_date_label": "H+14",
+        "component": "license",
+        "nominal": 50000000
+      }
+    ],
+    "limitation_codes": [
+      "out_of_pocket",
+      "overtime"
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "license": [
+        {
+          "name": "Standard Core Software License",
+          "unit_rate": 50000000,
+          "quantity": 1,
+          "line_total": 50000000
+        }
+      ],
+      "license_subtotal": 50000000,
+      "maintenance_subtotal": 0,
+      "hosting_subtotal": 0,
+      "maintenance_hosting_subtotal": 0,
+      "total_investment": 50000000,
+      "license_payment_total": 50000000,
+      "maintenance_hosting_payment_total": 0,
+      "payment_total": 50000000
+    },
+    "profile": {
+      "tax_treatment": "exclusive_ppn",
+      "tax_clause_text": "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
+      "show_maintenance_hosting": false,
+      "show_scope_timeline": false,
+      "show_rights": false,
+      "sections": [
+        { "code": "white_label_cost", "number": 1, "title": "Biaya White Label" },
+        { "code": "payment", "number": 2, "title": "Pembayaran" },
+        { "code": "limitations", "number": 3, "title": "Batasan dan Pengecualian" }
+      ]
+    },
+    "section_titles": [
+      "Biaya White Label",
+      "Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN WHITE LABEL PRODUCT",
+      "block_types": [
+        "metadata",
+        "opening",
+        "commercial",
+        "payment",
+        "legal",
+        "signature"
+      ],
+      "section_numbers": [1, 2, 3],
+      "section_titles": [
+        "1. Biaya White Label",
+        "2. Pembayaran",
+        "3. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": ["Nama Paket", "Rate", "Jumlah", "Total"],
+      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "license_subtotal": "Rp 50.000.000",
+      "payment_total": "Rp 50.000.000",
+      "payment_nominals": [
+        "Rp 50.000.000"
+      ],
+      "module_count": 0,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}

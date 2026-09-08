@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,143 @@ import (
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 )
+
+type WhiteLabelIntegrityExpectations struct {
+	Calculation domain.WhiteLabelCalculation
+	Profile     domain.ResolvedWhiteLabelProfile
+	LegalHTML   string
+	Rights      []string
+}
+
+// ValidateWhiteLabelIntegrity validates the full DOM structure and semantic
+// data integrity of a generated/sanitized White Label document.
+func ValidateWhiteLabelIntegrity(document string, expected WhiteLabelIntegrityExpectations) error {
+	root, err := html.Parse(strings.NewReader(document))
+	if err != nil {
+		return fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
+	}
+	nodes := collectNodes(root)
+
+	requiredBlocks := []string{"metadata", "opening", "commercial", "payment", "legal", "signature"}
+	for _, bType := range requiredBlocks {
+		block, err := findExactlyOne(nodes, "data-block-type", bType)
+		if err != nil {
+			return err
+		}
+		if block == nil {
+			return fmt.Errorf("%w: %s block is missing", ErrUnsafeHTML, bType)
+		}
+	}
+
+	if expected.Profile.ShowMaintenanceHosting {
+		block, err := findExactlyOne(nodes, "data-block-type", "commercial-maintenance-hosting")
+		if err != nil {
+			return err
+		}
+		if block == nil {
+			return fmt.Errorf("%w: commercial-maintenance-hosting block is missing", ErrUnsafeHTML)
+		}
+	} else {
+		block, err := findExactlyOne(nodes, "data-block-type", "commercial-maintenance-hosting")
+		if err != nil {
+			return err
+		}
+		if block != nil {
+			return fmt.Errorf("%w: commercial-maintenance-hosting block is unexpected", ErrUnsafeHTML)
+		}
+	}
+
+	if expected.Profile.ShowScopeTimeline {
+		block, err := findExactlyOne(nodes, "data-block-type", "scope")
+		if err != nil {
+			return err
+		}
+		if block == nil {
+			return fmt.Errorf("%w: scope block is missing", ErrUnsafeHTML)
+		}
+	} else {
+		block, err := findExactlyOne(nodes, "data-block-type", "scope")
+		if err != nil {
+			return err
+		}
+		if block != nil {
+			return fmt.Errorf("%w: scope block is unexpected", ErrUnsafeHTML)
+		}
+	}
+
+	if expected.Profile.ShowRights && len(expected.Rights) > 0 {
+		block, err := findExactlyOne(nodes, "data-block-type", "rights")
+		if err != nil {
+			return err
+		}
+		if block == nil {
+			return fmt.Errorf("%w: rights block is missing", ErrUnsafeHTML)
+		}
+	} else {
+		block, err := findExactlyOne(nodes, "data-block-type", "rights")
+		if err != nil {
+			return err
+		}
+		if block != nil {
+			return fmt.Errorf("%w: rights block is unexpected", ErrUnsafeHTML)
+		}
+	}
+
+	commMod, err := CheckWhiteLabelCommercialModified(document, expected.Calculation)
+	if err != nil {
+		return err
+	}
+	if commMod {
+		return fmt.Errorf("%w: commercial content was modified", ErrUnsafeHTML)
+	}
+
+	rightsMod, err := CheckWhiteLabelRightsModified(document, expected.Rights)
+	if err != nil {
+		return err
+	}
+	if rightsMod {
+		return fmt.Errorf("%w: rights content was modified", ErrUnsafeHTML)
+	}
+
+	if strings.TrimSpace(expected.LegalHTML) != "" {
+		legalBlock, err := findExactlyOne(nodes, "data-block-type", "legal")
+		if err != nil {
+			return err
+		}
+		if legalBlock == nil {
+			return fmt.Errorf("%w: legal block is missing", ErrUnsafeHTML)
+		}
+		var buf bytes.Buffer
+		for child := legalBlock.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type == html.CommentNode {
+				continue
+			}
+			if child.Type == html.ElementNode && child.Data == "h2" {
+				continue
+			}
+			if err := html.Render(&buf, child); err != nil {
+				return err
+			}
+		}
+		renderedLegal, err := canonicalizeFragmentHTML(buf.String())
+		if err != nil {
+			return err
+		}
+		expectedLegal, err := canonicalizeFragmentHTML(expected.LegalHTML)
+		if err != nil {
+			return err
+		}
+		if renderedLegal != expectedLegal {
+			return fmt.Errorf("%w: legal content was modified", ErrUnsafeHTML)
+		}
+	}
+
+	if err := scanForbiddenTerms(nodes); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // CheckWhiteLabelCommercialModified checks whether commercial, maintenance/hosting,
 // or payment structures in document differ from the stored snapshot expectations.

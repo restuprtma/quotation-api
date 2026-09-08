@@ -694,7 +694,12 @@ func (s *QuotationGenerationService) renderAndPersistWhiteLabel(
 	if err != nil || strings.TrimSpace(sanitized) == "" {
 		return newGenerationError(ErrCodeUnsafeHTML, "white label document sanitization failed")
 	}
-	if !strings.Contains(sanitized, `class="quotation-document"`) || !strings.Contains(sanitized, `data-block-type="commercial"`) {
+	if err := ValidateWhiteLabelIntegrity(sanitized, WhiteLabelIntegrityExpectations{
+		Calculation: document.Calculation,
+		Profile:     document.Profile,
+		LegalHTML:   document.LegalHTML,
+		Rights:      document.Input.RightsStatements,
+	}); err != nil {
 		return newGenerationError(ErrCodeUnsafeHTML, "white label document integrity validation failed")
 	}
 	hash := sha256.Sum256([]byte(sanitized))
