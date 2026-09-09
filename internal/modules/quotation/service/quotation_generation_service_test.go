@@ -2138,7 +2138,7 @@ func (p *panicAIProvider) Generate(_ context.Context, _ service.GenerateRequest)
 type panicProviderSource struct{}
 
 func (p *panicProviderSource) ProviderForCompany(_ context.Context, _ uuid.UUID) (service.AIProvider, string, string, error) {
-	panic("ProviderForCompany must not be called for standalone_maintenance")
+	panic("ProviderForCompany must not be called for deterministic schemes")
 }
 
 type failingStandaloneMaintenanceRenderer struct{}
@@ -2631,6 +2631,416 @@ func TestRegenerateStandaloneMaintenance_CorruptSnapshots_RejectsAndPreservesVer
 func TestRegenerateStandaloneMaintenance_CrossTenant_ReturnsNotFound(t *testing.T) {
 	pool := getTestPool(t)
 	qid, _, _ := generateStandaloneMaintenanceDraft(t, pool)
+
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	foreignCompanyID := uuid.New()
+	err := svc.Regenerate(context.Background(), foreignCompanyID, qid)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repository.ErrRevisionNotFound), "cross-tenant regenerate returns not found")
+}
+
+type failingCustomDevelopmentRenderer struct{}
+
+func (f *failingCustomDevelopmentRenderer) Render(_ service.CustomDevelopmentDocumentInput) (string, error) {
+	return "", errors.New("simulated custom development render failure")
+}
+
+type missingBlockCustomDevelopmentRenderer struct{}
+
+func (m *missingBlockCustomDevelopmentRenderer) Render(_ service.CustomDevelopmentDocumentInput) (string, error) {
+	return `<article class="quotation-document"><section data-block-type="metadata">Meta</section></article>`, nil
+}
+
+func generateCustomDevelopmentDraft(t *testing.T, pool *pgxpool.Pool, customize ...func(input *domain.CustomDevelopmentInput)) (uuid.UUID, uuid.UUID, pipelineFixture) {
+	t.Helper()
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validCustomDevelopmentInputForTest()
+	for _, fn := range customize {
+		fn(&input)
+	}
+	req := customDevelopmentRequest(fx, input)
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	return qid, fx.companyID, fx
+}
+
+func TestGenerateCustomDevelopment_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	svc := service.NewQuotationGenerationService(
+		repository.NewGenerationRepository(pool),
+		&panicProviderSource{},
+		service.WithAttemptTimeout(2*time.Second),
+	)
+
+	input := validCustomDevelopmentInputForTest()
+	req := customDevelopmentRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qCount, rCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotations WHERE id = $1`, qid).Scan(&qCount))
+	assert.Equal(t, 1, qCount)
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotation_revisions WHERE quotation_id = $1`, qid).Scan(&rCount))
+	assert.Equal(t, 1, rCount)
+
+	var (
+		qScheme                            string
+		qStatus, revStatus                 string
+		budgetMax                          *int64
+		calcSnap, modSnap, timeSnap, pSnap string
+		contentHTML                        string
+		contentHash                        *string
+		aiProv, aiModel                    *string
+		rcSnap, skillSnap                  string
+	)
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.commercial_scheme,
+		       q.status, r.generation_status,
+		       r.budget_maximum,
+		       r.calculation_snapshot::text, r.module_snapshot::text,
+		       r.timeline_snapshot::text, r.resolved_profile_snapshot::text,
+		       r.content_html, r.content_hash,
+		       r.ai_provider, r.ai_model,
+		       COALESCE(r.rate_card_snapshot::text, '{}'), COALESCE(r.skill_snapshot::text, '{}')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(
+		&qScheme,
+		&qStatus, &revStatus,
+		&budgetMax,
+		&calcSnap, &modSnap, &timeSnap, &pSnap,
+		&contentHTML, &contentHash,
+		&aiProv, &aiModel,
+		&rcSnap, &skillSnap,
+	))
+
+	assert.Equal(t, "custom_development", qScheme)
+	assert.Equal(t, "draft", qStatus)
+	assert.Equal(t, "completed", revStatus)
+	assert.Nil(t, budgetMax, "budget_maximum must be NULL")
+	assert.Nil(t, aiProv, "ai_provider must be empty/null")
+	assert.Nil(t, aiModel, "ai_model must be empty/null")
+	assert.Equal(t, "{}", rcSnap, "rate_card_snapshot must be {}")
+	assert.Equal(t, "{}", skillSnap, "skill_snapshot must be {}")
+
+	// Calculation total = 15000000
+	var calc domain.CustomDevelopmentCalculation
+	require.NoError(t, json.Unmarshal([]byte(calcSnap), &calc))
+	assert.Equal(t, int64(15_000_000), calc.TotalInvestment)
+	assert.Equal(t, int64(15_000_000), calc.DevelopmentSubtotal)
+
+	// Module snapshot
+	var moduleSnap []domain.CustomDevelopmentModuleGroupInput
+	require.NoError(t, json.Unmarshal([]byte(modSnap), &moduleSnap))
+	assert.Len(t, moduleSnap, 1)
+	assert.Equal(t, "Transaksi", moduleSnap[0].Name)
+	assert.Equal(t, []string{"Checkout"}, moduleSnap[0].Features)
+
+	// Timeline snapshot
+	var timelineSnap []domain.CustomDevelopmentTimelineRowInput
+	require.NoError(t, json.Unmarshal([]byte(timeSnap), &timelineSnap))
+	assert.Len(t, timelineSnap, 1)
+	assert.Equal(t, "Fase 1", timelineSnap[0].Description)
+	assert.Equal(t, "1 Bulan", timelineSnap[0].Timeline)
+
+	// Resolved profile snapshot
+	var profile domain.ResolvedCustomDevelopmentProfile
+	require.NoError(t, json.Unmarshal([]byte(pSnap), &profile))
+	assert.Equal(t, domain.CustomDevelopmentMonthlyPeriod, profile.TableMode)
+	assert.NotEmpty(t, profile.Sections)
+
+	// HTML and Hash assertions
+	assert.NotEmpty(t, contentHTML)
+	assert.Contains(t, contentHTML, "quotation-document")
+	assert.Contains(t, contentHTML, `data-quotation-section="commercial-development"`)
+	assert.Contains(t, contentHTML, "Sistem Kopi Studio24")
+	assert.Contains(t, contentHTML, "15.000.000")
+	require.NotNil(t, contentHash)
+	assert.NotEmpty(t, *contentHash)
+}
+
+func TestGenerateCustomDevelopment_IdempotencyReplay(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validCustomDevelopmentInputForTest()
+	req := customDevelopmentRequest(fx, input)
+
+	qid1, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	qid2, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	assert.Equal(t, qid1, qid2)
+
+	var qCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM quotations WHERE id = $1`, qid1).Scan(&qCount))
+	assert.Equal(t, 1, qCount)
+}
+
+func TestGenerateCustomDevelopment_RendererFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithCustomDevelopmentRenderer(&failingCustomDevelopmentRenderer{}))
+
+	input := validCustomDevelopmentInputForTest()
+	req := customDevelopmentRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "custom development document failed to render")
+}
+
+func TestGenerateCustomDevelopment_SanitizerFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithHTMLSanitizer(&failingHTMLSanitizer{}))
+
+	input := validCustomDevelopmentInputForTest()
+	req := customDevelopmentRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "custom development document sanitization failed")
+}
+
+func TestGenerateCustomDevelopment_IntegrityFailure_LeavesQuotationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithCustomDevelopmentRenderer(&missingBlockCustomDevelopmentRenderer{}))
+
+	input := validCustomDevelopmentInputForTest()
+	req := customDevelopmentRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus, revError string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, COALESCE(r.generation_error, '')
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id
+		WHERE q.id = $1 AND q.company_id = $2
+	`, qid, fx.companyID).Scan(&qStatus, &revStatus, &revError))
+
+	assert.Equal(t, "failed", qStatus)
+	assert.Equal(t, "failed", revStatus)
+	assert.Contains(t, revError, "custom development document integrity validation failed")
+}
+
+func TestRegenerateCustomDevelopment_Success(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	input := validCustomDevelopmentInputForTest()
+	req := customDevelopmentRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	var initialVersion int
+	var initialHTML string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&initialVersion, &initialHTML))
+	assert.Equal(t, 1, initialVersion)
+
+	// Change active legal template in DB
+	_, err = pool.Exec(context.Background(), `
+		UPDATE legal_templates SET content_html = '<p>Changed active legal terms that should not affect regenerate</p>'
+		WHERE company_id = $1
+	`, fx.companyID)
+	require.NoError(t, err)
+
+	err = svc.Regenerate(context.Background(), fx.companyID, qid)
+	require.NoError(t, err)
+
+	assert.Empty(t, source.requests(), "AI provider must not be called during regenerate")
+
+	var updatedVersion int
+	var updatedHTML string
+	var calcSnap, modSnap, timeSnap, pSnap string
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		SELECT content_version, content_html,
+		       calculation_snapshot::text, module_snapshot::text,
+		       timeline_snapshot::text, resolved_profile_snapshot::text
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&updatedVersion, &updatedHTML, &calcSnap, &modSnap, &timeSnap, &pSnap))
+
+	assert.Equal(t, initialVersion+1, updatedVersion, "content_version must increment by 1")
+	assert.NotEmpty(t, updatedHTML)
+	assert.NotContains(t, updatedHTML, "Changed active legal terms that should not affect regenerate", "regenerate must use stored legal snapshot")
+	assert.Contains(t, updatedHTML, "Syarat dan ketentuan penawaran resmi berlaku 30 hari", "must use original legal snapshot text")
+
+	var calc domain.CustomDevelopmentCalculation
+	require.NoError(t, json.Unmarshal([]byte(calcSnap), &calc))
+	assert.Equal(t, int64(15_000_000), calc.TotalInvestment)
+
+	var moduleSnap []domain.CustomDevelopmentModuleGroupInput
+	require.NoError(t, json.Unmarshal([]byte(modSnap), &moduleSnap))
+	assert.Len(t, moduleSnap, 1)
+	assert.Equal(t, "Transaksi", moduleSnap[0].Name)
+}
+
+func TestRegenerateCustomDevelopment_CorruptSnapshots_RejectsAndPreservesVersion(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+
+	t.Run("CorruptCalculation", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET calculation_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on corrupt snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on corrupt snapshot")
+	})
+
+	t.Run("CorruptProfile", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET resolved_profile_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptModule", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET module_snapshot = '{"invalid":"json_shape"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptTimeline", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET timeline_snapshot = '{"invalid":"json_shape"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("CorruptLegal", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET legal_template_snapshot = 'null'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+
+	t.Run("MissingCustomDevelopmentGenerationInput", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET generation_input = '{"subject":"corrupted","commercial_scheme":"custom_development"}'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version)
+		assert.Equal(t, snap.html, snapAfter.html)
+	})
+}
+
+func TestRegenerateCustomDevelopment_CrossTenant_ReturnsNotFound(t *testing.T) {
+	pool := getTestPool(t)
+	qid, _, _ := generateCustomDevelopmentDraft(t, pool)
 
 	svc, _ := newSvc(pool, &panicAIProvider{})
 

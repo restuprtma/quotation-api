@@ -177,6 +177,7 @@ type QuotationGenerationService struct {
 	subscriptionRenderer          SubscriptionSaaSHTMLRenderer
 	whiteLabelRenderer            WhiteLabelHTMLRenderer
 	standaloneMaintenanceRenderer StandaloneMaintenanceHTMLRenderer
+	customDevelopmentRenderer     CustomDevelopmentRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -195,6 +196,11 @@ func WithWhiteLabelRenderer(r WhiteLabelHTMLRenderer) GenerationOption {
 // WithStandaloneMaintenanceRenderer overrides the StandaloneMaintenanceHTMLRenderer (useful for tests).
 func WithStandaloneMaintenanceRenderer(r StandaloneMaintenanceHTMLRenderer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.standaloneMaintenanceRenderer = r }
+}
+
+// WithCustomDevelopmentRenderer overrides the CustomDevelopmentRenderer (useful for tests).
+func WithCustomDevelopmentRenderer(r CustomDevelopmentRenderer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.customDevelopmentRenderer = r }
 }
 
 // WithHTMLSanitizer overrides the HTMLSanitizer (useful for tests).
@@ -219,6 +225,7 @@ func NewQuotationGenerationService(
 		subscriptionRenderer:          NewSubscriptionSaaSHTMLRenderer(),
 		whiteLabelRenderer:            NewWhiteLabelHTMLRenderer(),
 		standaloneMaintenanceRenderer: NewStandaloneMaintenanceHTMLRenderer(),
+		customDevelopmentRenderer:     NewCustomDevelopmentRenderer(),
 		attemptTimeout:                DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
@@ -250,7 +257,7 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 
 	var cfg *generationConfig
 	var gerr error
-	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel || req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance {
+	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel || req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance || req.CommercialScheme == domain.CommercialSchemeCustomDevelopment {
 		cfg, gerr = s.loadStructuredConfiguration(ctx, companyID, req)
 	} else {
 		cfg, gerr = s.loadConfiguration(ctx, companyID, req)
@@ -317,6 +324,18 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		if gerr != nil {
 			var ge *GenerationError
 			reason := "standalone maintenance generation failed"
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
+	case domain.CommercialSchemeCustomDevelopment:
+		gerr := s.generateCustomDevelopment(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			var ge *GenerationError
+			reason := "custom development generation failed"
 			if errors.As(gerr, &ge) {
 				reason = ge.message
 			}
@@ -937,6 +956,150 @@ func (s *QuotationGenerationService) regenerateStandaloneMaintenance(ctx context
 	return s.renderAndPersistStandaloneMaintenance(ctx, companyID, draft.RevisionID, true, document, scopeSnapshot)
 }
 
+func (s *QuotationGenerationService) generateCustomDevelopment(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	if req.CustomDevelopment == nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "custom development input is missing")
+	}
+	input := *req.CustomDevelopment
+	input.SystemName = strings.TrimSpace(input.SystemName)
+	input.DiscountLabel = strings.TrimSpace(input.DiscountLabel)
+	modules := NormalizeCustomDevelopmentModules(input.ModuleGroups)
+	timeline := NormalizeCustomDevelopmentTimeline(input.TimelineRows)
+	input.ModuleGroups = modules
+	input.TimelineRows = timeline
+
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "custom development input is invalid")
+	}
+	calculation, err := CalculateCustomDevelopment(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "custom development calculation is invalid")
+	}
+	profile, err := ResolveCustomDevelopmentProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "custom development profile is invalid")
+	}
+	metadata := QuotationMetadata{
+		QuotationNumber:   cfg.quotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        cfg.clientName,
+		ClientCompanyName: cfg.clientCompanyName,
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := CustomDevelopmentDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   cfg.legal.ContentHTML,
+	}
+	return s.renderAndPersistCustomDevelopment(ctx, companyID, revisionID, false, document, modules, timeline)
+}
+
+func (s *QuotationGenerationService) renderAndPersistCustomDevelopment(
+	ctx context.Context,
+	companyID uuid.UUID,
+	revisionID uuid.UUID,
+	regenerated bool,
+	document CustomDevelopmentDocumentInput,
+	modules []domain.CustomDevelopmentModuleGroupInput,
+	timeline []domain.CustomDevelopmentTimelineRowInput,
+) error {
+	rawHTML, err := s.customDevelopmentRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "custom development document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "custom development document sanitization failed")
+	}
+	if err := ValidateCustomDevelopmentIntegrity(sanitized, CustomDevelopmentIntegrityExpectations{
+		Input:       document.Input,
+		Calculation: document.Calculation,
+		Profile:     document.Profile,
+		LegalHTML:   document.LegalHTML,
+	}); err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "custom development document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+
+	params := repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              revisionID,
+		ContentHTML:             sanitized,
+		ResolvedProfileSnapshot: mustJSON(document.Profile),
+		CalculationSnapshot:     mustJSON(document.Calculation),
+		ModuleSnapshot:          mustJSON(modules),
+		TimelineSnapshot:        mustJSON(timeline),
+		AiProvider:              "",
+		AiModel:                 "",
+		ContentHash:             &hashString,
+		Regenerated:             regenerated,
+	}
+
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin custom development generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist custom development generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit custom development generation result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateCustomDevelopment(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	var calculation domain.CustomDevelopmentCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+	var profile domain.ResolvedCustomDevelopmentProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil || len(profile.Sections) == 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+	var modules []domain.CustomDevelopmentModuleGroupInput
+	if len(draft.ModuleSnapshot) == 0 || string(draft.ModuleSnapshot) == "null" || json.Unmarshal(draft.ModuleSnapshot, &modules) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	var timeline []domain.CustomDevelopmentTimelineRowInput
+	if len(draft.TimelineSnapshot) == 0 || string(draft.TimelineSnapshot) == "null" || json.Unmarshal(draft.TimelineSnapshot, &timeline) != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
+	}
+	var legalSnap legalSnapshotView
+	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || string(draft.LegalTemplateSnapshot) == "{}" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
+	}
+	if req.CustomDevelopment == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing custom development")
+	}
+	input := *req.CustomDevelopment
+	input.SystemName = strings.TrimSpace(input.SystemName)
+	input.DiscountLabel = strings.TrimSpace(input.DiscountLabel)
+	input.ModuleGroups = modules
+	input.TimelineRows = timeline
+
+	metadata := QuotationMetadata{
+		QuotationNumber:   draft.QuotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        strings.TrimSpace(req.ClientName),
+		ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := CustomDevelopmentDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   legalSnap.ContentHTML,
+	}
+	return s.renderAndPersistCustomDevelopment(ctx, companyID, draft.RevisionID, true, document, modules, timeline)
+}
+
+
 type rateSnapshotLookup struct{ items []domain.RateCardItem }
 
 func (l rateSnapshotLookup) ResolveItem(_ context.Context, _, _, role, seniority, termType string) (*domain.RateCardItem, error) {
@@ -1086,6 +1249,8 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 		return s.regenerateWhiteLabel(ctx, companyID, req, draft)
 	case domain.CommercialSchemeStandaloneMaintenance:
 		return s.regenerateStandaloneMaintenance(ctx, companyID, req, draft)
+	case domain.CommercialSchemeCustomDevelopment:
+		return s.regenerateCustomDevelopment(ctx, companyID, req, draft)
 	case domain.CommercialSchemeDedicatedSquad:
 		if req.DedicatedSquad != nil {
 			return s.regenerateDedicated(ctx, companyID, req, draft)

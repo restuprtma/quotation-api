@@ -391,3 +391,47 @@ func TestLoadDraftRevision_StandaloneMaintenance_LoadsDeterministicSnapshots(t *
 	assert.JSONEq(t, `{"defect_groups":[{"title":"Detail Pasien"}]}`, string(draft.ModuleSnapshot))
 	assert.JSONEq(t, `[]`, string(draft.TimelineSnapshot))
 }
+
+func TestLoadDraftRevision_CustomDevelopment_LoadsDeterministicSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "custom_development"
+	params.BudgetMaximum = nil
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	res, err := repo.CreateDraftTransaction(ctx, params)
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              res.RevisionID,
+		ContentHTML:             `<article class="quotation-document"><section data-block-type="commercial">cd</section></article>`,
+		ResolvedProfileSnapshot: []byte(`{"table_mode":"monthly_period","tax_clause_text":"Belum termasuk PPN"}`),
+		CalculationSnapshot:     []byte(`{"total_investment":15000000,"development_subtotal":15000000}`),
+		ModuleSnapshot:          []byte(`[{"name":"Transaksi","features":["Checkout"]}]`),
+		TimelineSnapshot:        []byte(`[{"description":"Fase 1","timeline":"1 Bulan"}]`),
+		AiProvider:              "",
+		AiModel:                 "",
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	draft, err := repo.LoadDraftRevisionForRegeneration(ctx, companyID, res.QuotationID)
+	require.NoError(t, err)
+	assert.Equal(t, "custom_development", draft.CommercialScheme)
+	assert.Equal(t, repository.GenerationStatusCompleted, draft.GenerationStatus)
+	assert.JSONEq(t, `{"table_mode":"monthly_period","tax_clause_text":"Belum termasuk PPN"}`, string(draft.ResolvedProfileSnapshot))
+	assert.JSONEq(t, `{"total_investment":15000000,"development_subtotal":15000000}`, string(draft.CalculationSnapshot))
+	assert.JSONEq(t, `[{"name":"Transaksi","features":["Checkout"]}]`, string(draft.ModuleSnapshot))
+	assert.JSONEq(t, `[{"description":"Fase 1","timeline":"1 Bulan"}]`, string(draft.TimelineSnapshot))
+}
+

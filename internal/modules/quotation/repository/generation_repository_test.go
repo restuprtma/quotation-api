@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -608,3 +609,88 @@ func TestCompleteDeterministicGeneration_StandaloneMaintenanceSnapshots(t *testi
 		t.Fatalf("unexpected timeline snapshot: %s", timeline)
 	}
 }
+
+func TestCompleteDeterministicGeneration_CustomDevelopmentSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "custom_development"
+	params.BudgetMaximum = nil
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	draft, err := repo.CreateDraftTransaction(ctx, params)
+	if err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              draft.RevisionID,
+		ContentHTML:             `<article class="quotation-document"><section data-block-type="commercial">custom_dev</section></article>`,
+		ResolvedProfileSnapshot: []byte(`{"table_mode":"monthly_period","tax_clause_text":"Belum termasuk PPN"}`),
+		CalculationSnapshot:     []byte(`{"development_subtotal":15000000,"total_investment":15000000}`),
+		ModuleSnapshot:          []byte(`[{"features":["Checkout"],"name":"Transaksi"}]`),
+		TimelineSnapshot:        []byte(`[{"description":"Fase 1","timeline":"1 Bulan"}]`),
+		AiProvider:              "",
+		AiModel:                 "",
+		Regenerated:             false,
+	})
+	if err != nil {
+		t.Fatalf("complete custom development generation: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var profile, calculation, modules, timeline, html, status string
+	var aiProv, aiModel *string
+	var budgetMax *int64
+	err = pool.QueryRow(ctx, `
+		SELECT resolved_profile_snapshot::text, calculation_snapshot::text,
+		       module_snapshot::text, timeline_snapshot::text,
+		       content_html, generation_status, ai_provider, ai_model,
+		       budget_maximum
+		FROM quotation_revisions WHERE id = $1 AND company_id = $2
+	`, draft.RevisionID, companyID).Scan(&profile, &calculation, &modules, &timeline, &html, &status, &aiProv, &aiModel, &budgetMax)
+	if err != nil {
+		t.Fatalf("query revision: %v", err)
+	}
+
+	if status != repository.GenerationStatusCompleted {
+		t.Fatalf("expected status completed, got %s", status)
+	}
+	if html != `<article class="quotation-document"><section data-block-type="commercial">custom_dev</section></article>` {
+		t.Fatalf("unexpected content html: %s", html)
+	}
+	if aiProv != nil || aiModel != nil {
+		t.Fatalf("ai provider/model must be nil/empty, got %v, %v", aiProv, aiModel)
+	}
+	if budgetMax != nil {
+		t.Fatalf("budget_maximum must be nil, got %v", *budgetMax)
+	}
+	var pMap, cMap map[string]any
+	if err := json.Unmarshal([]byte(profile), &pMap); err != nil || pMap["table_mode"] != "monthly_period" || pMap["tax_clause_text"] != "Belum termasuk PPN" {
+		t.Fatalf("unexpected profile snapshot: %s", profile)
+	}
+	if err := json.Unmarshal([]byte(calculation), &cMap); err != nil || cMap["total_investment"] != float64(15000000) || cMap["development_subtotal"] != float64(15000000) {
+		t.Fatalf("unexpected calculation snapshot: %s", calculation)
+	}
+	var mList, tList []map[string]any
+	if err := json.Unmarshal([]byte(modules), &mList); err != nil || len(mList) != 1 || mList[0]["name"] != "Transaksi" {
+		t.Fatalf("unexpected module snapshot: %s", modules)
+	}
+	if err := json.Unmarshal([]byte(timeline), &tList); err != nil || len(tList) != 1 || tList[0]["description"] != "Fase 1" {
+		t.Fatalf("unexpected timeline snapshot: %s", timeline)
+	}
+}
+

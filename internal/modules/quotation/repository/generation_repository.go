@@ -90,7 +90,7 @@ type UpdateGenerationResultParams struct {
 }
 
 // CompleteDeterministicGenerationParams contains the deterministic artefacts of a
-// structured or deterministic generation (Dedicated Squad, Subscription SaaS, or White Label).
+// structured or deterministic generation (Dedicated Squad, Subscription SaaS, White Label, Standalone Maintenance, or Custom Development).
 // The snapshots are stored together with the rendered HTML so readers can never observe a partially completed
 // commercial snapshot.
 type CompleteDeterministicGenerationParams struct {
