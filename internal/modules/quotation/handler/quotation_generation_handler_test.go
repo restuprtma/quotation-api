@@ -1723,3 +1723,370 @@ func TestPreviewStandaloneMaintenance_HTTP_Guards(t *testing.T) {
 	})
 }
 
+func ptrInt64(v int64) *int64 {
+	return &v
+}
+
+func kopiStudioCustomDevPreviewRequest() dto.GenerateQuotationRequest {
+	return dto.GenerateQuotationRequest{
+		Subject:          "Penawaran Sistem Kopi Studio24",
+		SolutionType:     "custom_development",
+		CommercialScheme: domain.CommercialSchemeCustomDevelopment,
+		CustomDevelopment: &domain.CustomDevelopmentInput{
+			SystemName:           "Sistem Kopi Studio24",
+			QuotationDate:        time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
+			DevelopmentTableMode: domain.CustomDevelopmentMonthlyPeriod,
+			TaxTreatment:         domain.CustomDevelopmentTaxExclusive,
+			DevelopmentGroups: []domain.CustomDevelopmentCostGroupInput{
+				{
+					Title: "Fase 1: Backend & Core Engine",
+					Items: []domain.CustomDevelopmentCostItemInput{
+						{
+							Name:            "Senior Backend Developer",
+							DisplayRate:     ptrInt64(15_000_000),
+							Headcount:       1,
+							PeriodLabel:     "1",
+							QuotedLineTotal: ptrInt64(15_000_000),
+						},
+						{
+							Name:            "Frontend Developer",
+							DisplayRate:     ptrInt64(5_062_500),
+							Headcount:       1,
+							PeriodLabel:     "1",
+							QuotedLineTotal: ptrInt64(5_062_500),
+						},
+					},
+				},
+			},
+			DiscountLabel:   "DISCOUNT",
+			DiscountAmount:  2_062_500,
+			ShowDiscountRow: true,
+			MonthlyItems: []domain.CustomDevelopmentMonthlyItemInput{
+				{
+					Name:          "Venturo Cloud Mini",
+					Specification: "Cloud Server Standard",
+					UnitRate:      800_000,
+					Quantity:      1,
+				},
+				{
+					Name:          "Support",
+					Specification: "4 Jam Maintenance Support",
+					UnitRate:      93_000,
+					Quantity:      4,
+				},
+				{
+					Name:          "WhatsApp Connect",
+					Specification: "Integrasi Notifikasi WA",
+					UnitRate:      100_000,
+					Quantity:      1,
+				},
+			},
+			MonthlyNotes: []string{
+				"Biaya API Gemini ditandai out-of-pocket.",
+			},
+			ModuleGroups: []domain.CustomDevelopmentModuleGroupInput{
+				{
+					Name: "Modul Transaksi & Kasir",
+					Features: []string{
+						"Pencatatan order dan invoice",
+						"Integrasi payment gateway",
+					},
+				},
+			},
+			TimelineRows: []domain.CustomDevelopmentTimelineRowInput{
+				{
+					Description: "Fase 1: Pengembangan dan Testing",
+					Timeline:    "4 Minggu",
+				},
+			},
+			PaymentSchedule: []domain.CustomDevelopmentPaymentRowInput{
+				{
+					WorkPeriod:       "Down Payment 50%",
+					Terms:            "Termin 1",
+					InvoiceDateLabel: "Saat tanda tangan kontrak",
+					DueDateLabel:     "H+7",
+					Component:        domain.CustomDevelopmentPaymentProject,
+					Nominal:          9_000_000,
+				},
+				{
+					WorkPeriod:       "Pelunasan 50%",
+					Terms:            "Termin 2",
+					InvoiceDateLabel: "Setelah serah terima",
+					DueDateLabel:     "H+7",
+					Component:        domain.CustomDevelopmentPaymentProject,
+					Nominal:          9_000_000,
+				},
+				{
+					WorkPeriod:       "Bulan 1",
+					Terms:            "Layanan Bulanan Cloud & Support",
+					InvoiceDateLabel: "Awal bulan berjalan",
+					DueDateLabel:     "H+7",
+					Component:        domain.CustomDevelopmentPaymentMonthly,
+					Nominal:          1_272_000,
+				},
+			},
+			LimitationCodes: []string{
+				"out_of_pocket",
+				"overtime",
+				"third_party",
+				"scope_change",
+			},
+		},
+	}
+}
+
+func TestPreviewCustomDevelopment_HTTP_Success(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	spyCalc := &spyDedicatedSquadCalculator{}
+	provider := &adaptiveAIProvider{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+
+	router.Use(func(c *gin.Context) {
+		c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+			UserID:    httpTestUser.String(),
+			CompanyID: companyID.String(),
+		})
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/custom-development", h.PreviewCustomDevelopment)
+
+	reqPayload := kopiStudioCustomDevPreviewRequest()
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var responseBody struct {
+		Message string                               `json:"message"`
+		Data    dto.CustomDevelopmentPreviewResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+	assert.Equal(t, "Custom development preview calculated successfully", responseBody.Message)
+
+	// Verification of calculation totals (Kopi Studio)
+	assert.Equal(t, int64(20_062_500), responseBody.Data.Calculation.DevelopmentSubtotal)
+	assert.Equal(t, int64(2_062_500), responseBody.Data.Calculation.DiscountAmount)
+	assert.Equal(t, int64(18_000_000), responseBody.Data.Calculation.TotalInvestment)
+	assert.Equal(t, int64(1_272_000), responseBody.Data.Calculation.MonthlyTotal)
+	assert.Equal(t, int64(18_000_000), responseBody.Data.Calculation.DevelopmentPaymentTotal)
+	assert.Equal(t, int32(1), responseBody.Data.Calculation.MonthlyPaymentRows)
+
+	// Verification of resolved profile
+	assert.Equal(t, domain.CustomDevelopmentMonthlyPeriod, responseBody.Data.ResolvedProfile.TableMode)
+	assert.True(t, responseBody.Data.ResolvedProfile.ShowMonthly)
+	assert.True(t, responseBody.Data.ResolvedProfile.ShowDiscountRow)
+	assert.False(t, responseBody.Data.ResolvedProfile.ShowRights)
+	assert.Equal(t, "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.", responseBody.Data.ResolvedProfile.TaxClauseText)
+
+	// Verification of sections (5 sections with monthly included)
+	require.Len(t, responseBody.Data.ResolvedProfile.Sections, 5)
+	assert.Equal(t, 1, responseBody.Data.ResolvedProfile.Sections[0].Number)
+	assert.Equal(t, "development", responseBody.Data.ResolvedProfile.Sections[0].Code)
+	assert.Equal(t, "Biaya Development", responseBody.Data.ResolvedProfile.Sections[0].Title)
+
+	assert.Equal(t, 2, responseBody.Data.ResolvedProfile.Sections[1].Number)
+	assert.Equal(t, "monthly", responseBody.Data.ResolvedProfile.Sections[1].Code)
+	assert.Equal(t, "Biaya Monthly", responseBody.Data.ResolvedProfile.Sections[1].Title)
+
+	assert.Equal(t, 3, responseBody.Data.ResolvedProfile.Sections[2].Number)
+	assert.Equal(t, "scope", responseBody.Data.ResolvedProfile.Sections[2].Code)
+	assert.Equal(t, "Lingkup Pekerjaan & Timeline", responseBody.Data.ResolvedProfile.Sections[2].Title)
+
+	assert.Equal(t, 4, responseBody.Data.ResolvedProfile.Sections[3].Number)
+	assert.Equal(t, "payment", responseBody.Data.ResolvedProfile.Sections[3].Code)
+	assert.Equal(t, "Pembayaran", responseBody.Data.ResolvedProfile.Sections[3].Title)
+
+	assert.Equal(t, 5, responseBody.Data.ResolvedProfile.Sections[4].Number)
+	assert.Equal(t, "limitations", responseBody.Data.ResolvedProfile.Sections[4].Code)
+	assert.Equal(t, "Batasan dan Pengecualian", responseBody.Data.ResolvedProfile.Sections[4].Title)
+
+	// Zero calls to calculator / AI provider
+	assert.Equal(t, 0, spyCalc.calls, "dedicated squad calculator must not be touched")
+	assert.Equal(t, 0, provider.callCount, "AI provider must not be called")
+}
+
+func TestPreviewCustomDevelopment_HTTP_Guards(t *testing.T) {
+	companyID := uuid.New()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+
+	router.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Omit-Company") == "" {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+		}
+		c.Next()
+	})
+
+	router.POST("/quotation/v1/quotations/preview/custom-development", h.PreviewCustomDevelopment)
+
+	t.Run("missing payload (bad JSON) returns 400", func(t *testing.T) {
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, []byte("invalid-json-payload"))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid request payload")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("unknown fields inside custom_development returns 400", func(t *testing.T) {
+		badJSON := []byte(`{
+			"commercial_scheme": "custom_development",
+			"custom_development": {
+				"system_name": "Sistem Kopi Studio24",
+				"quotation_date": "2026-07-15",
+				"development_table_mode": "monthly_period",
+				"tax_treatment": "exclusive_ppn",
+				"unknown_field_extra": "disallowed"
+			}
+		}`)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, badJSON)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid request payload")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("missing company context returns 403", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/quotation/v1/quotations/preview/custom-development", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Omit-Company", "true")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Company context is required")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("wrong commercial scheme returns 400", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.CommercialScheme = "subscription_saas"
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("custom_development is nil returns 400", func(t *testing.T) {
+		payload := dto.GenerateQuotationRequest{
+			CommercialScheme:  domain.CommercialSchemeCustomDevelopment,
+			CustomDevelopment: nil,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("custom_dev plus dedicated pointer returns 400", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.DedicatedSquad = &domain.DedicatedSquadInput{
+			Model: domain.ModelSOWSmall,
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("custom_dev plus subscription pointer returns 400", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.SubscriptionSaaS = &domain.SubscriptionSaaSInput{
+			QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("custom_dev plus white_label pointer returns 400", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.WhiteLabel = &domain.WhiteLabelInput{
+			ProductName:   "WL Product",
+			QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("custom_dev plus standalone_maintenance pointer returns 400", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.StandaloneMaintenance = &domain.StandaloneMaintenanceInput{
+			SystemName:    "SM System",
+			QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+		}
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development request")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("non-zero rate_card_id returns 400", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.RateCardID = uuid.New()
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Rate card is not allowed for custom development")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("negative discount returns 422", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.CustomDevelopment.DiscountAmount = -500_000
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid custom development input")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("payment mismatch returns 422", func(t *testing.T) {
+		payload := kopiStudioCustomDevPreviewRequest()
+		payload.CustomDevelopment.PaymentSchedule[0].Nominal = 5_000_000 // Subtotal is 18_000_000, 5M+9M != 18M
+		body, _ := json.Marshal(payload)
+		w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "Custom development calculation mismatch")
+		assert.Empty(t, detailCode(t, w))
+	})
+
+	t.Run("calculator does not touch Dedicated calculator", func(t *testing.T) {
+		spy := &spyDedicatedSquadCalculator{}
+		hWithSpy := handler.NewQuotationGenerationHandler(nil, nil, spy)
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+			c.Next()
+		})
+		r.POST("/quotation/v1/quotations/preview/custom-development", hWithSpy.PreviewCustomDevelopment)
+
+		payload := kopiStudioCustomDevPreviewRequest()
+		body, _ := json.Marshal(payload)
+		w := doJSON(r, http.MethodPost, "/quotation/v1/quotations/preview/custom-development", nil, body)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 0, spy.calls, "dedicated squad calculator must not be called")
+	})
+}
+
+

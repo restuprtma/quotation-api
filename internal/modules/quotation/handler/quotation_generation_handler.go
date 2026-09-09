@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -187,6 +188,55 @@ func (h *QuotationGenerationHandler) PreviewStandaloneMaintenance(c *gin.Context
 	}
 	profile := service.ResolveStandaloneMaintenanceProfile(*req.StandaloneMaintenance)
 	response.Success(c, http.StatusOK, "Standalone maintenance preview calculated successfully", dto.StandaloneMaintenancePreviewResponse{
+		Calculation:     calculation,
+		ResolvedProfile: profile,
+	})
+}
+
+// PreviewCustomDevelopment computes server-authoritative Custom Development figures without AI or persistence.
+func (h *QuotationGenerationHandler) PreviewCustomDevelopment(c *gin.Context) {
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeCustomDevelopment ||
+		req.CustomDevelopment == nil ||
+		req.DedicatedSquad != nil ||
+		req.SubscriptionSaaS != nil ||
+		req.WhiteLabel != nil ||
+		req.StandaloneMaintenance != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid custom development request", "")
+		return
+	}
+	if req.RateCardID != uuid.Nil {
+		response.Error(c, http.StatusBadRequest, "Rate card is not allowed for custom development", "")
+		return
+	}
+
+	req.CustomDevelopment.SystemName = strings.TrimSpace(req.CustomDevelopment.SystemName)
+	req.CustomDevelopment.DiscountLabel = strings.TrimSpace(req.CustomDevelopment.DiscountLabel)
+	req.CustomDevelopment.ModuleGroups = service.NormalizeCustomDevelopmentModules(req.CustomDevelopment.ModuleGroups)
+	req.CustomDevelopment.TimelineRows = service.NormalizeCustomDevelopmentTimeline(req.CustomDevelopment.TimelineRows)
+
+	if err := req.CustomDevelopment.Validate(); err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Invalid custom development input", "")
+		return
+	}
+	calculation, err := service.CalculateCustomDevelopment(*req.CustomDevelopment)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Custom development calculation mismatch", "")
+		return
+	}
+	profile, err := service.ResolveCustomDevelopmentProfile(*req.CustomDevelopment)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid custom development profile", "")
+		return
+	}
+	response.Success(c, http.StatusOK, "Custom development preview calculated successfully", dto.CustomDevelopmentPreviewResponse{
 		Calculation:     calculation,
 		ResolvedProfile: profile,
 	})

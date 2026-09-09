@@ -95,6 +95,11 @@ type StandaloneMaintenancePreviewResponse struct {
 	ResolvedProfile domain.ResolvedStandaloneMaintenanceProfile `json:"resolved_profile"`
 }
 
+type CustomDevelopmentPreviewResponse struct {
+	Calculation     domain.CustomDevelopmentCalculation     `json:"calculation"`
+	ResolvedProfile domain.ResolvedCustomDevelopmentProfile `json:"resolved_profile"`
+}
+
 type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`
