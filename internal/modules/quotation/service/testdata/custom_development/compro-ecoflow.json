@@ -1,0 +1,183 @@
+{
+  "schema_version": "custom-development-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Company Profile Ecoflow - Fixed Days",
+    "source_gid": "compro-ecoflow-custom-dev",
+    "verified_on": "2026-09-09",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "Benchmark fixture for fixed_days table mode with grouped websites and QA included with null quoted total."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-COMPRO-ECOFLOW",
+    "subject": "Penawaran Pembuatan Website Ecoflow",
+    "client_name": "Bpk. Eko",
+    "client_company": "PT Ecoflow Mandiri",
+    "issue_date": "25 Juli 2026"
+  },
+  "legal_html": "<ol><li>Ketentuan umum dan kerahasiaan data.</li></ol>",
+  "input": {
+    "system_name": "Company Profile Ecoflow",
+    "quotation_date": "2026-07-25",
+    "development_table_mode": "fixed_days",
+    "tax_treatment": "exclusive_ppn",
+    "development_groups": [
+      {
+        "title": "Website 1: Landing Page & Katalog",
+        "items": [
+          {
+            "name": "Frontend & Backend Developer",
+            "headcount": 1,
+            "period_label": "15 Hari",
+            "quoted_line_total": 15000000
+          },
+          {
+            "name": "QA Tester (Included)",
+            "headcount": 1,
+            "period_label": "15 Hari"
+          }
+        ]
+      },
+      {
+        "title": "Website 2: Portal Klien & Admin",
+        "items": [
+          {
+            "name": "Fullstack Developer",
+            "headcount": 1,
+            "period_label": "10 Hari",
+            "quoted_line_total": 10000000
+          }
+        ]
+      }
+    ],
+    "discount_label": "DISCOUNT DEVELOPMENT",
+    "discount_amount": 10000000,
+    "show_discount_row": true,
+    "module_groups": [
+      {
+        "name": "Fitur Landing Page",
+        "features": [
+          "Katalog Produk",
+          "Kontak dan Form Inquiry"
+        ]
+      }
+    ],
+    "timeline_rows": [
+      {
+        "description": "Pengerjaan Website 1 dan 2",
+        "timeline": "25 Hari Kerja"
+      }
+    ],
+    "payment_schedule": [
+      {
+        "work_period": "Termin 1 (DP 50%)",
+        "terms": "Down Payment",
+        "invoice_date_label": "Saat tanda tangan kontrak",
+        "due_date_label": "H+7",
+        "component": "development",
+        "nominal": 7500000
+      },
+      {
+        "work_period": "Termin 2 (Pelunasan 50%)",
+        "terms": "Pelunasan",
+        "invoice_date_label": "Setelah live deployment",
+        "due_date_label": "H+7",
+        "component": "development",
+        "nominal": 7500000
+      }
+    ],
+    "limitation_codes": [
+      "out_of_pocket",
+      "overtime",
+      "third_party",
+      "scope_change"
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "development_groups": [
+        {
+          "title": "Website 1: Landing Page & Katalog",
+          "items": [
+            {
+              "name": "Frontend & Backend Developer",
+              "headcount": 1,
+              "period_label": "15 Hari",
+              "quoted_line_total": 15000000,
+              "line_total": 15000000
+            },
+            {
+              "name": "QA Tester (Included)",
+              "headcount": 1,
+              "period_label": "15 Hari"
+            }
+          ]
+        },
+        {
+          "title": "Website 2: Portal Klien & Admin",
+          "items": [
+            {
+              "name": "Fullstack Developer",
+              "headcount": 1,
+              "period_label": "10 Hari",
+              "quoted_line_total": 10000000,
+              "line_total": 10000000
+            }
+          ]
+        }
+      ],
+      "development_subtotal": 25000000,
+      "discount_amount": 10000000,
+      "total_investment": 15000000,
+      "monthly_lines": [],
+      "monthly_total": 0,
+      "development_payment_total": 15000000,
+      "monthly_payment_rows": 0
+    },
+    "profile": {
+      "table_mode": "fixed_days",
+      "rate_header": "",
+      "period_header": "Period (Days)",
+      "show_rate_column": false,
+      "show_monthly": false,
+      "show_discount_row": true,
+      "show_rights": false,
+      "tax_clause_text": "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
+      "sections": [
+        { "code": "development", "number": 1, "title": "Biaya Development" },
+        { "code": "scope", "number": 2, "title": "Lingkup Pekerjaan & Timeline" },
+        { "code": "payment", "number": 3, "title": "Pembayaran" },
+        { "code": "limitations", "number": 4, "title": "Batasan dan Pengecualian" }
+      ]
+    },
+    "section_titles": [
+      "Biaya Development",
+      "Lingkup Pekerjaan & Timeline",
+      "Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT",
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": [
+        "1. Biaya Development",
+        "2. Lingkup Pekerjaan & Timeline",
+        "3. Pembayaran",
+        "4. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": ["Deskripsi", "SDM", "Period (Days)", "Total"],
+      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "development_subtotal": "Rp 25.000.000",
+      "discount_amount": "Rp 10.000.000",
+      "total_investment": "Rp 15.000.000",
+      "payment_nominals": [
+        "Rp 7.500.000",
+        "Rp 7.500.000"
+      ],
+      "has_monthly": false,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}
