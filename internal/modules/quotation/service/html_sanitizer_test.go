@@ -380,3 +380,133 @@ func TestSanitize_StripsUnsafeAttributesAndTagsInWhiteLabelDocument(t *testing.T
 	assert.Contains(t, out, `data-block-type="legal"`)
 	assert.Contains(t, out, `data-section-number="5"`)
 }
+
+func TestSanitize_PreservesCustomDevelopmentMarkers(t *testing.T) {
+	s := newSanitizerUnderTest()
+
+	input := `<article class="quotation-document">` +
+		`<header data-block-type="metadata"><h1>PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT</h1><p><span data-field="quotation_number">QTN/01</span></p></header>` +
+		`<section data-block-type="opening"><p>Melalui penawaran ini...</p></section>` +
+		`<section data-quotation-section="commercial-development" data-quotation-section-number="1"><h2>1. Biaya Development</h2>` +
+		`<table><tbody>` +
+		`<tr data-role="development_line_0_0"><td>Backend</td><td>Rp 15.000.000</td><td>1</td><td>1</td><td data-quotation-field="development_line_0_0">Rp 15.000.000</td></tr>` +
+		`<tr><td colspan="4">Subtotal</td><td data-quotation-field="development_subtotal">Rp 15.000.000</td></tr>` +
+		`<tr><td colspan="4">Discount</td><td data-quotation-field="discount_amount">Rp 1.000.000</td></tr>` +
+		`<tr><td colspan="4">Total</td><td data-quotation-field="total_investment">Rp 14.000.000</td></tr>` +
+		`</tbody></table></section>` +
+		`<section data-quotation-section="commercial-monthly" data-quotation-section-number="2"><h2>2. Biaya Monthly</h2>` +
+		`<table><tbody>` +
+		`<tr data-role="monthly_0"><td>Server</td><td>Spec</td><td>Rp 500.000</td><td>1</td><td data-quotation-field="monthly_line_0">Rp 500.000</td></tr>` +
+		`<tr><td colspan="4">Total</td><td data-quotation-field="monthly_total">Rp 500.000</td></tr>` +
+		`</tbody></table>` +
+		`<ul data-quotation-component="monthly-notes"><li>Catatan server</li></ul>` +
+		`</section>` +
+		`<section data-quotation-section="scope" data-quotation-section-number="3"><h2>3. Lingkup Pekerjaan &amp; Timeline</h2>` +
+		`<h3>Modul 1</h3><ul><li>Fitur A</li></ul>` +
+		`<section data-quotation-section="timeline"><table><thead><tr><th data-column-width="75">Description</th><th data-column-width="25">Timeline</th></tr></thead><tbody><tr><td>Fase 1</td><td>1 Bulan</td></tr></tbody></table></section>` +
+		`</section>` +
+		`<section data-quotation-section="payment" data-quotation-section-number="4"><h2>4. Pembayaran</h2>` +
+		`<table><tbody><tr data-role="payment_0" data-quotation-component="development"><td>Termin 1</td><td>DP</td><td>Kontrak</td><td>H+7</td><td data-quotation-field="payment_nominal_0">Rp 14.000.000</td></tr></tbody></table>` +
+		`<p data-quotation-field="tax_clause">Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.</p>` +
+		`</section>` +
+		`<section data-quotation-section="rights" data-quotation-section-number="5"><h2>5. Hak Para Pihak</h2><p>Hak cipta diserahkan kepada klien.</p></section>` +
+		`<section data-quotation-section="limitations" data-quotation-section-number="6"><h2>6. Batasan dan Pengecualian</h2><ol><li>Klausul 1</li></ol></section>` +
+		`<section data-quotation-section="legal"><p>Ketentuan legal.</p></section>` +
+		`<section data-quotation-section="signature"><table class="signature-table"><tbody><tr><td>Hormat Kami</td></tr></tbody></table></section>` +
+		`</article>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+
+	// Assert markers preserved
+	assert.Contains(t, out, `class="quotation-document"`)
+	assert.Contains(t, out, `data-quotation-section="commercial-development"`)
+	assert.Contains(t, out, `data-quotation-section-number="1"`)
+	assert.Contains(t, out, `data-quotation-field="development_line_0_0"`)
+	assert.Contains(t, out, `data-quotation-field="development_subtotal"`)
+	assert.Contains(t, out, `data-quotation-field="discount_amount"`)
+	assert.Contains(t, out, `data-quotation-field="total_investment"`)
+	assert.Contains(t, out, `data-quotation-section="commercial-monthly"`)
+	assert.Contains(t, out, `data-quotation-section-number="2"`)
+	assert.Contains(t, out, `data-quotation-field="monthly_line_0"`)
+	assert.Contains(t, out, `data-quotation-field="monthly_total"`)
+	assert.Contains(t, out, `data-quotation-component="monthly-notes"`)
+	assert.Contains(t, out, `data-quotation-section="scope"`)
+	assert.Contains(t, out, `data-quotation-section-number="3"`)
+	assert.Contains(t, out, `data-quotation-section="timeline"`)
+	assert.Contains(t, out, `data-column-width="75"`)
+	assert.Contains(t, out, `data-column-width="25"`)
+	assert.Contains(t, out, `data-quotation-section="payment"`)
+	assert.Contains(t, out, `data-quotation-section-number="4"`)
+	assert.Contains(t, out, `data-quotation-component="development"`)
+	assert.Contains(t, out, `data-quotation-field="payment_nominal_0"`)
+	assert.Contains(t, out, `data-quotation-field="tax_clause"`)
+	assert.Contains(t, out, `data-quotation-section="rights"`)
+	assert.Contains(t, out, `data-quotation-section-number="5"`)
+	assert.Contains(t, out, `data-quotation-section="limitations"`)
+	assert.Contains(t, out, `data-quotation-section-number="6"`)
+	assert.Contains(t, out, `data-quotation-section="legal"`)
+	assert.Contains(t, out, `data-quotation-section="signature"`)
+	assert.Contains(t, out, `class="signature-table"`)
+}
+
+func TestSanitize_CustomDevelopmentIdempotent(t *testing.T) {
+	s := newSanitizerUnderTest()
+
+	input := `<article class="quotation-document">` +
+		`<header data-block-type="metadata"><h1>PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT</h1></header>` +
+		`<section data-quotation-section="commercial-development" data-quotation-section-number="1">` +
+		`<table><tbody>` +
+		`<tr data-role="development_line_0_0"><td data-quotation-field="development_line_0_0">Rp 15.000.000</td></tr>` +
+		`<tr><td data-quotation-field="total_investment">Rp 15.000.000</td></tr>` +
+		`</tbody></table>` +
+		`</section>` +
+		`<section data-quotation-section="payment" data-quotation-section-number="2">` +
+		`<table><tbody><tr data-quotation-component="development"><td data-quotation-field="payment_nominal_0">Rp 15.000.000</td></tr></tbody></table>` +
+		`</section>` +
+		`</article>`
+
+	firstPass, err := s.Sanitize(input)
+	require.NoError(t, err)
+
+	secondPass, err := s.Sanitize(firstPass)
+	require.NoError(t, err)
+
+	assert.Equal(t, firstPass, secondPass, "Sanitize must be idempotent: Sanitize(Sanitize(html)) == Sanitize(html)")
+}
+
+func TestSanitize_StripsUnsafeInCustomDevelopmentDocument(t *testing.T) {
+	s := newSanitizerUnderTest()
+
+	input := `<article class="quotation-document" style="display:none" data-malicious="evil">` +
+		`<section data-quotation-section="commercial-development" data-quotation-section-number="1" onclick="alert('click')">` +
+		`<tr data-role="development_line_0_0"><td data-quotation-field="development_line_0_0">Rp 15.000.000<script>alert('xss')</script></td></tr>` +
+		`</section>` +
+		`<section data-quotation-section="rights" data-quotation-section-number="2" style="color:red">` +
+		`<p><a href="javascript:alert(1)">klik disini</a></p>` +
+		`</section>` +
+		`<section data-quotation-section="legal"><a href="https://evil.com">link</a></section>` +
+		`<style>body { background: black; }</style>` +
+		`</article>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+
+	assert.NotContains(t, out, "<script")
+	assert.NotContains(t, out, "alert")
+	assert.NotContains(t, out, "onclick")
+	assert.NotContains(t, out, "href")
+	assert.NotContains(t, out, "style=")
+	assert.NotContains(t, out, "<style")
+	assert.NotContains(t, out, "display:none")
+	assert.NotContains(t, out, "color:red")
+	assert.NotContains(t, out, "data-malicious")
+
+	// Markers remain intact
+	assert.Contains(t, out, `data-quotation-section="commercial-development"`)
+	assert.Contains(t, out, `data-quotation-section-number="1"`)
+	assert.Contains(t, out, `data-quotation-field="development_line_0_0"`)
+	assert.Contains(t, out, `data-quotation-section="rights"`)
+	assert.Contains(t, out, `data-quotation-section="legal"`)
+}
+

@@ -45,8 +45,8 @@ func buildStrictQuotationPolicy() *bluemonday.Policy {
 
 	markerPattern := regexp.MustCompile(`^[a-zA-Z0-9_\-]{1,64}$`)
 	p.AllowAttrs("class").Matching(regexp.MustCompile(`^(quotation-document|signature-table|qtr-block|qtr-legal)( (quotation-document|signature-table|qtr-block|qtr-legal))*$`)).Globally()
-	p.AllowAttrs("data-block", "data-field", "data-role", "data-block-type", "data-template-code", "data-modified").Matching(markerPattern).Globally()
-	p.AllowAttrs("data-section-number").Matching(regexp.MustCompile(`^[1-9][0-9]{0,2}$`)).Globally()
+	p.AllowAttrs("data-block", "data-field", "data-role", "data-block-type", "data-template-code", "data-modified", "data-component", "data-payment-index", "data-quotation-section", "data-quotation-field", "data-quotation-component").Matching(markerPattern).Globally()
+	p.AllowAttrs("data-section-number", "data-quotation-section-number").Matching(regexp.MustCompile(`^[1-9][0-9]{0,2}$`)).Globally()
 	p.AllowAttrs("data-column-width").Matching(regexp.MustCompile(`^(25|75)$`)).OnElements("th", "td")
 
 	return p
