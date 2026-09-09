@@ -2167,7 +2167,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 
 	switch req.CommercialScheme {
 	case domain.CommercialSchemeDedicatedSquad:
-		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil {
+		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad payload is invalid")
 		}
 		if req.DedicatedSquad != nil {
@@ -2203,7 +2203,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeSubscriptionSaaS:
-		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil {
+		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas payload is invalid")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2215,7 +2215,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeWhiteLabel:
-		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil {
+		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "white_label requires exactly white_label input")
 		}
 		if err := req.WhiteLabel.Validate(); err != nil {
@@ -2224,7 +2224,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeStandaloneMaintenance:
-		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil {
+		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.CustomDevelopment != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "standalone_maintenance requires exactly standalone_maintenance input")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2232,6 +2232,21 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		}
 		if err := req.StandaloneMaintenance.Validate(); err != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "standalone maintenance input is invalid")
+		}
+		return nil
+
+	case domain.CommercialSchemeCustomDevelopment:
+		if req.CustomDevelopment == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "custom_development requires exactly custom_development input")
+		}
+		if req.RateCardID != uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is not accepted for custom_development")
+		}
+		if req.ProjectDurationMonths != 0 || req.BudgetMaximum != 0 || len(req.MandatoryScope) > 0 || len(req.OptionalScope) > 0 || len(req.PaymentTerms.Items) > 0 || req.PaymentTerms.Mode != "" {
+			return newGenerationError(ErrCodeGenerationFailed, "legacy quotation fields are not accepted for custom_development")
+		}
+		if err := req.CustomDevelopment.Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "custom development input is invalid")
 		}
 		return nil
 

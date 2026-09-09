@@ -519,3 +519,203 @@ func TestStandaloneMaintenancePreviewResponse_JSONSerialization(t *testing.T) {
 	assert.Len(t, decoded.ResolvedProfile.Sections, 1)
 	assert.Equal(t, "Biaya Maintenance", decoded.ResolvedProfile.Sections[0].Title)
 }
+
+func TestGenerateQuotationRequest_CustomDevelopmentJSONSerialization(t *testing.T) {
+	quotationDate := time.Date(2026, time.July, 15, 0, 0, 0, 0, time.UTC)
+	rate := int64(15_000_000)
+	quotedTotal := int64(15_000_000)
+
+	req := GenerateQuotationRequest{
+		Subject:          "Penawaran Sistem Kopi Studio24",
+		SolutionType:     "Custom Development",
+		CommercialScheme: domain.CommercialSchemeCustomDevelopment,
+		CustomDevelopment: &domain.CustomDevelopmentInput{
+			SystemName:           "Sistem Kopi Studio24",
+			QuotationDate:        quotationDate,
+			DevelopmentTableMode: domain.CustomDevelopmentMonthlyPeriod,
+			TaxTreatment:         domain.CustomDevelopmentTaxExclusive,
+			DevelopmentGroups: []domain.CustomDevelopmentCostGroupInput{
+				{
+					Title: "Fase 1: Backend",
+					Items: []domain.CustomDevelopmentCostItemInput{
+						{
+							Name:            "Senior Developer",
+							DisplayRate:     &rate,
+							Headcount:       1,
+							PeriodLabel:     "1",
+							QuotedLineTotal: &quotedTotal,
+						},
+						{
+							Name:            "QA Tester (Included)",
+							DisplayRate:     nil,
+							Headcount:       1,
+							PeriodLabel:     "1",
+							QuotedLineTotal: nil,
+						},
+					},
+				},
+			},
+			DiscountLabel:   "DISCOUNT",
+			DiscountAmount:  1_000_000,
+			ShowDiscountRow: true,
+			MonthlyItems: []domain.CustomDevelopmentMonthlyItemInput{
+				{Name: "Cloud Server", UnitRate: 1_500_000, Quantity: 1},
+			},
+			MonthlyNotes: []string{"Server cloud bulanan."},
+			ModuleGroups: []domain.CustomDevelopmentModuleGroupInput{
+				{Name: "Transaksi", Features: []string{"Fitur checkout"}},
+			},
+			TimelineRows: []domain.CustomDevelopmentTimelineRowInput{
+				{Description: "Fase 1", Timeline: "1 Bulan"},
+			},
+			PaymentSchedule: []domain.CustomDevelopmentPaymentRowInput{
+				{WorkPeriod: "P1", Terms: "DP", InvoiceDateLabel: "Inv 1", DueDateLabel: "Due 1", Component: domain.CustomDevelopmentPaymentProject, Nominal: 14_000_000},
+				{WorkPeriod: "B1", Terms: "Monthly", InvoiceDateLabel: "Inv M", DueDateLabel: "Due M", Component: domain.CustomDevelopmentPaymentMonthly, Nominal: 1_500_000},
+			},
+			RightsStatements:      []string{"Hak cipta diserahkan."},
+			LimitationCodes:       []string{"out_of_pocket"},
+			AdditionalLimitations: []string{"Tidak termasuk domain."},
+		},
+	}
+
+	t.Run("round trip serialization with nested date and omitted null quoted total", func(t *testing.T) {
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		var raw map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(b, &raw))
+		require.Contains(t, raw, "commercial_scheme")
+		assert.JSONEq(t, `"custom_development"`, string(raw["commercial_scheme"]))
+		require.Contains(t, raw, "custom_development")
+
+		// Verify that the included line with QuotedLineTotal = nil omits the quoted_line_total key
+		var devMap map[string]interface{}
+		require.NoError(t, json.Unmarshal(raw["custom_development"], &devMap))
+		groups := devMap["development_groups"].([]interface{})
+		group0 := groups[0].(map[string]interface{})
+		items := group0["items"].([]interface{})
+		item1 := items[1].(map[string]interface{})
+		_, hasQuotedLineTotal := item1["quoted_line_total"]
+		assert.False(t, hasQuotedLineTotal, "nil quoted_line_total should be omitted in serialized JSON")
+
+		var decoded GenerateQuotationRequest
+		require.NoError(t, json.Unmarshal(b, &decoded))
+		require.NotNil(t, decoded.CustomDevelopment)
+		assert.Equal(t, "custom_development", decoded.CommercialScheme)
+		assert.Equal(t, "Sistem Kopi Studio24", decoded.CustomDevelopment.SystemName)
+		assert.Equal(t, quotationDate, decoded.CustomDevelopment.QuotationDate.UTC())
+		assert.Len(t, decoded.CustomDevelopment.DevelopmentGroups, 1)
+		assert.Len(t, decoded.CustomDevelopment.DevelopmentGroups[0].Items, 2)
+		assert.NotNil(t, decoded.CustomDevelopment.DevelopmentGroups[0].Items[0].QuotedLineTotal)
+		assert.Nil(t, decoded.CustomDevelopment.DevelopmentGroups[0].Items[1].QuotedLineTotal)
+		require.NoError(t, decoded.CustomDevelopment.Validate())
+	})
+
+	t.Run("unmarshals input with explicit quoted_line_total null as included line", func(t *testing.T) {
+		payload := `{
+			"commercial_scheme": "custom_development",
+			"custom_development": {
+				"system_name": "Sistem Kopi Studio24",
+				"quotation_date": "2026-07-15",
+				"development_table_mode": "monthly_period",
+				"tax_treatment": "exclusive_ppn",
+				"development_groups": [
+					{
+						"title": "Fase 1",
+						"items": [
+							{"name": "Dev", "headcount": 1, "period_label": "1", "quoted_line_total": 15000000},
+							{"name": "QA Included", "headcount": 1, "period_label": "1", "quoted_line_total": null}
+						]
+					}
+				],
+				"discount_label": "DISCOUNT",
+				"discount_amount": 0,
+				"show_discount_row": false,
+				"module_groups": [{"name": "M1", "features": ["F1"]}],
+				"timeline_rows": [{"description": "T1", "timeline": "1 bln"}],
+				"payment_schedule": [{"work_period": "P1", "terms": "Pelunasan", "invoice_date_label": "Inv", "due_date_label": "Due", "component": "development", "nominal": 15000000}],
+				"limitation_codes": ["out_of_pocket"]
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		require.NoError(t, json.Unmarshal([]byte(payload), &decoded))
+		require.NotNil(t, decoded.CustomDevelopment)
+		assert.Nil(t, decoded.CustomDevelopment.DevelopmentGroups[0].Items[1].QuotedLineTotal)
+		require.NoError(t, decoded.CustomDevelopment.Validate())
+	})
+
+	t.Run("rejects request with unknown nested field inside custom_development", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "custom_development",
+			"custom_development": {
+				"system_name": "Sistem",
+				"quotation_date": "2026-07-15",
+				"development_table_mode": "monthly_period",
+				"tax_treatment": "exclusive_ppn",
+				"unrecognized_field": "disallowed"
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside development_groups", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "custom_development",
+			"custom_development": {
+				"system_name": "Sistem",
+				"quotation_date": "2026-07-15",
+				"development_table_mode": "monthly_period",
+				"tax_treatment": "exclusive_ppn",
+				"development_groups": [
+					{
+						"title": "Fase 1",
+						"unknown_group_field": "disallowed",
+						"items": [{"name": "Dev", "headcount": 1, "period_label": "1", "quoted_line_total": 15000000}]
+					}
+				],
+				"discount_amount": 0,
+				"show_discount_row": false,
+				"module_groups": [{"name": "M1", "features": ["F1"]}],
+				"timeline_rows": [{"description": "T1", "timeline": "1 bln"}],
+				"payment_schedule": [{"work_period": "P1", "terms": "DP", "invoice_date_label": "I", "due_date_label": "D", "component": "development", "nominal": 15000000}],
+				"limitation_codes": ["out_of_pocket"]
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside items", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "custom_development",
+			"custom_development": {
+				"system_name": "Sistem",
+				"quotation_date": "2026-07-15",
+				"development_table_mode": "monthly_period",
+				"tax_treatment": "exclusive_ppn",
+				"development_groups": [
+					{
+						"title": "Fase 1",
+						"items": [{"name": "Dev", "headcount": 1, "period_label": "1", "quoted_line_total": 15000000, "illegal_item_prop": 999}]
+					}
+				],
+				"discount_amount": 0,
+				"show_discount_row": false,
+				"module_groups": [{"name": "M1", "features": ["F1"]}],
+				"timeline_rows": [{"description": "T1", "timeline": "1 bln"}],
+				"payment_schedule": [{"work_period": "P1", "terms": "DP", "invoice_date_label": "I", "due_date_label": "D", "component": "development", "nominal": 15000000}],
+				"limitation_codes": ["out_of_pocket"]
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+}
+

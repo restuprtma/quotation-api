@@ -50,6 +50,7 @@ type GenerateQuotationRequest struct {
 	SubscriptionSaaS          *domain.SubscriptionSaaSInput      `json:"subscription_saas,omitempty"`
 	WhiteLabel                *domain.WhiteLabelInput            `json:"white_label,omitempty"`
 	StandaloneMaintenance     *domain.StandaloneMaintenanceInput `json:"standalone_maintenance,omitempty"`
+	CustomDevelopment         *domain.CustomDevelopmentInput     `json:"custom_development,omitempty"`
 	IdempotencyKey            *string                            `json:"idempotency_key,omitempty"`
 	SkillID                   uuid.UUID                          `json:"skill_id"`
 	ClientID                  *uuid.UUID                         `json:"client_id,omitempty"`
