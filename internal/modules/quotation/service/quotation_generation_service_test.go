@@ -1152,6 +1152,60 @@ func TestRegenerateSubscriptionSaaS_CorruptSnapshot_ReturnsGenerationFailed(t *t
 	assert.Equal(t, htmlBefore, htmlAfter, "corrupt snapshot must not change content_html")
 }
 
+func validCustomDevelopmentInputForTest() domain.CustomDevelopmentInput {
+	rate := int64(15_000_000)
+	quotedTotal := int64(15_000_000)
+	return domain.CustomDevelopmentInput{
+		SystemName:           "Sistem Kopi Studio24",
+		QuotationDate:        time.Date(2026, time.July, 15, 0, 0, 0, 0, time.UTC),
+		DevelopmentTableMode: domain.CustomDevelopmentMonthlyPeriod,
+		TaxTreatment:         domain.CustomDevelopmentTaxExclusive,
+		DevelopmentGroups: []domain.CustomDevelopmentCostGroupInput{
+			{
+				Title: "Fase 1: Backend",
+				Items: []domain.CustomDevelopmentCostItemInput{
+					{
+						Name:            "Senior Developer",
+						DisplayRate:     &rate,
+						Headcount:       1,
+						PeriodLabel:     "1",
+						QuotedLineTotal: &quotedTotal,
+					},
+				},
+			},
+		},
+		DiscountLabel:   "DISCOUNT",
+		DiscountAmount:  0,
+		ShowDiscountRow: false,
+		ModuleGroups: []domain.CustomDevelopmentModuleGroupInput{
+			{Name: "Transaksi", Features: []string{"Checkout"}},
+		},
+		TimelineRows: []domain.CustomDevelopmentTimelineRowInput{
+			{Description: "Fase 1", Timeline: "1 Bulan"},
+		},
+		PaymentSchedule: []domain.CustomDevelopmentPaymentRowInput{
+			{WorkPeriod: "P1", Terms: "Pelunasan", InvoiceDateLabel: "Inv", DueDateLabel: "Due", Component: domain.CustomDevelopmentPaymentProject, Nominal: 15_000_000},
+		},
+		LimitationCodes: []string{"out_of_pocket"},
+	}
+}
+
+func customDevelopmentRequest(fx pipelineFixture, input domain.CustomDevelopmentInput) dto.GenerateQuotationRequest {
+	key := uuid.New().String()
+	return dto.GenerateQuotationRequest{
+		IdempotencyKey:    &key,
+		SkillID:           fx.skillID,
+		Subject:           "Penawaran Sistem Kopi Studio24",
+		SolutionType:      "custom_development",
+		CommercialScheme:  domain.CommercialSchemeCustomDevelopment,
+		CustomDevelopment: &input,
+		RateCardID:        uuid.Nil,
+		ClientID:          &fx.clientID,
+		ClientName:        "Kopi Studio",
+		ClientCompanyName: "PT Kopi Studio 24",
+	}
+}
+
 func TestValidateGenerateInput_DiscriminatedUnion(t *testing.T) {
 	pool := getTestPool(t)
 	fx := seedPipelineFixtures(t, pool)
@@ -1192,6 +1246,117 @@ func TestValidateGenerateInput_DiscriminatedUnion(t *testing.T) {
 		req.CommercialScheme = "unsupported_scheme"
 		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
 		assertGenerationCode(t, err, "generation_failed")
+	})
+
+	t.Run("CustomDevelopment_WithRateCardID_RejectsInvalidRateCard", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.RateCardID = fx.rateCardID
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "invalid_rate_card")
+	})
+
+	t.Run("CustomDevelopment_NilPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.CustomDevelopment = nil
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("CustomDevelopment_WithDedicatedSquadPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.DedicatedSquad = &domain.DedicatedSquadInput{}
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("CustomDevelopment_WithSubscriptionPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		saas := validSubscriptionSaaSInput()
+		req.SubscriptionSaaS = &saas
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("CustomDevelopment_WithWhiteLabelPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		wl := validWhiteLabelInputForTest()
+		req.WhiteLabel = &wl
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("CustomDevelopment_WithStandaloneMaintenancePayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		maint := nexRetainerInputForCalculator()
+		req.StandaloneMaintenance = &maint
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("DedicatedSquad_WithCustomDevelopmentPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := fx.request()
+		dev := validCustomDevelopmentInputForTest()
+		req.CustomDevelopment = &dev
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("SubscriptionSaaS_WithCustomDevelopmentPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		saas := validSubscriptionSaaSInput()
+		req := saasRequest(fx, saas)
+		dev := validCustomDevelopmentInputForTest()
+		req.CustomDevelopment = &dev
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WhiteLabel_WithCustomDevelopmentPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := whiteLabelRequest(fx, validWhiteLabelInputForTest())
+		dev := validCustomDevelopmentInputForTest()
+		req.CustomDevelopment = &dev
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("StandaloneMaintenance_WithCustomDevelopmentPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		dev := validCustomDevelopmentInputForTest()
+		req.CustomDevelopment = &dev
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("CustomDevelopment_WithLegacyBudgetMaximum_RejectsGenerationFailed", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.BudgetMaximum = 10_000_000
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "generation_failed")
+	})
+
+	t.Run("CustomDevelopment_WithLegacyProjectDuration_RejectsGenerationFailed", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.ProjectDurationMonths = 3
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "generation_failed")
+	})
+
+	t.Run("CustomDevelopment_WithLegacyMandatoryScope_RejectsGenerationFailed", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.MandatoryScope = []string{"Scope A"}
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "generation_failed")
+	})
+
+	t.Run("CustomDevelopment_WithLegacyPaymentTerms_RejectsGenerationFailed", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		req.PaymentTerms = dto.PaymentTermsInput{Mode: "custom"}
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "generation_failed")
+	})
+
+	t.Run("CustomDevelopment_ValidInput_PassesValidateGenerateInput", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		require.NoError(t, service.ValidateGenerateInput(req))
 	})
 }
 

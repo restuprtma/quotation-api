@@ -2157,6 +2157,12 @@ func buildIntegrityExpectations(req dto.GenerateQuotationRequest, cfg *generatio
 	return expectations
 }
 
+// ValidateGenerateInput rejects structurally impossible requests BEFORE any
+// persistence or AI spend.
+func ValidateGenerateInput(req dto.GenerateQuotationRequest) error {
+	return validateGenerateInput(req)
+}
+
 // validateGenerateInput rejects structurally impossible requests BEFORE any
 // persistence or AI spend.
 func validateGenerateInput(req dto.GenerateQuotationRequest) error {
