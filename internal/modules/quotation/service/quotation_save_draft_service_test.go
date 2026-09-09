@@ -1564,6 +1564,3 @@ func TestSaveDraft_CustomDevelopment_CrossTenant_Rejection(t *testing.T) {
 	assert.Equal(t, before.version, after.version)
 	assert.Equal(t, before.html, after.html)
 }
-
-
-

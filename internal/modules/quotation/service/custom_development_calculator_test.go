@@ -267,7 +267,7 @@ func ecoflowInput() domain.CustomDevelopmentInput {
 	}
 }
 
-func TestCalculateCustomDevelopmentKopiStudio24(t *testing.T) {
+func TestCalculateCustomDevelopment_KopiStudio24(t *testing.T) {
 	in := kopiStudio24Input()
 	calc, err := service.CalculateCustomDevelopment(in)
 	require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestCalculateCustomDevelopmentKopiStudio24(t *testing.T) {
 	assert.Equal(t, int64(100_000), calc.MonthlyLines[2].LineTotal)
 }
 
-func TestCalculateCustomDevelopmentAssessmentOnline(t *testing.T) {
+func TestCalculateCustomDevelopment_AssessmentOnline(t *testing.T) {
 	in := assessmentOnlineInput()
 	calc, err := service.CalculateCustomDevelopment(in)
 	require.NoError(t, err)
@@ -304,7 +304,7 @@ func TestCalculateCustomDevelopmentAssessmentOnline(t *testing.T) {
 	assert.Empty(t, calc.MonthlyLines)
 }
 
-func TestCalculateCustomDevelopmentEcoflow(t *testing.T) {
+func TestCalculateCustomDevelopment_Ecoflow(t *testing.T) {
 	in := ecoflowInput()
 	calc, err := service.CalculateCustomDevelopment(in)
 	require.NoError(t, err)
