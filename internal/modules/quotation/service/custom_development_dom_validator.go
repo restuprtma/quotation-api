@@ -298,17 +298,19 @@ func CheckCustomDevelopmentCommercialModified(document string, in domain.CustomD
 		return true, nil
 	}
 
+	discCell, err := findExactlyOne(commNodes, "data-quotation-field", "discount_amount")
+	if err != nil {
+		return true, err
+	}
 	if in.ShowDiscountRow {
-		discCell, err := findExactlyOne(commNodes, "data-quotation-field", "discount_amount")
-		if err != nil {
-			return true, err
-		}
 		if discCell == nil {
 			return true, nil
 		}
 		if nodeText(discCell) != "Rp "+formatNumber(calc.DiscountAmount) {
 			return true, nil
 		}
+	} else if discCell != nil {
+		return true, nil
 	}
 
 	totalItemsCount := 0

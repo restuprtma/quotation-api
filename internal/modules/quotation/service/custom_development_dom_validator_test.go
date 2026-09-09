@@ -281,6 +281,68 @@ func TestCheckCustomDevelopmentCommercialModified(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, modified)
 	})
+
+	t.Run("injected discount cell when ShowDiscountRow is false is detected", func(t *testing.T) {
+		input := expectations.Input
+		input.DiscountAmount = 0
+		input.ShowDiscountRow = false
+		input.PaymentSchedule = []domain.CustomDevelopmentPaymentRowInput{
+			{
+				WorkPeriod:       "Termin 1",
+				Terms:            "DP 50%",
+				InvoiceDateLabel: "Kontrak",
+				DueDateLabel:     "H+7",
+				Component:        domain.CustomDevelopmentPaymentProject,
+				Nominal:          10_031_250,
+			},
+			{
+				WorkPeriod:       "Termin 2",
+				Terms:            "Pelunasan 50%",
+				InvoiceDateLabel: "Serah terima",
+				DueDateLabel:     "H+7",
+				Component:        domain.CustomDevelopmentPaymentProject,
+				Nominal:          10_031_250,
+			},
+			{
+				WorkPeriod:       "Bulan 1",
+				Terms:            "Layanan Bulanan Cloud & Support",
+				InvoiceDateLabel: "Awal bulan berjalan",
+				DueDateLabel:     "H+7",
+				Component:        domain.CustomDevelopmentPaymentMonthly,
+				Nominal:          1_272_000,
+			},
+		}
+		calc, err := CalculateCustomDevelopment(input)
+		require.NoError(t, err)
+		profile, err := ResolveCustomDevelopmentProfile(input)
+		require.NoError(t, err)
+
+		renderer := NewCustomDevelopmentRenderer()
+		docIn := CustomDevelopmentDocumentInput{
+			Metadata: QuotationMetadata{
+				QuotationNumber: "QTN/NO-DISC",
+				Subject:         "Subject",
+				ClientName:      "Client",
+			},
+			Input:       input,
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   `<p>Legal.</p>`,
+		}
+		noDiscountHTML, err := renderer.Render(docIn)
+		require.NoError(t, err)
+
+		// Confirm canonical no-discount is clean
+		modified, err := CheckCustomDevelopmentCommercialModified(noDiscountHTML, input, calc)
+		require.NoError(t, err)
+		assert.False(t, modified)
+
+		// Inject discount cell into the development table
+		injected := strings.Replace(noDiscountHTML, `data-quotation-field="total_investment"`, `data-quotation-field="discount_amount">Rp 500.000</td></tr><tr><td data-quotation-field="total_investment"`, 1)
+		modified, err = CheckCustomDevelopmentCommercialModified(injected, input, calc)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
 }
 
 func TestCheckCustomDevelopmentRightsModified(t *testing.T) {
