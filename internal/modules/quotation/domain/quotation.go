@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	CommercialSchemeDedicatedSquad       = "dedicated_squad"
-	CommercialSchemeSubscriptionSaaS     = "subscription_saas"
-	CommercialSchemeWhiteLabel           = "white_label"
+	CommercialSchemeDedicatedSquad        = "dedicated_squad"
+	CommercialSchemeSubscriptionSaaS      = "subscription_saas"
+	CommercialSchemeWhiteLabel            = "white_label"
 	CommercialSchemeStandaloneMaintenance = "standalone_maintenance"
+	CommercialSchemeCustomDevelopment     = "custom_development"
 )
 
 // Quotation merepresentasikan data master quotation.

@@ -209,6 +209,7 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			assert.Contains(t, definition, "subscription_saas")
 			assert.Contains(t, definition, "white_label")
 			assert.Contains(t, definition, "standalone_maintenance")
+			assert.Contains(t, definition, "custom_development")
 		})
 
 		t.Run("fk_quotations_active_published_revision", func(t *testing.T) {
@@ -1245,6 +1246,27 @@ func TestCommercialSchemeConstraint(t *testing.T) {
 		`).Scan(&id)
 		if err != nil {
 			t.Fatalf("expected insert with white_label to succeed, but failed: %v", err)
+		}
+		if id == "" {
+			t.Errorf("expected returning id, got empty")
+		}
+	})
+
+	t.Run("AcceptsCustomDevelopment", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("failed to begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx)
+
+		var id string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-CUSTOM-DEV', 'custom_software', 'custom_development', 'Test Custom Development Scheme')
+			RETURNING id
+		`).Scan(&id)
+		if err != nil {
+			t.Fatalf("expected insert with custom_development to succeed, but failed: %v", err)
 		}
 		if id == "" {
 			t.Errorf("expected returning id, got empty")
