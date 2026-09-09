@@ -343,6 +343,41 @@ func TestCheckCustomDevelopmentCommercialModified(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, modified)
 	})
+
+	t.Run("tampered development headcount is detected", func(t *testing.T) {
+		tampered := strings.Replace(docHTML, `<td>Rp 15.000.000</td><td>1</td>`, `<td>Rp 15.000.000</td><td>99</td>`, 1)
+		modified, err := CheckCustomDevelopmentCommercialModified(tampered, expectations.Input, expectations.Calculation)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
+
+	t.Run("tampered monthly quantity is detected", func(t *testing.T) {
+		tampered := strings.Replace(docHTML, `<td>1</td><td data-quotation-field="monthly_line_0">`, `<td>99</td><td data-quotation-field="monthly_line_0">`, 1)
+		modified, err := CheckCustomDevelopmentCommercialModified(tampered, expectations.Input, expectations.Calculation)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
+
+	t.Run("tampered payment terms is detected", func(t *testing.T) {
+		tampered := strings.Replace(docHTML, `<td>Termin 1</td>`, `<td>Termin 99</td>`, 1)
+		modified, err := CheckCustomDevelopmentCommercialModified(tampered, expectations.Input, expectations.Calculation)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
+
+	t.Run("duplicate commercial section returns error", func(t *testing.T) {
+		tampered := docHTML + `<section data-quotation-section="commercial-development"><p>duplicate</p></section>`
+		_, err := CheckCustomDevelopmentCommercialModified(tampered, expectations.Input, expectations.Calculation)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeHTML)
+	})
+
+	t.Run("duplicate payment section returns error", func(t *testing.T) {
+		tampered := docHTML + `<section data-quotation-section="payment"><p>duplicate</p></section>`
+		_, err := CheckCustomDevelopmentCommercialModified(tampered, expectations.Input, expectations.Calculation)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeHTML)
+	})
 }
 
 func TestCheckCustomDevelopmentRightsModified(t *testing.T) {
@@ -373,6 +408,20 @@ func TestCheckCustomDevelopmentRightsModified(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, modified)
 	})
+
+	t.Run("duplicate rights section returns error", func(t *testing.T) {
+		tampered := docHTML + `<section data-quotation-section="rights"><p>duplicate</p></section>`
+		_, err := CheckCustomDevelopmentRightsModified(tampered, expectations.Input.RightsStatements)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeHTML)
+	})
+
+	t.Run("fewer rights paragraphs returns modified", func(t *testing.T) {
+		tampered := strings.Replace(docHTML, `<p>Hak cipta dan source code sistem diserahkan penuh kepada klien setelah pelunasan.</p>`, ``, 1)
+		modified, err := CheckCustomDevelopmentRightsModified(tampered, expectations.Input.RightsStatements)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
 }
 
 func TestCheckCustomDevelopmentLimitationsModified(t *testing.T) {
@@ -397,4 +446,27 @@ func TestCheckCustomDevelopmentLimitationsModified(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, modified)
 	})
+
+	t.Run("missing limitations section returns modified", func(t *testing.T) {
+		tampered := strings.Replace(docHTML, `data-quotation-section="limitations"`, `data-quotation-section="deleted-limitations"`, 1)
+		modified, err := CheckCustomDevelopmentLimitationsModified(tampered, expectations.Input.LimitationCodes, expectations.Input.AdditionalLimitations)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
+
+	t.Run("duplicate limitations section returns error", func(t *testing.T) {
+		tampered := docHTML + `<section data-quotation-section="limitations"><ol><li>duplicate</li></ol></section>`
+		_, err := CheckCustomDevelopmentLimitationsModified(tampered, expectations.Input.LimitationCodes, expectations.Input.AdditionalLimitations)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeHTML)
+	})
+
+	t.Run("missing ol element returns modified", func(t *testing.T) {
+		tampered := strings.Replace(docHTML, `<ol>`, `<div>`, 1)
+		tampered = strings.Replace(tampered, `</ol>`, `</div>`, 1)
+		modified, err := CheckCustomDevelopmentLimitationsModified(tampered, expectations.Input.LimitationCodes, expectations.Input.AdditionalLimitations)
+		require.NoError(t, err)
+		assert.True(t, modified)
+	})
 }
+

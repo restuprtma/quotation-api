@@ -1416,6 +1416,8 @@ func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, co
 		return s.inspectDedicatedDraft(ctx, companyID, draft, html)
 	case domain.CommercialSchemeStandaloneMaintenance:
 		return s.inspectStandaloneMaintenanceDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeCustomDevelopment:
+		return s.inspectCustomDevelopmentDraft(ctx, companyID, draft, html)
 	default:
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial scheme snapshot is unsupported")
 	}
@@ -1694,6 +1696,99 @@ func (s *QuotationGenerationService) inspectStandaloneMaintenanceDraft(
 	return stdLegalMod || rightsMod, commMod, calculation.TotalInvestment, nil
 }
 
+func (s *QuotationGenerationService) inspectCustomDevelopmentDraft(
+	ctx context.Context,
+	companyID uuid.UUID,
+	draft *repository.DraftRevisionForSave,
+	htmlStr string,
+) (legalModified, commercialModified bool, total int64, err error) {
+	var calculation domain.CustomDevelopmentCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "custom development calculation snapshot is invalid")
+	}
+
+	var generationInput dto.GenerateQuotationRequest
+	if len(draft.GenerationInput) == 0 || string(draft.GenerationInput) == "null" || json.Unmarshal(draft.GenerationInput, &generationInput) != nil || generationInput.CustomDevelopment == nil || generationInput.CustomDevelopment.Validate() != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "custom development generation input snapshot is invalid")
+	}
+
+	if verr := s.domValidator.ValidateDocumentSafety(htmlStr, nil, calculation.TotalInvestment); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	root, perr := html.Parse(strings.NewReader(htmlStr))
+	if perr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse document")
+	}
+	nodes := collectNodes(root)
+	for _, sec := range []string{"commercial-development", "payment"} {
+		block, berr := findExactlyOne(nodes, "data-quotation-section", sec)
+		if berr != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("invalid %s section structure", sec))
+		}
+		if block == nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("%s section is missing", sec))
+		}
+	}
+	seenSections := make(map[string]int)
+	for _, n := range nodes {
+		if sec := attributeValue(n, "data-quotation-section"); sec != "" {
+			seenSections[sec]++
+			if seenSections[sec] > 1 {
+				return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("duplicate section marker %s", sec))
+			}
+		}
+	}
+
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
+	}
+	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
+	if expectedLegalHTML == "" {
+		if strings.TrimSpace(legalSnap.Code) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is incomplete")
+		}
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr != nil || strings.TrimSpace(tmpl.ContentHTML) == "" {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot cannot be resolved")
+		}
+		expectedLegalHTML = tmpl.ContentHTML
+	}
+
+	resolvedLegal, rerr := ResolveCustomDevelopmentLegalHTML(expectedLegalHTML, generationInput.CustomDevelopment.TaxTreatment)
+	if rerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to resolve legal html")
+	}
+	expectedLegalHTML = resolvedLegal
+
+	stdLegalMod, lerr := s.checkSectionLegalModified(htmlStr, expectedLegalHTML)
+	if lerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+	}
+
+	rightsMod, rerr := CheckCustomDevelopmentRightsModified(htmlStr, generationInput.CustomDevelopment.RightsStatements)
+	if rerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse rights block")
+	}
+
+	limMod, limerr := CheckCustomDevelopmentLimitationsModified(htmlStr, generationInput.CustomDevelopment.LimitationCodes, generationInput.CustomDevelopment.AdditionalLimitations)
+	if limerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse limitations block")
+	}
+
+	commMod, cerr := CheckCustomDevelopmentCommercialModified(htmlStr, *generationInput.CustomDevelopment, calculation)
+	if cerr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse commercial block")
+	}
+
+	legalModified = stdLegalMod || rightsMod || limMod
+	return legalModified, commMod, calculation.TotalInvestment, nil
+}
+
 func (s *QuotationGenerationService) checkSectionLegalModified(documentHTML string, expectedLegalHTML string) (bool, error) {
 	if strings.TrimSpace(expectedLegalHTML) == "" {
 		return false, nil
@@ -1706,6 +1801,16 @@ func (s *QuotationGenerationService) checkSectionLegalModified(documentHTML stri
 	legalBlock, err := findExactlyOne(nodes, "data-block-type", "legal")
 	if err != nil {
 		return true, err
+	}
+	quotationLegal, qerr := findExactlyOne(nodes, "data-quotation-section", "legal")
+	if qerr != nil {
+		return true, qerr
+	}
+	if legalBlock != nil && quotationLegal != nil {
+		return true, fmt.Errorf("%w: duplicate legal block markers", ErrUnsafeHTML)
+	}
+	if legalBlock == nil {
+		legalBlock = quotationLegal
 	}
 	if legalBlock == nil {
 		return true, nil

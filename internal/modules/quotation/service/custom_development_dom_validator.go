@@ -345,17 +345,31 @@ func CheckCustomDevelopmentCommercialModified(document string, in domain.CustomD
 			if row == nil {
 				return true, nil
 			}
-			rowText := nodeText(row)
-			if !strings.Contains(rowText, strings.TrimSpace(item.Name)) {
+			tds := directChildElements(row, "td")
+			if len(tds) < 4 {
 				return true, nil
 			}
-			if !strings.Contains(rowText, strings.TrimSpace(item.PeriodLabel)) {
+			if strings.TrimSpace(nodeText(tds[0])) != strings.TrimSpace(item.Name) {
 				return true, nil
 			}
-			if item.DisplayRate != nil {
-				if !strings.Contains(rowText, formatNumber(*item.DisplayRate)) {
-					return true, nil
+			var hcCell, periodCell *html.Node
+			if len(tds) == 5 {
+				if item.DisplayRate != nil {
+					if !strings.Contains(nodeText(tds[1]), formatNumber(*item.DisplayRate)) {
+						return true, nil
+					}
 				}
+				hcCell = tds[2]
+				periodCell = tds[3]
+			} else {
+				hcCell = tds[1]
+				periodCell = tds[2]
+			}
+			if strings.TrimSpace(nodeText(hcCell)) != strconv.Itoa(int(item.Headcount)) {
+				return true, nil
+			}
+			if strings.TrimSpace(nodeText(periodCell)) != strings.TrimSpace(item.PeriodLabel) {
+				return true, nil
 			}
 		}
 	}
@@ -413,14 +427,20 @@ func CheckCustomDevelopmentCommercialModified(document string, in domain.CustomD
 			if row == nil {
 				return true, nil
 			}
-			rowText := nodeText(row)
-			if !strings.Contains(rowText, strings.TrimSpace(item.Name)) {
+			tds := directChildElements(row, "td")
+			if len(tds) != 5 {
 				return true, nil
 			}
-			if item.Specification != "" && !strings.Contains(rowText, strings.TrimSpace(item.Specification)) {
+			if strings.TrimSpace(nodeText(tds[0])) != strings.TrimSpace(item.Name) {
 				return true, nil
 			}
-			if !strings.Contains(rowText, formatNumber(item.UnitRate)) {
+			if item.Specification != "" && strings.TrimSpace(nodeText(tds[1])) != strings.TrimSpace(item.Specification) {
+				return true, nil
+			}
+			if !strings.Contains(nodeText(tds[2]), formatNumber(item.UnitRate)) {
+				return true, nil
+			}
+			if strings.TrimSpace(nodeText(tds[3])) != strconv.Itoa(int(item.Quantity)) {
 				return true, nil
 			}
 		}
@@ -498,17 +518,20 @@ func CheckCustomDevelopmentCommercialModified(document string, in domain.CustomD
 		if attributeValue(tr, "data-quotation-component") != string(row.Component) {
 			return true, nil
 		}
-		trText := nodeText(tr)
-		if !strings.Contains(trText, strings.TrimSpace(row.WorkPeriod)) {
+		tds := directChildElements(tr, "td")
+		if len(tds) != 5 {
 			return true, nil
 		}
-		if !strings.Contains(trText, strings.TrimSpace(row.Terms)) {
+		if strings.TrimSpace(nodeText(tds[0])) != strings.TrimSpace(row.WorkPeriod) {
 			return true, nil
 		}
-		if !strings.Contains(trText, strings.TrimSpace(row.InvoiceDateLabel)) {
+		if strings.TrimSpace(nodeText(tds[1])) != strings.TrimSpace(row.Terms) {
 			return true, nil
 		}
-		if !strings.Contains(trText, strings.TrimSpace(row.DueDateLabel)) {
+		if strings.TrimSpace(nodeText(tds[2])) != strings.TrimSpace(row.InvoiceDateLabel) {
+			return true, nil
+		}
+		if strings.TrimSpace(nodeText(tds[3])) != strings.TrimSpace(row.DueDateLabel) {
 			return true, nil
 		}
 	}
