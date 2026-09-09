@@ -1,0 +1,212 @@
+{
+  "schema_version": "standalone-maintenance-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Nex Digital Health - Maintenance",
+    "source_gid": "911062199",
+    "verified_on": "2026-09-08",
+    "source_status": "blueprint_excerpt_with_workbook_costs",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Defect items use four blueprint rows preserved from docs/resume-dedicated-programmer-squad.md:708-711."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-NEX-01",
+    "subject": "Penawaran Maintenance Aplikasi Nex Health",
+    "client_name": "Cris Bawana",
+    "client_company": "Nex Digital",
+    "issue_date": "7 Juli 2026"
+  },
+  "legal_html": "<ol><li>Out of pocket expenses (transportasi, akomodasi) ditanggung oleh klien.</li><li>Pekerjaan di luar jam kerja normal dikenakan biaya overtime.</li><li>Biaya langganan pihak ketiga menjadi tanggung jawab klien.</li><li>Penambahan fitur di luar ruang lingkup disepakati melalui addendum terpisah.</li></ol>",
+  "input": {
+    "system_name": "Nex Digital Health",
+    "quotation_date": "2026-07-07",
+    "mode": "retainer",
+    "tax_treatment": "exclusive_ppn",
+    "retainer_items": [
+      {
+        "name": "Senior Web Programmer",
+        "monthly_rate": 16050000,
+        "fte_quarters": 4,
+        "period_months": 1
+      },
+      {
+        "name": "Senior QA",
+        "monthly_rate": 14070000,
+        "fte_quarters": 2,
+        "period_months": 1
+      }
+    ],
+    "defect_groups": [
+      {
+        "title": "1. Detail Pasien",
+        "items": [
+          {
+            "item_number": "1.1",
+            "priority": "P0",
+            "function": "Melihat riwayat medis pasien",
+            "screen_flow": "Pasien > Medical History",
+            "existing": "Hanya mencantumkan catatan registrasi awal",
+            "improvement": "Mencantumkan seluruh riwayat SOAP (Dokter, Terapis, Perawat)",
+            "reference": "Ref 1.01"
+          },
+          {
+            "item_number": "1.2",
+            "priority": "P0",
+            "function": "Riwayat foto pasien",
+            "screen_flow": "Pasien > Foto Pasien",
+            "existing": "Format foto hanya JPG dan PNG",
+            "improvement": "Mendukung format JPG, PNG, dan PDF",
+            "reference": "Ref 1.02"
+          },
+          {
+            "item_number": "1.3",
+            "priority": "P1",
+            "function": "Riwayat kunjungan",
+            "screen_flow": "Pasien > Riwayat Kunjungan",
+            "existing": "Berdasarkan booked transaction",
+            "improvement": "Berdasarkan paid transaction",
+            "reference": "Ref 1.03"
+          }
+        ]
+      },
+      {
+        "title": "4. Pengaturan Treatment",
+        "items": [
+          {
+            "item_number": "4.1",
+            "priority": "P0",
+            "function": "Akses harga COGS",
+            "screen_flow": "Treatment > Edit Treatment",
+            "existing": "Melekat pada hak akses edit treatment",
+            "improvement": "Dibuat hak akses terpisah khusus role tertentu",
+            "reference": "Ref 4.01"
+          }
+        ]
+      }
+    ],
+    "discount_amount": 0,
+    "show_discount_row": true,
+    "payment_schedule": [
+      {
+        "work_period": "13 Juli - 13 Agustus 2026",
+        "terms": "Maintenance",
+        "invoice_date_label": "13 Agustus 2026",
+        "due_date_label": "27 Agustus 2026",
+        "nominal": 23085000
+      }
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "mode": "retainer",
+      "retainer": [
+        {
+          "name": "Senior Web Programmer",
+          "monthly_rate": 16050000,
+          "fte_quarters": 4,
+          "period_months": 1,
+          "line_total": 16050000
+        },
+        {
+          "name": "Senior QA",
+          "monthly_rate": 14070000,
+          "fte_quarters": 2,
+          "period_months": 1,
+          "line_total": 7035000
+        }
+      ],
+      "subtotal": 23085000,
+      "discount_amount": 0,
+      "total_investment": 23085000,
+      "payment_total": 23085000
+    },
+    "profile": {
+      "mode": "retainer",
+      "tax_treatment": "exclusive_ppn",
+      "tax_clause_text": "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
+      "show_discount_row": true,
+      "show_rights": false,
+      "sections": [
+        {
+          "number": 1,
+          "code": "maintenance_cost",
+          "title": "Biaya Maintenance"
+        },
+        {
+          "number": 2,
+          "code": "maintenance_scope",
+          "title": "Lingkup Pekerjaan & Timeline"
+        },
+        {
+          "number": 3,
+          "code": "payment",
+          "title": "Pembayaran"
+        },
+        {
+          "number": 4,
+          "code": "limitations",
+          "title": "Batasan dan Pengecualian"
+        }
+      ]
+    },
+    "section_titles": [
+      "Biaya Maintenance",
+      "Lingkup Pekerjaan & Timeline",
+      "Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT",
+      "block_types": [
+        "metadata",
+        "opening",
+        "commercial",
+        "scope",
+        "payment",
+        "legal",
+        "signature"
+      ],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": [
+        "1. Biaya Maintenance",
+        "2. Lingkup Pekerjaan & Timeline",
+        "3. Pembayaran",
+        "4. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": [
+        "Maintenance Squad",
+        "t(Monthly)",
+        "Employee",
+        "t(Month)",
+        "Total"
+      ],
+      "scope_headers": [
+        "# / Priority",
+        "Function",
+        "Screen / Flow",
+        "Existing",
+        "Improvement",
+        "Reference"
+      ],
+      "payment_headers": [
+        "Work Period",
+        "Terms",
+        "Invoice Date",
+        "Due Date",
+        "Nominal"
+      ],
+      "cost_subtotal": "Rp 23.085.000",
+      "discount_amount": "Rp 0",
+      "total_investment": "Rp 23.085.000",
+      "payment_total": "Rp 23.085.000",
+      "payment_nominals": [
+        "Rp 23.085.000"
+      ],
+      "defect_group_count": 2,
+      "defect_item_count": 4,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}

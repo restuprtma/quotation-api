@@ -1,0 +1,194 @@
+{
+  "schema_version": "standalone-maintenance-benchmark-v1",
+  "metadata": {
+    "source_sheet": "liputan6 - 2",
+    "source_gid": "historical_hourly_support_2",
+    "verified_on": "2026-09-08",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Hourly quoted line totals come directly from workbook without float re-calculation or silent rounding."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "BENCH-LIPUTAN6-02",
+    "subject": "Project Liputan 6",
+    "client_name": "Bpk Muh. Khalid Andriano",
+    "client_company": "PT Liputan Enam Dot Com",
+    "issue_date": "9 Juni 2026"
+  },
+  "legal_html": "<ol><li>Out of pocket expenses (transportasi, akomodasi) ditanggung oleh klien.</li><li>Pekerjaan di luar jam kerja normal dikenakan biaya overtime.</li><li>Biaya langganan pihak ketiga menjadi tanggung jawab klien.</li><li>Penambahan fitur di luar ruang lingkup disepakati melalui addendum terpisah.</li></ol>",
+  "input": {
+    "system_name": "Portal Berita Liputan6",
+    "quotation_date": "2026-06-09",
+    "mode": "hourly_task",
+    "tax_treatment": "not_stated",
+    "hourly_cost_items": [
+      {
+        "name": "Senior Mobile Programmer",
+        "display_monthly_rate": 16050000,
+        "headcount": 1,
+        "hours_half_units": 18,
+        "quoted_line_total": 820000
+      },
+      {
+        "name": "Intermediate QA",
+        "display_monthly_rate": 12500000,
+        "headcount": 1,
+        "hours_half_units": 9,
+        "quoted_line_total": 315000
+      }
+    ],
+    "hourly_tasks": [
+      {
+        "description": "Improvement Fitur Share (remove save image & ubah format 9:16)",
+        "platform": "Android & iOS",
+        "hours_half_units": 3
+      },
+      {
+        "description": "Optimasi load time kanal TV (investigasi code/backend)",
+        "platform": "Android & iOS",
+        "hours_half_units": 2
+      },
+      {
+        "description": "Improvement Fitur Search (optimasi search & limitasi sisa 3 tag)",
+        "platform": "Android & iOS",
+        "hours_half_units": 3
+      },
+      {
+        "description": "Fixing section infografis blank di ios",
+        "platform": "iOS",
+        "hours_half_units": 2
+      },
+      {
+        "description": "SIT & UAT",
+        "platform": "Android & iOS",
+        "hours_half_units": 4
+      },
+      {
+        "description": "Upload playstore dan appstore",
+        "platform": "Android & iOS",
+        "hours_half_units": 4
+      }
+    ],
+    "discount_amount": 0,
+    "show_discount_row": false,
+    "payment_schedule": [
+      {
+        "work_period": "8 Juni 2026",
+        "terms": "Pelunasan",
+        "invoice_date_label": "9 Juni 2026",
+        "due_date_label": "23 Juni 2026",
+        "nominal": 1135000
+      }
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "mode": "hourly_task",
+      "hourly": [
+        {
+          "name": "Senior Mobile Programmer",
+          "display_monthly_rate": 16050000,
+          "headcount": 1,
+          "hours_half_units": 18,
+          "quoted_line_total": 820000,
+          "line_total": 820000
+        },
+        {
+          "name": "Intermediate QA",
+          "display_monthly_rate": 12500000,
+          "headcount": 1,
+          "hours_half_units": 9,
+          "quoted_line_total": 315000,
+          "line_total": 315000
+        }
+      ],
+      "subtotal": 1135000,
+      "discount_amount": 0,
+      "total_investment": 1135000,
+      "payment_total": 1135000
+    },
+    "profile": {
+      "mode": "hourly_task",
+      "tax_treatment": "not_stated",
+      "tax_clause_text": "",
+      "show_discount_row": false,
+      "show_rights": false,
+      "sections": [
+        {
+          "number": 1,
+          "code": "development_cost",
+          "title": "Biaya Development"
+        },
+        {
+          "number": 2,
+          "code": "maintenance_scope",
+          "title": "Lingkup Pekerjaan & Timeline"
+        },
+        {
+          "number": 3,
+          "code": "payment",
+          "title": "Pembayaran"
+        },
+        {
+          "number": 4,
+          "code": "limitations",
+          "title": "Batasan dan Pengecualian"
+        }
+      ]
+    },
+    "section_titles": [
+      "Biaya Development",
+      "Lingkup Pekerjaan & Timeline",
+      "Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document",
+      "heading": "PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT",
+      "block_types": [
+        "metadata",
+        "opening",
+        "commercial",
+        "scope",
+        "payment",
+        "legal",
+        "signature"
+      ],
+      "section_numbers": [1, 2, 3, 4],
+      "section_titles": [
+        "1. Biaya Development",
+        "2. Lingkup Pekerjaan & Timeline",
+        "3. Pembayaran",
+        "4. Batasan dan Pengecualian"
+      ],
+      "commercial_headers": [
+        "Development",
+        "t(Monthly)",
+        "Employee",
+        "t(Hours)",
+        "Total"
+      ],
+      "scope_headers": [
+        "Description",
+        "Platform",
+        "Hours"
+      ],
+      "payment_headers": [
+        "Work Period",
+        "Terms",
+        "Invoice Date",
+        "Due Date",
+        "Nominal"
+      ],
+      "total_investment": "Rp 1.135.000",
+      "payment_total": "Rp 1.135.000",
+      "payment_nominals": [
+        "Rp 1.135.000"
+      ],
+      "task_count": 6,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}
