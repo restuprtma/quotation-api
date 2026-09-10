@@ -101,6 +101,11 @@ type CustomDevelopmentPreviewResponse struct {
 	ResolvedProfile domain.ResolvedCustomDevelopmentProfile `json:"resolved_profile"`
 }
 
+type KioskQueuePreviewResponse struct {
+	Calculation     domain.KioskQueueCalculation     `json:"calculation"`
+	ResolvedProfile domain.ResolvedKioskQueueProfile `json:"resolved_profile"`
+}
+
 type AllocationResource struct {
 	Role            string   `json:"role"`
 	Seniority       string   `json:"seniority"`

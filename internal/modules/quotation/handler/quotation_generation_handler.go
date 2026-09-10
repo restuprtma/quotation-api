@@ -242,6 +242,50 @@ func (h *QuotationGenerationHandler) PreviewCustomDevelopment(c *gin.Context) {
 	})
 }
 
+// PreviewKioskQueueSystem computes server-authoritative Kiosk Queue System figures without AI or persistence.
+func (h *QuotationGenerationHandler) PreviewKioskQueueSystem(c *gin.Context) {
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeKioskQueueSystem || req.KioskQueueSystem == nil || hasNonKioskStructuredInput(req) {
+		response.Error(c, http.StatusBadRequest, "Invalid kiosk queue request", "")
+		return
+	}
+	if req.RateCardID != uuid.Nil {
+		response.Error(c, http.StatusBadRequest, "Rate card is not allowed for kiosk queue system", "")
+		return
+	}
+	input := req.KioskQueueSystem.Normalize()
+	if err := input.Validate(); err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Invalid kiosk queue input", "")
+		return
+	}
+	calculation, err := service.CalculateKioskQueueSystem(input)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Kiosk queue calculation mismatch", "")
+		return
+	}
+	profile, err := service.ResolveKioskQueueProfile(input)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Invalid kiosk queue profile", "")
+		return
+	}
+	response.Success(c, http.StatusOK, "Kiosk queue preview calculated successfully", dto.KioskQueuePreviewResponse{Calculation: calculation, ResolvedProfile: profile})
+}
+
+func hasNonKioskStructuredInput(req dto.GenerateQuotationRequest) bool {
+	return req.DedicatedSquad != nil ||
+		req.SubscriptionSaaS != nil ||
+		req.WhiteLabel != nil ||
+		req.StandaloneMaintenance != nil ||
+		req.CustomDevelopment != nil
+}
+
 // Generate starts the AI-first pipeline and returns 201 with the committed
 // quotation ID. The draft is durable before any provider interaction, so a
 // later failure remains retryable and idempotent replay (same

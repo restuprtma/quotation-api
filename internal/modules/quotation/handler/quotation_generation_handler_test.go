@@ -1474,7 +1474,7 @@ func TestPreviewStandaloneMaintenance_HTTP_Success(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 		var responseBody struct {
-			Message string                                     `json:"message"`
+			Message string                                   `json:"message"`
 			Data    dto.StandaloneMaintenancePreviewResponse `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
@@ -1526,7 +1526,7 @@ func TestPreviewStandaloneMaintenance_HTTP_Success(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 		var responseBody struct {
-			Message string                                     `json:"message"`
+			Message string                                   `json:"message"`
 			Data    dto.StandaloneMaintenancePreviewResponse `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
@@ -2089,4 +2089,271 @@ func TestPreviewCustomDevelopment_HTTP_Guards(t *testing.T) {
 	})
 }
 
+func governmentHardwarePreviewRequest() dto.GenerateQuotationRequest {
+	return dto.GenerateQuotationRequest{
+		Subject:          "Pengadaan Sistem Antrian Terpadu MPP",
+		SolutionType:     "kiosk_queue_system",
+		CommercialScheme: domain.CommercialSchemeKioskQueueSystem,
+		KioskQueueSystem: &domain.KioskQueueSystemInput{
+			Variant:           domain.KioskQueueGovernmentMPP,
+			DocumentNumber:    "LANDA/MPP-Antrian/0726/001",
+			SystemName:        "Sistem Antrian Terpadu MPP",
+			QuotationDate:     time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC),
+			HardwareProvision: domain.HardwareVenturoSupplied,
+			TaxTreatment:      domain.KioskTaxInclusivePPN11,
+			GovernmentScopePhases: []domain.KioskQueueScopePhaseInput{
+				{
+					Title: "Fase 1: Persiapan & Desain",
+					Deliverables: []string{
+						"Dokumen Analisis Kebutuhan",
+						"UI/UX Design Mockup",
+					},
+				},
+			},
+			ExpertRequirements: []domain.KioskQueueExpertInput{
+				{
+					Role:                 "Project Manager",
+					Headcount:            1,
+					DurationLabel:        "3 Bulan",
+					MinimumQualification: "S1 Sistem Informasi, pengalaman 5 tahun",
+				},
+			},
+			ServiceGroups: []domain.KioskQueueServiceGroupInput{
+				{
+					Title: "Requirement, Design & Development",
+					Items: []domain.KioskQueueServiceItemInput{
+						{Name: "UI UX", MonthlyRate: 13_370_000, Headcount: 1, PeriodQuarters: 1},
+						{Name: "Senior Programmer", MonthlyRate: 16_170_000, Headcount: 1, PeriodQuarters: 4},
+						{Name: "Quality Assurance", MonthlyRate: 13_370_000, Headcount: 1, PeriodQuarters: 3},
+					},
+				},
+				{
+					Title: "SIT, UAT & Go-Live Beta Release",
+					Items: []domain.KioskQueueServiceItemInput{
+						{Name: "Senior Programmer", MonthlyRate: 16_170_000, Headcount: 1, PeriodQuarters: 2},
+						{Name: "Quality Assurance", MonthlyRate: 13_370_000, Headcount: 1, PeriodQuarters: 2},
+					},
+				},
+			},
+			ServiceDiscountAmount:  799_100,
+			ShowServiceDiscountRow: true,
+			HardwareItems: []domain.KioskQueueHardwareItemInput{
+				{Name: "Mesin Kiosk Touchscreen 21.5 inch", UnitPrice: 24_500_000, Quantity: 1},
+				{Name: "Printer Thermal & Audio Master", UnitPrice: 4_500_000, Quantity: 1},
+				{Name: "TV Display 43 Inch", UnitPrice: 3_500_000, Quantity: 3},
+				{Name: "Bracket TV", UnitPrice: 300_000, Quantity: 3},
+				{Name: "HDMI Switch", UnitPrice: 100_000, Quantity: 1},
+				{Name: "Mini PC Core i5", UnitPrice: 6_000_000, Quantity: 1},
+			},
+			GovernmentPaymentSchedule: []domain.KioskQueueGovernmentPaymentInput{
+				{
+					Stage:        "Uang Muka 50%",
+					BillingBasis: "Kontrak ditandatangani & SPMK terbit",
+					Nominal:      51_615_000,
+				},
+				{
+					Stage:        "Pelunasan 50%",
+					BillingBasis: "Pekerjaan selesai 100%\nBerita Acara Serah Terima (BAST)",
+					Nominal:      48_385_000,
+				},
+			},
+			PaymentDueDays: 14,
+			LimitationCodes: []domain.KioskQueueLimitationCode{
+				domain.KioskLimitCivilElectrical,
+			},
+			AdditionalLimitations: []string{
+				"Pekerjaan sipil dan perkabelan tidak termasuk penawaran ini.",
+			},
+		},
+	}
+}
 
+func setupKioskQueueRouter(h *handler.QuotationGenerationHandler, companyID uuid.UUID) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Omit-Company") == "" {
+			c.Set(middleware.UserContextKey, &jwtpkg.Claims{
+				UserID:    httpTestUser.String(),
+				CompanyID: companyID.String(),
+			})
+		}
+		c.Next()
+	})
+	router.POST("/quotation/v1/quotations/preview/kiosk-queue-system", h.PreviewKioskQueueSystem)
+	return router
+}
+
+func TestPreviewKioskQueueSystemReturnsAuthoritativeCalculation(t *testing.T) {
+	companyID := uuid.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+	router := setupKioskQueueRouter(h, companyID)
+
+	reqPayload := governmentHardwarePreviewRequest()
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/kiosk-queue-system", nil, body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var responseBody struct {
+		Message string                        `json:"message"`
+		Data    dto.KioskQueuePreviewResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+	assert.Equal(t, "Kiosk queue preview calculated successfully", responseBody.Message)
+	assert.Equal(t, int64(100_000_000), responseBody.Data.Calculation.PaymentTargetTotal)
+	assert.Equal(t, int64(100_000_000), responseBody.Data.Calculation.PaymentTotal)
+	assert.True(t, responseBody.Data.ResolvedProfile.ShowHardware)
+}
+
+func TestPreviewKioskQueueSystemRejectsWrongScheme(t *testing.T) {
+	companyID := uuid.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+	router := setupKioskQueueRouter(h, companyID)
+
+	reqPayload := governmentHardwarePreviewRequest()
+	reqPayload.CommercialScheme = "custom_development"
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/kiosk-queue-system", nil, body)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "Invalid kiosk queue request")
+}
+
+func TestPreviewKioskQueueSystemRejectsAnotherSchemeInput(t *testing.T) {
+	companyID := uuid.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+	router := setupKioskQueueRouter(h, companyID)
+
+	testCases := []struct {
+		name     string
+		modifier func(r *dto.GenerateQuotationRequest)
+	}{
+		{
+			name: "with dedicated squad",
+			modifier: func(r *dto.GenerateQuotationRequest) {
+				r.DedicatedSquad = &domain.DedicatedSquadInput{Model: domain.ModelSOWSmall}
+			},
+		},
+		{
+			name: "with subscription saas",
+			modifier: func(r *dto.GenerateQuotationRequest) {
+				r.SubscriptionSaaS = &domain.SubscriptionSaaSInput{
+					QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+				}
+			},
+		},
+		{
+			name: "with white label",
+			modifier: func(r *dto.GenerateQuotationRequest) {
+				r.WhiteLabel = &domain.WhiteLabelInput{
+					ProductName:   "WL Product",
+					QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+				}
+			},
+		},
+		{
+			name: "with standalone maintenance",
+			modifier: func(r *dto.GenerateQuotationRequest) {
+				r.StandaloneMaintenance = &domain.StandaloneMaintenanceInput{
+					SystemName:    "SM System",
+					QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+				}
+			},
+		},
+		{
+			name: "with custom development",
+			modifier: func(r *dto.GenerateQuotationRequest) {
+				r.CustomDevelopment = &domain.CustomDevelopmentInput{
+					SystemName:    "CD System",
+					QuotationDate: time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC),
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reqPayload := governmentHardwarePreviewRequest()
+			tc.modifier(&reqPayload)
+			body, err := json.Marshal(reqPayload)
+			require.NoError(t, err)
+
+			w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/kiosk-queue-system", nil, body)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "Invalid kiosk queue request")
+		})
+	}
+}
+
+func TestPreviewKioskQueueSystemRejectsRateCard(t *testing.T) {
+	companyID := uuid.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+	router := setupKioskQueueRouter(h, companyID)
+
+	reqPayload := governmentHardwarePreviewRequest()
+	reqPayload.RateCardID = uuid.New()
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/kiosk-queue-system", nil, body)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "Rate card is not allowed for kiosk queue system")
+}
+
+func TestPreviewKioskQueueSystemRequiresCompanyContext(t *testing.T) {
+	companyID := uuid.New()
+	spyCalc := &spyDedicatedSquadCalculator{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+	router := setupKioskQueueRouter(h, companyID)
+
+	reqPayload := governmentHardwarePreviewRequest()
+	body, err := json.Marshal(reqPayload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/quotation/v1/quotations/preview/kiosk-queue-system", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Omit-Company", "true")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "Company context is required")
+}
+
+func TestPreviewKioskQueueSystemDoesNotPersist(t *testing.T) {
+	pool := getHandlerPool(t)
+	companyID := uuid.New()
+	ctx := context.Background()
+
+	var beforeQuotations, beforeRevisions int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotations WHERE company_id=$1`, companyID).Scan(&beforeQuotations))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotation_revisions WHERE company_id=$1`, companyID).Scan(&beforeRevisions))
+
+	spyCalc := &spyDedicatedSquadCalculator{}
+	provider := &adaptiveAIProvider{}
+	h := handler.NewQuotationGenerationHandler(nil, nil, spyCalc)
+	router := setupKioskQueueRouter(h, companyID)
+
+	payload := governmentHardwarePreviewRequest()
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/quotation/v1/quotations/preview/kiosk-queue-system", nil, body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, 0, spyCalc.calls, "dedicated squad calculator must not be called")
+	assert.Equal(t, 0, provider.calls(), "AI provider must not be called")
+
+	var afterQuotations, afterRevisions int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotations WHERE company_id=$1`, companyID).Scan(&afterQuotations))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotation_revisions WHERE company_id=$1`, companyID).Scan(&afterRevisions))
+	assert.Equal(t, beforeQuotations, afterQuotations, "quotations count must not change")
+	assert.Equal(t, beforeRevisions, afterRevisions, "quotation_revisions count must not change")
+}
