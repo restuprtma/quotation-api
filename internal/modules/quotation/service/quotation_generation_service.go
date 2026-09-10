@@ -1741,9 +1741,52 @@ func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, co
 		return s.inspectCustomDevelopmentDraft(ctx, companyID, draft, html)
 	case domain.CommercialSchemeKioskQueueSystem:
 		return s.inspectKioskQueueDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeTalentOutsourcing:
+		return s.inspectTalentOutsourcingDraft(ctx, companyID, draft, html)
 	default:
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial scheme snapshot is unsupported")
 	}
+}
+
+func (s *QuotationGenerationService) inspectTalentOutsourcingDraft(
+	ctx context.Context,
+	companyID uuid.UUID,
+	draft *repository.DraftRevisionForSave,
+	htmlStr string,
+) (legalModified, commercialModified bool, total int64, err error) {
+	var req dto.GenerateQuotationRequest
+	if len(draft.GenerationInput) == 0 || string(draft.GenerationInput) == "null" || json.Unmarshal(draft.GenerationInput, &req) != nil || req.TalentOutsourcing == nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing generation input snapshot is invalid")
+	}
+	input := domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing)
+	if err := input.Validate(); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing input snapshot is invalid")
+	}
+	var calc domain.TalentOutsourcingCalculation
+	if err := decodeTalentSnapshot(draft.CalculationSnapshot, &calc); err != nil || calc.GrandTotal <= 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing calculation snapshot is invalid")
+	}
+	computed, err := CalculateTalentOutsourcing(input)
+	if err != nil || computed.GrandTotal != calc.GrandTotal || computed.PaymentTotal != calc.PaymentTotal {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing calculation snapshot is inconsistent")
+	}
+	var profile domain.ResolvedTalentOutsourcingProfile
+	if err := decodeTalentSnapshot(draft.ResolvedProfileSnapshot, &profile); err != nil || len(profile.Sections) != 4 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing profile snapshot is invalid")
+	}
+	var legal legalSnapshotView
+	if err := decodeTalentSnapshot(draft.LegalTemplateSnapshot, &legal); err != nil || strings.TrimSpace(legal.ContentHTML) == "" {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing legal snapshot is invalid")
+	}
+	commercialModified, err = CheckTalentOutsourcingCommercialModified(htmlStr, input, calc)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing commercial content is invalid")
+	}
+	legalModified, err = CheckTalentOutsourcingLegalModified(htmlStr, input, profile, legal.ContentHTML)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing legal content is invalid")
+	}
+	return legalModified, commercialModified, calc.GrandTotal, nil
 }
 
 func (s *QuotationGenerationService) inspectDedicatedDraft(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {

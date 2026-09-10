@@ -162,7 +162,7 @@ func CheckTalentOutsourcingCommercialModified(document string, in domain.TalentO
 	}
 	return false, nil
 }
-func CheckTalentOutsourcingLegalModified(document string, in domain.TalentOutsourcingInput, p domain.ResolvedTalentOutsourcingProfile) (bool, error) {
+func CheckTalentOutsourcingLegalModified(document string, in domain.TalentOutsourcingInput, p domain.ResolvedTalentOutsourcingProfile, legalHTML string) (bool, error) {
 	root, err := html.Parse(strings.NewReader(document))
 	if err != nil {
 		return false, err
@@ -179,6 +179,28 @@ func CheckTalentOutsourcingLegalModified(document string, in domain.TalentOutsou
 		if !seen[string(c)] {
 			return true, nil
 		}
+	}
+	documentText := nodeText(root)
+	for _, text := range p.LimitationTexts {
+		if !strings.Contains(documentText, text) {
+			return true, nil
+		}
+	}
+	for _, text := range in.WarrantyStatements {
+		if !strings.Contains(documentText, text) {
+			return true, nil
+		}
+	}
+	for _, text := range in.RightsStatements {
+		if !strings.Contains(documentText, text) {
+			return true, nil
+		}
+	}
+	if p.TaxClauseText != "" && !strings.Contains(documentText, p.TaxClauseText) {
+		return true, nil
+	}
+	if strings.TrimSpace(legalHTML) != "" && !strings.Contains(document, strings.TrimSpace(legalHTML)) {
+		return true, nil
 	}
 	return false, nil
 }
