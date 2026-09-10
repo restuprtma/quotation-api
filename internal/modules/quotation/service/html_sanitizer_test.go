@@ -520,3 +520,14 @@ func TestHTMLSanitizerPreservesKioskQueueMarkers(t *testing.T) {
 	assert.NotContains(t, out, `<script`)
 	assert.NotContains(t, out, `alert(1)`)
 }
+
+func TestHTMLSanitizerPreservesTalentOutsourcingMarkers(t *testing.T) {
+	raw := `<article class="quotation-document talent-outsourcing-document" data-service="talent_outsourcing"><section data-block-type="commercial" data-section-code="development_cost"><table><tr data-row-index="0"><td data-field="cost_groups.0.items.0.line_total" data-value="40000000">Rp 40.000.000</td></tr></table></section></article><script>alert(1)</script>`
+	out, err := newSanitizerUnderTest().Sanitize(raw)
+	require.NoError(t, err)
+	assert.Contains(t, out, `data-service="talent_outsourcing"`)
+	assert.Contains(t, out, `data-section-code="development_cost"`)
+	assert.Contains(t, out, `data-field="cost_groups.0.items.0.line_total"`)
+	assert.Contains(t, out, `data-value="40000000"`)
+	assert.NotContains(t, out, `<script`)
+}
