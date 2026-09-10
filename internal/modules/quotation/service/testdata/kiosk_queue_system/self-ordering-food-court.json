@@ -1,0 +1,432 @@
+{
+  "schema_version": "kiosk-queue-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Self-Ordering Kiosk Food Court",
+    "source_gid": "583393915",
+    "verified_on": "2026-09-09",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Maintenance contradictory label 'TOTAL (6 Bulan)' in source sheet is rendered with neutral 'TOTAL MAINTENANCE' and period per row.",
+      "Discount 100% on Engineering Kick-off is specific to this fixture."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "VEN/Kiosk-FoodCourt/0826/007",
+    "subject": "Sistem Self-Ordering Kiosk untuk Food Court Multi-Tenant",
+    "client_name": "Muh. Khalid Andriano",
+    "client_company": "PT Langgeng Sukses Abadi Tekhnologi (Qtrust)",
+    "issue_date": "7 Agustus 2026"
+  },
+  "legal_html": "<ol><li>Out of pocket expenses (transportasi, akomodasi) ditanggung oleh klien.</li><li>Pekerjaan di luar jam kerja normal dikenakan biaya overtime.</li><li>Biaya langganan pihak ketiga menjadi tanggung jawab klien.</li><li>Penambahan fitur di luar ruang lingkup disepakati melalui addendum terpisah.</li></ol>",
+  "input": {
+    "variant": "private_food_court",
+    "document_number": "VEN/Kiosk-FoodCourt/0826/007",
+    "system_name": "Self-Ordering Kiosk Food Court",
+    "quotation_date": "2026-08-07T00:00:00Z",
+    "hardware_provision": "client_supplied",
+    "tax_treatment": "exclusive_ppn",
+    "service_groups": [
+      {
+        "title": "Engineering Kick-off (One Time Only)",
+        "items": [
+          {
+            "name": "Senior Mobile Programmer",
+            "monthly_rate": 11550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Senior Web Programmer",
+            "monthly_rate": 11550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Intermediate Mobile Programmer",
+            "monthly_rate": 9550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 9550000,
+            "headcount": 1,
+            "period_quarters": 4
+          }
+        ]
+      },
+      {
+        "title": "Phase : Requirement, Design, Architec Design",
+        "items": [
+          {
+            "name": "UI UX & Business Analyst (short term scheme)",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 4
+          }
+        ]
+      },
+      {
+        "title": "Phase : Development",
+        "items": [
+          {
+            "name": "Senior Mobile Programmer",
+            "monthly_rate": 11550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Intermediate Mobile Programmer",
+            "monthly_rate": 9550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Senior Web Programmer",
+            "monthly_rate": 11550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 9550000,
+            "headcount": 1,
+            "period_quarters": 4
+          }
+        ]
+      },
+      {
+        "title": "Phase :SIT, UAT and Go Live",
+        "items": [
+          {
+            "name": "Senior Mobile Programmer",
+            "monthly_rate": 11550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Senior Web Programmer",
+            "monthly_rate": 11550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 9550000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Devops (short term scheme)",
+            "monthly_rate": 16170000,
+            "headcount": 1,
+            "period_quarters": 2
+          }
+        ]
+      }
+    ],
+    "service_discount_amount": 42200000,
+    "show_service_discount_row": true,
+    "maintenance_items": [
+      {
+        "name": "Senior Web Programmer",
+        "monthly_rate": 11550000,
+        "headcount": 1,
+        "period_quarters": 12
+      },
+      {
+        "name": "Senior Mobile Programmer",
+        "monthly_rate": 11550000,
+        "headcount": 1,
+        "period_quarters": 12
+      },
+      {
+        "name": "Quality Assurance",
+        "monthly_rate": 9550000,
+        "headcount": 1,
+        "period_quarters": 6
+      }
+    ],
+    "private_timeline_rows": [
+      {
+        "description": "Requirement Analysis & System Design\n- Kick-off meeting dan identifikasi kebutuhan bisnis\n- Review proses bisnis dan alur kerja yang ada\n- Analisis gap antara proses bisnis saat ini dan sistem yang diinginkan\n- Penyusunan dokumen Project Requirement Document (PRD)\n- Wireframing dan mockup UI/UX untuk gambaran awal sistem\n- Persetujuan requirement bersama klien\n- Menyusun desain arsitektur sistem dan database",
+        "timeline": "1 - 30 September 2026"
+      },
+      {
+        "description": "Development\n\n1. Aplikasi Kiosk (Android, layar sentuh)\n2. Backend dan API\n3. Portal Tenant (multi-role)\n4. Portal Vendor (multi-role)\n5. Local Site Agent",
+        "timeline": "1 - 30 Oktober 2026"
+      },
+      {
+        "description": "Performance / Load Test & Penetration Test\n- Menyiapkan staging environment yang mereplikasi kondisi produksi\n- Membuat script testing menggunakan tools K6\n- Melakukan uji beban (Load Test) dengan jumlah pengguna bertahap\n- Penetration Test menguji OWASP Top 10 dan kerentanan sistem",
+        "timeline": "1 - 30 November 2026"
+      },
+      {
+        "description": "System Integration Testing (SIT) \n- End-to-End Business Process Testing (Pengujian sesuai Test Scenario)\n- Error Handling & Negative Testing\n- Regression testing (untuk memastikan perubahan tidak merusak fitur lain)\n- Compatibility testing (uji di beberapa perangkat/browser)",
+        "timeline": "1 - 30 November 2026"
+      },
+      {
+        "description": "User Acceptance Testing (UAT)\n- Menjadwalkan sesi review bersama tim dan klien\n- Dokumentasi hasil uji (defect log, feedback list)\n- Memastikan seluruh sprint planning yang telah disepakati bersama telah dikerjakan\n- Penanganan apabila muncul bug saat review dan melakukan retesting\n- Memberikan training kepada klien agar sistem dapat digunakan dengan optimal",
+        "timeline": "1 - 30 November 2026"
+      },
+      {
+        "description": "Go-Live\n- Deployment checklist (server, domain, SSL, konfigurasi)\n- Memantau performa dan stabilitas sistem setelah aktif\n- Menyediakan hypercare support pada masa awal penggunaan\n- Menangani bug, penambahan, atau improvement pasca go-live",
+        "timeline": "1 - 30 November 2026"
+      }
+    ],
+    "private_payment_schedule": [
+      {
+        "work_period": "Hiring & Kick off",
+        "terms": "Down Payment",
+        "invoice_date_label": "17 Aug 2026",
+        "due_date_label": "31 Aug 2026",
+        "nominal": 6685000
+      },
+      {
+        "work_period": "1 - 30 September 2026",
+        "terms": "Termin 1",
+        "invoice_date_label": "30 Sep 2026",
+        "due_date_label": "14 Oct 2026",
+        "nominal": 6685000
+      },
+      {
+        "work_period": "1 - 31 Oktober 2026",
+        "terms": "Termin 2",
+        "invoice_date_label": "31 Oct 2026",
+        "due_date_label": "14 Nov 2026",
+        "nominal": 42200000
+      },
+      {
+        "work_period": "1 - 30 November 2026",
+        "terms": "Termin 3",
+        "invoice_date_label": "30 Nov 2026",
+        "due_date_label": "14 Dec 2026",
+        "nominal": 40735000
+      }
+    ],
+    "payment_due_days": 0,
+    "limitation_codes": [
+      "client_hardware",
+      "third_party",
+      "out_of_pocket",
+      "overtime",
+      "scope_change"
+    ],
+    "additional_limitations": [
+      "Modul disbursement otomatis ke rekening gerai belum termasuk. Penawaran ini mencakup perhitungan bagi hasil, laporan per gerai, dan pencatatan status penyaluran dana; penyaluran dilakukan Klien berdasarkan laporan tersebut. Integrasi API disbursement merupakan penambahan lingkup beserta biayanya.",
+      "Batasan ukuran dan throughput layanan Cloudflare mengikuti ketentuan penyedia yang berlaku. Apabila hasil verifikasi di awal pengembangan menunjukkan batasan tersebut tidak memadai untuk target volume dan retensi data, perubahan rancangan penyimpanan data merupakan penambahan lingkup.",
+      "Jumlah mesin kiosk dan sebaran transaksi sepanjang hari merupakan keputusan Klien. Sistem dirancang untuk target 1.000 transaksi per hari; kecukupan jumlah mesin terhadap pola kunjungan berada di luar kendali Venturo."
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "variant": "private_food_court",
+      "service_groups": [
+        {
+          "title": "Engineering Kick-off (One Time Only)",
+          "items": [
+            {
+              "name": "Senior Mobile Programmer",
+              "monthly_rate": 11550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 11550000
+            },
+            {
+              "name": "Senior Web Programmer",
+              "monthly_rate": 11550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 11550000
+            },
+            {
+              "name": "Intermediate Mobile Programmer",
+              "monthly_rate": 9550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 9550000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 9550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 9550000
+            }
+          ]
+        },
+        {
+          "title": "Phase : Requirement, Design, Architec Design",
+          "items": [
+            {
+              "name": "UI UX & Business Analyst (short term scheme)",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 13370000
+            }
+          ]
+        },
+        {
+          "title": "Phase : Development",
+          "items": [
+            {
+              "name": "Senior Mobile Programmer",
+              "monthly_rate": 11550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 11550000
+            },
+            {
+              "name": "Intermediate Mobile Programmer",
+              "monthly_rate": 9550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 9550000
+            },
+            {
+              "name": "Senior Web Programmer",
+              "monthly_rate": 11550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 11550000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 9550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 9550000
+            }
+          ]
+        },
+        {
+          "title": "Phase :SIT, UAT and Go Live",
+          "items": [
+            {
+              "name": "Senior Mobile Programmer",
+              "monthly_rate": 11550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 11550000
+            },
+            {
+              "name": "Senior Web Programmer",
+              "monthly_rate": 11550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 11550000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 9550000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 9550000
+            },
+            {
+              "name": "Devops (short term scheme)",
+              "monthly_rate": 16170000,
+              "headcount": 1,
+              "period_quarters": 2,
+              "line_total": 8085000
+            }
+          ]
+        }
+      ],
+      "service_subtotal": 138505000,
+      "service_discount_amount": 42200000,
+      "service_tax_amount": 0,
+      "service_total": 96305000,
+      "hardware_subtotal": 0,
+      "hardware_tax_amount": 0,
+      "hardware_total": 0,
+      "maintenance": [
+        {
+          "name": "Senior Web Programmer",
+          "monthly_rate": 11550000,
+          "headcount": 1,
+          "period_quarters": 12,
+          "line_total": 34650000
+        },
+        {
+          "name": "Senior Mobile Programmer",
+          "monthly_rate": 11550000,
+          "headcount": 1,
+          "period_quarters": 12,
+          "line_total": 34650000
+        },
+        {
+          "name": "Quality Assurance",
+          "monthly_rate": 9550000,
+          "headcount": 1,
+          "period_quarters": 6,
+          "line_total": 14325000
+        }
+      ],
+      "maintenance_total": 83625000,
+      "payment_target_total": 96305000,
+      "payment_total": 96305000
+    },
+    "profile": {
+      "variant": "private_food_court",
+      "hardware_provision": "client_supplied",
+      "tax_treatment": "exclusive_ppn",
+      "tax_clause_text": "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
+      "show_hardware": false,
+      "show_maintenance": true,
+      "show_rights": false,
+      "payment_due_days": 0,
+      "limitation_texts": [
+        "Perangkat fisik, jaringan lokasi, dan pendukung disediakan klien; Venturo hanya memasang/mengonfigurasi perangkat lunak.",
+        "Lisensi pihak ketiga, credit API AI (OpenAI/Anthropic), Payment Gateway, WhatsApp API / SMS Gateway, domain, dan server cloud di luar paket yang disepakati.",
+        "Biaya akomodasi, transportasi luar kota, dan konsumsi harian jika pekerjaan on-site diminta oleh klien.",
+        "Percepatan pekerjaan di luar jam kerja reguler (malam hari, Sabtu, Minggu, atau hari libur nasional) dikenakan biaya lembur tersendiri.",
+        "Penambahan fitur baru, perubahan alur proses yang telah di-approve, atau penundaan approval dari klien yang mengakibatkan masa kontrak molor.",
+        "Modul disbursement otomatis ke rekening gerai belum termasuk. Penawaran ini mencakup perhitungan bagi hasil, laporan per gerai, dan pencatatan status penyaluran dana; penyaluran dilakukan Klien berdasarkan laporan tersebut. Integrasi API disbursement merupakan penambahan lingkup beserta biayanya.",
+        "Batasan ukuran dan throughput layanan Cloudflare mengikuti ketentuan penyedia yang berlaku. Apabila hasil verifikasi di awal pengembangan menunjukkan batasan tersebut tidak memadai untuk target volume dan retensi data, perubahan rancangan penyimpanan data merupakan penambahan lingkup.",
+        "Jumlah mesin kiosk dan sebaran transaksi sepanjang hari merupakan keputusan Klien. Sistem dirancang untuk target 1.000 transaksi per hari; kecukupan jumlah mesin terhadap pola kunjungan berada di luar kendali Venturo."
+      ],
+      "sections": [
+        { "number": 1, "code": "development", "title": "Biaya Development" },
+        { "number": 2, "code": "maintenance", "title": "Biaya Maintenance" },
+        { "number": 3, "code": "timeline", "title": "Lingkup Pekerjaan & Timeline" },
+        { "number": 4, "code": "payment", "title": "Pembayaran" },
+        { "number": 5, "code": "limitations", "title": "Batasan dan Pengecualian" }
+      ]
+    },
+    "section_titles": [
+      "Biaya Development",
+      "Biaya Maintenance",
+      "Lingkup Pekerjaan & Timeline",
+      "Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document kiosk-queue-document",
+      "heading": "PENAWARAN LAYANAN KIOSK & SISTEM ANTRIAN",
+      "section_numbers": [1, 2, 3, 4, 5],
+      "section_titles": [
+        "1. Biaya Development",
+        "2. Biaya Maintenance",
+        "3. Lingkup Pekerjaan & Timeline",
+        "4. Pembayaran",
+        "5. Batasan dan Pengecualian"
+      ],
+      "service_subtotal": "Rp 138.505.000",
+      "service_discount": "Rp 42.200.000",
+      "service_total": "Rp 96.305.000",
+      "maintenance_total": "Rp 83.625.000",
+      "payment_total": "Rp 96.305.000",
+      "payment_nominals": [
+        "Rp 6.685.000",
+        "Rp 6.685.000",
+        "Rp 42.200.000",
+        "Rp 40.735.000"
+      ],
+      "has_hardware": false,
+      "has_maintenance": true,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}

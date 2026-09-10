@@ -1,0 +1,302 @@
+{
+  "schema_version": "kiosk-queue-benchmark-v1",
+  "metadata": {
+    "source_sheet": "MPP - Sistem Antrian (Jasa)",
+    "source_gid": "510262400",
+    "verified_on": "2026-09-09",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Hardware is client-supplied, so hardware cost table is omitted.",
+      "Percentage on payment stages (50%) is preserved as descriptive label only; amounts are explicit."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "LANDA/MPP-Antrian/0826/004",
+    "subject": "Sistem Antrian Mall Pelayanan Publik",
+    "client_name": "Etik Mudarifa, S.STP., M.Si.",
+    "client_company": "DPMPTSP",
+    "issue_date": "7 Agustus 2026"
+  },
+  "legal_html": "<ol><li>Out of pocket expenses (transportasi, akomodasi) ditanggung oleh klien.</li><li>Pekerjaan di luar jam kerja normal dikenakan biaya overtime.</li><li>Biaya langganan pihak ketiga menjadi tanggung jawab klien.</li><li>Penambahan fitur di luar ruang lingkup disepakati melalui addendum terpisah.</li></ol>",
+  "input": {
+    "variant": "government_mpp",
+    "document_number": "LANDA/MPP-Antrian/0826/004",
+    "system_name": "Sistem Antrian Mall Pelayanan Publik",
+    "quotation_date": "2026-08-07T00:00:00Z",
+    "hardware_provision": "client_supplied",
+    "tax_treatment": "inclusive_ppn_11",
+    "government_scope_phases": [
+      {
+        "title": "Requirement Analysis & System Design",
+        "deliverables": [
+          "Kick-off meeting dan identifikasi kebutuhan bisnis",
+          "Review proses bisnis dan alur kerja yang ada",
+          "Analisis gap antara proses bisnis saat ini dan sistem yang diinginkan",
+          "Penyusunan dokumen Project Requirement Document (PRD)",
+          "Wireframing dan mockup UI/UX untuk gambaran awal sistem",
+          "Persetujuan requirement bersama klien",
+          "Menyusun desain arsitektur sistem dan database"
+        ]
+      },
+      {
+        "title": "Development",
+        "deliverables": [
+          "Fondasi & Infrastruktur (penyiapan environment, struktur data, 4 peran hak akses)",
+          "Admin Master Data & Konfigurasi (instansi, layanan, loket, kuota, jam operasional)",
+          "Admin Manajemen Pengguna (data petugas, penempatan loket, hak akses per menu)",
+          "Website Publik MPP (profil instansi, informasi layanan, pendaftaran antrian online)",
+          "Booking, QR & Verifikasi Kontak (kuota aman, OTP WhatsApp/email, QR sekali pakai)",
+          "WhatsApp Bot + AI Agent (pendaftaran lewat chat, tanya syarat dokumen, cek booking)",
+          "Notifikasi WhatsApp & Email (kirim QR, pengingat H-1, notifikasi giliran loket)",
+          "Mesin Antrian & Pembaruan Seketika (penomoran otomatis, sinkronisasi kiosk dan TV)",
+          "Aplikasi Kiosk Layar Sentuh (mode scan QR check-in, ambil tiket mandiri)",
+          "Aplikasi Layar Antrian 3 Tampilan (nomor dipanggil, riwayat, video informasi)",
+          "Suara Pemanggilan Otomatis (TTS Bahasa Indonesia offline, nada pembuka)",
+          "Aplikasi Loket Petugas (panggil nomor, panggil ulang, alihkan, waktu layanan)",
+          "Front Office Verifikasi Dokumen (cek berkas pemohon, tandai lengkap/kurang)",
+          "Dashboard Seketika & Peringatan (beban antrian, status loket, peringatan kuota)",
+          "Laporan & Capaian Layanan (waktu tunggu, waktu layanan, ekspor Excel dan PDF)",
+          "Survei Kepuasan Pemohon (tautan survei WhatsApp, rekap per instansi dan petugas)",
+          "Audit Log (riwayat aksi admin, lewati nomor, alihkan layanan)"
+        ]
+      },
+      {
+        "title": "SIT & UAT",
+        "deliverables": [
+          "System Integration Testing (SIT) end-to-end proses bisnis dan error handling",
+          "User Acceptance Testing (UAT) review bersama klien dan defect log resolution",
+          "Pemeriksaan keamanan dasar (OWASP Top 10) dan uji performa alur antrian"
+        ]
+      },
+      {
+        "title": "Go-Live & Serah Terima",
+        "deliverables": [
+          "Pemasangan dan konfigurasi perangkat lunak pada mesin kiosk, layar TV, dan komputer loket",
+          "Uji coba menyeluruh di lokasi bersama pengelola MPP",
+          "Pelatihan petugas front office, petugas loket, dan admin",
+          "Penyerahan dokumentasi sistem dan SOP operasional",
+          "Pendampingan awal go-live (hypercare support)"
+        ]
+      }
+    ],
+    "expert_requirements": [
+      {
+        "role": "Senior Programmer",
+        "headcount": 1,
+        "duration_label": "45 hari",
+        "minimum_qualification": "S1/D4 Teknik Informatika, pengalaman minimal 5 tahun, pernah menangani sistem antrian atau layanan publik"
+      },
+      {
+        "role": "Intermediate Programmer",
+        "headcount": 1,
+        "duration_label": "30 hari",
+        "minimum_qualification": "S1/D3 Teknik Informatika, pengalaman minimal 3 tahun pengembangan aplikasi web"
+      },
+      {
+        "role": "Quality Assurance",
+        "headcount": 1,
+        "duration_label": "38 hari",
+        "minimum_qualification": "D3/S1, pengalaman minimal 2 tahun pengujian aplikasi"
+      }
+    ],
+    "service_groups": [
+      {
+        "title": "Requirement, Design & Development",
+        "items": [
+          {
+            "name": "UI UX",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 1
+          },
+          {
+            "name": "Senior Programmer",
+            "monthly_rate": 16170000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Intermediate Web Programmer",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 3
+          }
+        ]
+      },
+      {
+        "title": "SIT, UAT & Go-Live Beta Release",
+        "items": [
+          {
+            "name": "Senior Programmer",
+            "monthly_rate": 16170000,
+            "headcount": 1,
+            "period_quarters": 2
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 2
+          }
+        ]
+      }
+    ],
+    "service_discount_amount": 2024800,
+    "show_service_discount_row": true,
+    "government_payment_schedule": [
+      {
+        "stage": "Uang Muka 50%",
+        "billing_basis": "Kontrak ditandatangani & SPMK terbit",
+        "nominal": 31000000
+      },
+      {
+        "stage": "Pelunasan 50%",
+        "billing_basis": "Pekerjaan selesai 100%\nBerita Acara Serah Terima (BAST)",
+        "nominal": 31000000
+      }
+    ],
+    "payment_due_days": 14,
+    "limitation_codes": [
+      "civil_electrical",
+      "client_hardware",
+      "hardware_warranty",
+      "out_of_pocket",
+      "overtime",
+      "third_party",
+      "scope_change"
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "variant": "government_mpp",
+      "service_groups": [
+        {
+          "title": "Requirement, Design & Development",
+          "items": [
+            {
+              "name": "UI UX",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 1,
+              "line_total": 3342500
+            },
+            {
+              "name": "Senior Programmer",
+              "monthly_rate": 16170000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 16170000
+            },
+            {
+              "name": "Intermediate Web Programmer",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 13370000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 3,
+              "line_total": 10027500
+            }
+          ]
+        },
+        {
+          "title": "SIT, UAT & Go-Live Beta Release",
+          "items": [
+            {
+              "name": "Senior Programmer",
+              "monthly_rate": 16170000,
+              "headcount": 1,
+              "period_quarters": 2,
+              "line_total": 8085000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 2,
+              "line_total": 6685000
+            }
+          ]
+        }
+      ],
+      "service_subtotal": 57680000,
+      "service_discount_amount": 2024800,
+      "service_tax_amount": 6344800,
+      "service_total": 62000000,
+      "hardware_subtotal": 0,
+      "hardware_tax_amount": 0,
+      "hardware_total": 0,
+      "maintenance_total": 0,
+      "payment_target_total": 62000000,
+      "payment_total": 62000000
+    },
+    "profile": {
+      "variant": "government_mpp",
+      "hardware_provision": "client_supplied",
+      "tax_treatment": "inclusive_ppn_11",
+      "tax_clause_text": "Total investasi telah termasuk PPN 11% sesuai regulasi perpajakan yang berlaku di Indonesia.",
+      "show_hardware": false,
+      "show_maintenance": false,
+      "show_rights": false,
+      "payment_due_days": 14,
+      "limitation_texts": [
+        "Pekerjaan fisik dan sipil/kelistrikan meliputi bobok tembok, penarikan daya/kabel, stop kontak, bracket, dan perbaikan area bukan tanggung jawab Venturo.",
+        "Perangkat fisik, jaringan lokasi, dan pendukung disediakan klien; Venturo hanya memasang/mengonfigurasi perangkat lunak.",
+        "Garansi perangkat keras mengikuti ketentuan dan masa garansi resmi dari distributor/manufaktur pabrikan terkait; Venturo tidak memberikan garansi penggantian unit di luar garansi pabrikan.",
+        "Biaya akomodasi, transportasi luar kota, dan konsumsi harian jika pekerjaan on-site diminta oleh klien.",
+        "Percepatan pekerjaan di luar jam kerja reguler (malam hari, Sabtu, Minggu, atau hari libur nasional) dikenakan biaya lembur tersendiri.",
+        "Lisensi pihak ketiga, credit API AI (OpenAI/Anthropic), Payment Gateway, WhatsApp API / SMS Gateway, domain, dan server cloud di luar paket yang disepakati.",
+        "Penambahan fitur baru, perubahan alur proses yang telah di-approve, atau penundaan approval dari klien yang mengakibatkan masa kontrak molor."
+      ],
+      "sections": [
+        { "number": 1, "code": "scope", "title": "Lingkup Pekerjaan" },
+        { "number": 2, "code": "experts", "title": "Kebutuhan Tenaga Ahli" },
+        { "number": 3, "code": "costs", "title": "Rincian Biaya" },
+        { "number": 4, "code": "payment", "title": "Tahapan Pembayaran" },
+        { "number": 5, "code": "limitations", "title": "Batasan dan Pengecualian" }
+      ]
+    },
+    "section_titles": [
+      "Lingkup Pekerjaan",
+      "Kebutuhan Tenaga Ahli",
+      "Rincian Biaya",
+      "Tahapan Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document kiosk-queue-document",
+      "heading": "PENAWARAN LAYANAN KIOSK & SISTEM ANTRIAN",
+      "section_numbers": [1, 2, 3, 4, 5],
+      "section_titles": [
+        "1. Lingkup Pekerjaan",
+        "2. Kebutuhan Tenaga Ahli",
+        "3. Rincian Biaya",
+        "4. Tahapan Pembayaran",
+        "5. Batasan dan Pengecualian"
+      ],
+      "service_subtotal": "Rp 57.680.000",
+      "service_discount": "Rp 2.024.800",
+      "service_tax": "Rp 6.344.800",
+      "service_total": "Rp 62.000.000",
+      "payment_total": "Rp 62.000.000",
+      "payment_nominals": [
+        "Rp 31.000.000",
+        "Rp 31.000.000"
+      ],
+      "has_hardware": false,
+      "has_maintenance": false,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}

@@ -1,0 +1,359 @@
+{
+  "schema_version": "kiosk-queue-benchmark-v1",
+  "metadata": {
+    "source_sheet": "MPP - Sistem Antrian (Pemerinta",
+    "source_gid": "299484501",
+    "verified_on": "2026-09-09",
+    "source_status": "historical_sheet_reference_current_engine_expected",
+    "source_variance": [
+      "The current renderer keeps the official quotation document structure; visual parity with the historical sheet is not claimed.",
+      "Percentage on payment stages (50%) is preserved as descriptive label only; amounts are explicit."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "LANDA/MPP-Antrian/0726/003",
+    "subject": "Sistem Antrian Mall Pelayanan Publik",
+    "client_name": "Etik Mudarifa, S.STP., M.Si.",
+    "client_company": "DPMPTSP",
+    "issue_date": "30 Juli 2026"
+  },
+  "legal_html": "<ol><li>Out of pocket expenses (transportasi, akomodasi) ditanggung oleh klien.</li><li>Pekerjaan di luar jam kerja normal dikenakan biaya overtime.</li><li>Biaya langganan pihak ketiga menjadi tanggung jawab klien.</li><li>Penambahan fitur di luar ruang lingkup disepakati melalui addendum terpisah.</li></ol>",
+  "input": {
+    "variant": "government_mpp",
+    "document_number": "LANDA/MPP-Antrian/0726/003",
+    "system_name": "Sistem Antrian Mall Pelayanan Publik",
+    "quotation_date": "2026-07-30T00:00:00Z",
+    "hardware_provision": "venturo_supplied",
+    "tax_treatment": "inclusive_ppn_11",
+    "government_scope_phases": [
+      {
+        "title": "Requirement Analysis & System Design",
+        "deliverables": [
+          "Kick-off meeting dan identifikasi kebutuhan bisnis",
+          "Review proses bisnis dan alur kerja yang ada",
+          "Analisis gap antara proses bisnis saat ini dan sistem yang diinginkan",
+          "Penyusunan dokumen Project Requirement Document (PRD)",
+          "Wireframing dan mockup UI/UX untuk gambaran awal sistem",
+          "Persetujuan requirement bersama klien",
+          "Menyusun desain arsitektur sistem dan database"
+        ]
+      },
+      {
+        "title": "Development",
+        "deliverables": [
+          "Fondasi & Infrastruktur (penyiapan environment, struktur data, 4 peran hak akses)",
+          "Admin Master Data & Konfigurasi (instansi, layanan, loket, kuota, jam operasional)",
+          "Admin Manajemen Pengguna (data petugas, penempatan loket, hak akses per menu)",
+          "Website Publik MPP (profil instansi, informasi layanan, pendaftaran antrian online)",
+          "Booking, QR & Verifikasi Kontak (kuota aman, OTP WhatsApp/email, QR sekali pakai)",
+          "WhatsApp Bot + AI Agent (pendaftaran lewat chat, tanya syarat dokumen, cek booking)",
+          "Notifikasi WhatsApp & Email (kirim QR, pengingat H-1, notifikasi giliran loket)",
+          "Mesin Antrian & Pembaruan Seketika (penomoran otomatis, sinkronisasi kiosk dan TV)",
+          "Aplikasi Kiosk Layar Sentuh (mode scan QR check-in, ambil tiket mandiri)",
+          "Aplikasi Layar Antrian 3 Tampilan (nomor dipanggil, riwayat, video informasi)",
+          "Suara Pemanggilan Otomatis (TTS Bahasa Indonesia offline, nada pembuka)",
+          "Aplikasi Loket Petugas (panggil nomor, panggil ulang, alihkan, waktu layanan)",
+          "Front Office Verifikasi Dokumen (cek berkas pemohon, tandai lengkap/kurang)",
+          "Dashboard Seketika & Peringatan (beban antrian, status loket, peringatan kuota)",
+          "Laporan & Capaian Layanan (waktu tunggu, waktu layanan, ekspor Excel dan PDF)",
+          "Survei Kepuasan Pemohon (tautan survei WhatsApp, rekap per instansi dan petugas)",
+          "Audit Log (riwayat aksi admin, lewati nomor, alihkan layanan)"
+        ]
+      },
+      {
+        "title": "SIT & UAT",
+        "deliverables": [
+          "System Integration Testing (SIT) end-to-end proses bisnis dan error handling",
+          "User Acceptance Testing (UAT) review bersama klien dan defect log resolution",
+          "Pemeriksaan keamanan dasar (OWASP Top 10) dan uji performa alur antrian"
+        ]
+      },
+      {
+        "title": "Go-Live & Serah Terima",
+        "deliverables": [
+          "Pemasangan dan konfigurasi perangkat lunak pada mesin kiosk, layar TV, dan loket",
+          "Uji coba menyeluruh di lokasi bersama pengelola MPP",
+          "Pelatihan petugas front office, petugas loket, dan admin",
+          "Penyerahan dokumentasi sistem dan SOP operasional",
+          "Pendampingan awal go-live (hypercare support)"
+        ]
+      }
+    ],
+    "expert_requirements": [
+      {
+        "role": "UI/UX Designer",
+        "headcount": 1,
+        "duration_label": "7 hari",
+        "minimum_qualification": "S1/D4, pengalaman minimal 2 tahun merancang antarmuka aplikasi layanan publik"
+      },
+      {
+        "role": "Senior Programmer",
+        "headcount": 1,
+        "duration_label": "1,5 bulan",
+        "minimum_qualification": "S1/D4 Teknik Informatika, pengalaman minimal 5 tahun, pernah menangani sistem antrian atau layanan publik"
+      },
+      {
+        "role": "Quality Assurance",
+        "headcount": 1,
+        "duration_label": "1,25 bulan",
+        "minimum_qualification": "D3/S1, pengalaman minimal 2 tahun pengujian aplikasi"
+      }
+    ],
+    "service_groups": [
+      {
+        "title": "Requirement, Design & Development",
+        "items": [
+          {
+            "name": "UI UX",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 1
+          },
+          {
+            "name": "Senior Programmer",
+            "monthly_rate": 16170000,
+            "headcount": 1,
+            "period_quarters": 4
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 3
+          }
+        ]
+      },
+      {
+        "title": "SIT, UAT & Go-Live Beta Release",
+        "items": [
+          {
+            "name": "Senior Programmer",
+            "monthly_rate": 16170000,
+            "headcount": 1,
+            "period_quarters": 2
+          },
+          {
+            "name": "Quality Assurance",
+            "monthly_rate": 13370000,
+            "headcount": 1,
+            "period_quarters": 2
+          }
+        ]
+      }
+    ],
+    "service_discount_amount": 799100,
+    "show_service_discount_row": true,
+    "hardware_items": [
+      {
+        "name": "Mesin Kiosk Antrian iMin Crane 1 21,5\"",
+        "unit_price": 24500000,
+        "quantity": 1
+      },
+      {
+        "name": "Floor stand untuk Selfkioks Mesin kasir iMin Crane 16 / 21.5 / 27 / 32 inch dengan printer 80 mm",
+        "unit_price": 4500000,
+        "quantity": 1
+      },
+      {
+        "name": "Xiaomi TV A 43\" FHD 2026",
+        "unit_price": 3500000,
+        "quantity": 3
+      },
+      {
+        "name": "BRACKET TV | BRACKET SWIVEL | 4 ARAH",
+        "unit_price": 300000,
+        "quantity": 3
+      },
+      {
+        "name": "HDMI Switch 3 to 1 (3 In 1 Out) Full HD 3D 4K with Remote",
+        "unit_price": 100000,
+        "quantity": 1
+      },
+      {
+        "name": "Mini PC AMD Ryzen 5 3500U GMKTEC G10 - 16GB RAM DDR4 512 SSD NVME 4K DISPLAY WINDOWS 11 PRO - 8GB/256GB",
+        "unit_price": 6000000,
+        "quantity": 1
+      }
+    ],
+    "government_payment_schedule": [
+      {
+        "stage": "Uang Muka 50%",
+        "billing_basis": "Kontrak ditandatangani & SPMK terbit",
+        "nominal": 51615000
+      },
+      {
+        "stage": "Pelunasan 50%",
+        "billing_basis": "Pekerjaan selesai 100%\nBerita Acara Serah Terima (BAST)",
+        "nominal": 48385000
+      }
+    ],
+    "payment_due_days": 14,
+    "limitation_codes": [
+      "civil_electrical",
+      "extra_hardware",
+      "out_of_pocket",
+      "overtime",
+      "third_party",
+      "scope_change"
+    ]
+  },
+  "expected": {
+    "calculation": {
+      "variant": "government_mpp",
+      "service_groups": [
+        {
+          "title": "Requirement, Design & Development",
+          "items": [
+            {
+              "name": "UI UX",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 1,
+              "line_total": 3342500
+            },
+            {
+              "name": "Senior Programmer",
+              "monthly_rate": 16170000,
+              "headcount": 1,
+              "period_quarters": 4,
+              "line_total": 16170000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 3,
+              "line_total": 10027500
+            }
+          ]
+        },
+        {
+          "title": "SIT, UAT & Go-Live Beta Release",
+          "items": [
+            {
+              "name": "Senior Programmer",
+              "monthly_rate": 16170000,
+              "headcount": 1,
+              "period_quarters": 2,
+              "line_total": 8085000
+            },
+            {
+              "name": "Quality Assurance",
+              "monthly_rate": 13370000,
+              "headcount": 1,
+              "period_quarters": 2,
+              "line_total": 6685000
+            }
+          ]
+        }
+      ],
+      "service_subtotal": 44310000,
+      "service_discount_amount": 799100,
+      "service_tax_amount": 4874100,
+      "service_total": 48385000,
+      "hardware": [
+        {
+          "name": "Mesin Kiosk Antrian iMin Crane 1 21,5\"",
+          "unit_price": 24500000,
+          "quantity": 1,
+          "line_total": 24500000
+        },
+        {
+          "name": "Floor stand untuk Selfkioks Mesin kasir iMin Crane 16 / 21.5 / 27 / 32 inch dengan printer 80 mm",
+          "unit_price": 4500000,
+          "quantity": 1,
+          "line_total": 4500000
+        },
+        {
+          "name": "Xiaomi TV A 43\" FHD 2026",
+          "unit_price": 3500000,
+          "quantity": 3,
+          "line_total": 10500000
+        },
+        {
+          "name": "BRACKET TV | BRACKET SWIVEL | 4 ARAH",
+          "unit_price": 300000,
+          "quantity": 3,
+          "line_total": 900000
+        },
+        {
+          "name": "HDMI Switch 3 to 1 (3 In 1 Out) Full HD 3D 4K with Remote",
+          "unit_price": 100000,
+          "quantity": 1,
+          "line_total": 100000
+        },
+        {
+          "name": "Mini PC AMD Ryzen 5 3500U GMKTEC G10 - 16GB RAM DDR4 512 SSD NVME 4K DISPLAY WINDOWS 11 PRO - 8GB/256GB",
+          "unit_price": 6000000,
+          "quantity": 1,
+          "line_total": 6000000
+        }
+      ],
+      "hardware_subtotal": 46500000,
+      "hardware_tax_amount": 5115000,
+      "hardware_total": 51615000,
+      "maintenance_total": 0,
+      "payment_target_total": 100000000,
+      "payment_total": 100000000
+    },
+    "profile": {
+      "variant": "government_mpp",
+      "hardware_provision": "venturo_supplied",
+      "tax_treatment": "inclusive_ppn_11",
+      "tax_clause_text": "Total investasi telah termasuk PPN 11% sesuai regulasi perpajakan yang berlaku di Indonesia.",
+      "show_hardware": true,
+      "show_maintenance": false,
+      "show_rights": false,
+      "payment_due_days": 14,
+      "limitation_texts": [
+        "Pekerjaan fisik dan sipil/kelistrikan meliputi bobok tembok, penarikan daya/kabel, stop kontak, bracket, dan perbaikan area bukan tanggung jawab Venturo.",
+        "Pengadaan perangkat keras tambahan di luar rincian penawaran akan dikenakan biaya terpisah sesuai spesifikasi dan harga pasar saat pengadaan.",
+        "Biaya akomodasi, transportasi luar kota, dan konsumsi harian jika pekerjaan on-site diminta oleh klien.",
+        "Percepatan pekerjaan di luar jam kerja reguler (malam hari, Sabtu, Minggu, atau hari libur nasional) dikenakan biaya lembur tersendiri.",
+        "Lisensi pihak ketiga, credit API AI (OpenAI/Anthropic), Payment Gateway, WhatsApp API / SMS Gateway, domain, dan server cloud di luar paket yang disepakati.",
+        "Penambahan fitur baru, perubahan alur proses yang telah di-approve, atau penundaan approval dari klien yang mengakibatkan masa kontrak molor."
+      ],
+      "sections": [
+        { "number": 1, "code": "scope", "title": "Lingkup Pekerjaan" },
+        { "number": 2, "code": "experts", "title": "Kebutuhan Tenaga Ahli" },
+        { "number": 3, "code": "costs", "title": "Rincian Biaya" },
+        { "number": 4, "code": "payment", "title": "Tahapan Pembayaran" },
+        { "number": 5, "code": "limitations", "title": "Batasan dan Pengecualian" }
+      ]
+    },
+    "section_titles": [
+      "Lingkup Pekerjaan",
+      "Kebutuhan Tenaga Ahli",
+      "Rincian Biaya",
+      "Tahapan Pembayaran",
+      "Batasan dan Pengecualian"
+    ],
+    "dom": {
+      "root_class": "quotation-document kiosk-queue-document",
+      "heading": "PENAWARAN LAYANAN KIOSK & SISTEM ANTRIAN",
+      "section_numbers": [1, 2, 3, 4, 5],
+      "section_titles": [
+        "1. Lingkup Pekerjaan",
+        "2. Kebutuhan Tenaga Ahli",
+        "3. Rincian Biaya",
+        "4. Tahapan Pembayaran",
+        "5. Batasan dan Pengecualian"
+      ],
+      "service_subtotal": "Rp 44.310.000",
+      "service_discount": "Rp 799.100",
+      "service_tax": "Rp 4.874.100",
+      "service_total": "Rp 48.385.000",
+      "hardware_subtotal": "Rp 46.500.000",
+      "hardware_tax": "Rp 5.115.000",
+      "hardware_total": "Rp 51.615.000",
+      "payment_total": "Rp 100.000.000",
+      "payment_nominals": [
+        "Rp 51.615.000",
+        "Rp 48.385.000"
+      ],
+      "has_hardware": true,
+      "has_maintenance": false,
+      "has_rights": false,
+      "signature_column_count": 2
+    }
+  }
+}
