@@ -278,6 +278,55 @@ func (h *QuotationGenerationHandler) PreviewKioskQueueSystem(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Kiosk queue preview calculated successfully", dto.KioskQueuePreviewResponse{Calculation: calculation, ResolvedProfile: profile})
 }
 
+// PreviewTalentOutsourcing computes authoritative Talent Outsourcing figures
+// without AI, rate-card access, or persistence.
+func (h *QuotationGenerationHandler) PreviewTalentOutsourcing(c *gin.Context) {
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeTalentOutsourcing ||
+		req.TalentOutsourcing == nil ||
+		req.DedicatedSquad != nil ||
+		req.SubscriptionSaaS != nil ||
+		req.WhiteLabel != nil ||
+		req.StandaloneMaintenance != nil ||
+		req.CustomDevelopment != nil ||
+		req.KioskQueueSystem != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid talent outsourcing request", "")
+		return
+	}
+	if req.RateCardID != uuid.Nil {
+		response.Error(c, http.StatusBadRequest, "Rate card is not allowed for talent outsourcing", "")
+		return
+	}
+
+	input := domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing)
+	if err := input.Validate(); err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Invalid talent outsourcing input", "")
+		return
+	}
+	calculation, err := service.CalculateTalentOutsourcing(input)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Talent outsourcing calculation mismatch", "")
+		return
+	}
+	profile, err := service.ResolveTalentOutsourcingProfile(input)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Invalid talent outsourcing profile", "")
+		return
+	}
+	response.Success(c, http.StatusOK, "Talent outsourcing preview calculated successfully", dto.TalentOutsourcingPreviewResponse{
+		Calculation:     calculation,
+		ResolvedProfile: profile,
+	})
+}
+
 func hasNonKioskStructuredInput(req dto.GenerateQuotationRequest) bool {
 	return req.DedicatedSquad != nil ||
 		req.SubscriptionSaaS != nil ||
