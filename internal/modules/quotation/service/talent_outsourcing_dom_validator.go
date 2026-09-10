@@ -54,7 +54,10 @@ func talentFieldValues(document string) (map[string]string, error) {
 	return found, nil
 }
 func talentExpectedFields(in domain.TalentOutsourcingInput, c domain.TalentOutsourcingCalculation) map[string]int64 {
-	m := map[string]int64{"personnel_subtotal": c.PersonnelSubtotal, "total_before_tax": c.TotalBeforeTax, "grand_total": c.GrandTotal, "payment_total": c.PaymentTotal}
+	m := map[string]int64{"total_before_tax": c.TotalBeforeTax, "grand_total": c.GrandTotal, "payment_total": c.PaymentTotal}
+	if in.EngagementMode == domain.TalentModeManpowerSupply {
+		m["personnel_subtotal"] = c.PersonnelSubtotal
+	}
 	if c.NonPersonnelSubtotal > 0 {
 		m["non_personnel_subtotal"] = c.NonPersonnelSubtotal
 	}
