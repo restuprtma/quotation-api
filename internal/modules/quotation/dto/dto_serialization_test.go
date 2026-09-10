@@ -39,6 +39,14 @@ func TestCredentialResponse_JSONSerialization(t *testing.T) {
 	assert.Equal(t, "sk-...abcd", raw["key_hint"])
 }
 
+func TestTalentOutsourcingRequestJSONSerialization(t *testing.T) {
+	raw := `{"commercial_scheme":"talent_outsourcing","talent_outsourcing":{"engagement_mode":"manpower_supply","document_number":"A","service_name":"A","quotation_date":"2026-06-10","tax_treatment":"not_stated","cost_groups":[],"scope_blocks":[],"payment_schedule":[],"limitation_codes":[]}}`
+	var req GenerateQuotationRequest
+	require.NoError(t, json.Unmarshal([]byte(raw), &req))
+	assert.Equal(t, "talent_outsourcing", req.CommercialScheme)
+	require.NotNil(t, req.TalentOutsourcing)
+}
+
 func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) {
 	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
 	discount := int32(2500)
