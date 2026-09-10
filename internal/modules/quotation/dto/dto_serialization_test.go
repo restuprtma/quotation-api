@@ -719,3 +719,146 @@ func TestGenerateQuotationRequest_CustomDevelopmentJSONSerialization(t *testing.
 	})
 }
 
+func TestGenerateQuotationRequest_KioskQueueSystemJSONSerialization(t *testing.T) {
+	quotationDate := time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC)
+	req := GenerateQuotationRequest{
+		Subject:          "Pengadaan Antrian MPP",
+		SolutionType:     "Sistem Antrian",
+		CommercialScheme: domain.CommercialSchemeKioskQueueSystem,
+		KioskQueueSystem: &domain.KioskQueueSystemInput{
+			Variant:           domain.KioskQueueGovernmentMPP,
+			DocumentNumber:    "LANDA/MPP-Antrian/0726/003",
+			SystemName:        "Sistem Antrian Terpadu MPP",
+			QuotationDate:     quotationDate,
+			HardwareProvision: domain.HardwareVenturoSupplied,
+			TaxTreatment:      domain.KioskTaxInclusivePPN11,
+			GovernmentScopePhases: []domain.KioskQueueScopePhaseInput{
+				{
+					Title:        "Fase 1: Persiapan",
+					Deliverables: []string{"Dokumen Analisis"},
+				},
+			},
+			ExpertRequirements: []domain.KioskQueueExpertInput{
+				{
+					Role:                 "Project Manager",
+					Headcount:            1,
+					DurationLabel:        "3 Bulan",
+					MinimumQualification: "S1",
+				},
+			},
+			ServiceGroups: []domain.KioskQueueServiceGroupInput{
+				{
+					Title: "Jasa",
+					Items: []domain.KioskQueueServiceItemInput{
+						{
+							Name:           "Backend Engineer",
+							MonthlyRate:    20_000_000,
+							Headcount:      1,
+							PeriodQuarters: 4,
+						},
+					},
+				},
+			},
+			ServiceDiscountAmount:  0,
+			ShowServiceDiscountRow: false,
+			HardwareItems: []domain.KioskQueueHardwareItemInput{
+				{
+					Name:      "Kiosk 21.5",
+					UnitPrice: 25_000_000,
+					Quantity:  1,
+				},
+			},
+			GovernmentPaymentSchedule: []domain.KioskQueueGovernmentPaymentInput{
+				{
+					Stage:        "DP",
+					BillingBasis: "SPMK",
+					Nominal:      25_000_000,
+				},
+			},
+			PaymentDueDays: 14,
+			LimitationCodes: []domain.KioskQueueLimitationCode{
+				domain.KioskLimitCivilElectrical,
+			},
+			AdditionalLimitations: []string{"Tidak termasuk instalasi sipil."},
+			RightsStatements:      []string{"Hak cipta diserahkan."},
+		},
+	}
+
+	t.Run("round trip serialization and field verification", func(t *testing.T) {
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+
+		var decoded GenerateQuotationRequest
+		require.NoError(t, json.Unmarshal(b, &decoded))
+		require.NotNil(t, decoded.KioskQueueSystem)
+		assert.Equal(t, "government_mpp", string(decoded.KioskQueueSystem.Variant))
+		assert.Equal(t, "LANDA/MPP-Antrian/0726/003", decoded.KioskQueueSystem.DocumentNumber)
+		assert.Nil(t, decoded.CustomDevelopment)
+		assert.Empty(t, decoded.RateCardID)
+		assert.Equal(t, quotationDate, decoded.KioskQueueSystem.QuotationDate.UTC())
+		require.NoError(t, decoded.KioskQueueSystem.Validate())
+	})
+
+	t.Run("rejects date other than YYYY-MM-DD (e.g. 30/07/2026)", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "kiosk_queue_system",
+			"kiosk_queue_system": {
+				"variant": "government_mpp",
+				"document_number": "LANDA/MPP-Antrian/0726/003",
+				"system_name": "Sistem Antrian",
+				"quotation_date": "30-07-2026",
+				"hardware_provision": "venturo_supplied",
+				"tax_treatment": "inclusive_ppn_11"
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "quotation_date")
+	})
+
+	t.Run("rejects request with unknown nested field inside kiosk_queue_system", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "kiosk_queue_system",
+			"kiosk_queue_system": {
+				"variant": "government_mpp",
+				"document_number": "LANDA/MPP-Antrian/0726/003",
+				"system_name": "Sistem Antrian",
+				"quotation_date": "2026-07-30",
+				"hardware_provision": "venturo_supplied",
+				"tax_treatment": "inclusive_ppn_11",
+				"unrecognized_field": "disallowed"
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
+	t.Run("rejects request with unknown nested field inside service_groups items", func(t *testing.T) {
+		badPayload := `{
+			"commercial_scheme": "kiosk_queue_system",
+			"kiosk_queue_system": {
+				"variant": "government_mpp",
+				"document_number": "LANDA/MPP-Antrian/0726/003",
+				"system_name": "Sistem Antrian",
+				"quotation_date": "2026-07-30",
+				"hardware_provision": "venturo_supplied",
+				"tax_treatment": "inclusive_ppn_11",
+				"service_groups": [
+					{
+						"title": "Jasa",
+						"items": [
+							{"name": "Dev", "monthly_rate": 20000000, "headcount": 1, "period_quarters": 4, "illegal_item_prop": 999}
+						]
+					}
+				]
+			}
+		}`
+		var decoded GenerateQuotationRequest
+		err := json.Unmarshal([]byte(badPayload), &decoded)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+}
