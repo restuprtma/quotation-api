@@ -332,7 +332,8 @@ func hasNonKioskStructuredInput(req dto.GenerateQuotationRequest) bool {
 		req.SubscriptionSaaS != nil ||
 		req.WhiteLabel != nil ||
 		req.StandaloneMaintenance != nil ||
-		req.CustomDevelopment != nil
+		req.CustomDevelopment != nil ||
+		req.TalentOutsourcing != nil
 }
 
 // Generate starts the AI-first pipeline and returns 201 with the committed
@@ -551,6 +552,8 @@ func (h *QuotationGenerationHandler) mapGenerationError(c *gin.Context, err erro
 	}
 
 	switch ge.Code {
+	case service.ErrCodeQuotationNumberConflict:
+		response.Error(c, http.StatusConflict, "Quotation number already exists", ge.Error())
 	case service.ErrCodeRegenerateRateLimited:
 		response.Error(c, http.StatusTooManyRequests, "Regenerate limit reached", ge.Error())
 	case service.ErrCodeRevisionConflict:

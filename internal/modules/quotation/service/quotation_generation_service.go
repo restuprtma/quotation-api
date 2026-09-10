@@ -51,17 +51,18 @@ func isOfficialGeneratorRateCardCode(code string) bool {
 // messages are STATIC — they never embed prompts, provider payloads, keys,
 // budget figures, or rate card internals.
 const (
-	ErrCodeSettingsIncomplete  = "settings_incomplete"
-	ErrCodeInvalidClient       = "invalid_client"
-	ErrCodeInvalidRateCard     = "invalid_rate_card"
-	ErrCodeRateItemMissing     = "rate_item_missing"
-	ErrCodeBudgetUnfeasible    = "budget_unfeasible"
-	ErrCodeAllocationInvalid   = "allocation_invalid"
-	ErrCodeProviderInvalidCred = "provider_invalid_credential"
-	ErrCodeProviderRateLimited = "provider_rate_limited"
-	ErrCodeProviderTimeout     = "provider_timeout"
-	ErrCodeUnsafeHTML          = "unsafe_html"
-	ErrCodeGenerationFailed    = "generation_failed"
+	ErrCodeSettingsIncomplete      = "settings_incomplete"
+	ErrCodeInvalidClient           = "invalid_client"
+	ErrCodeInvalidRateCard         = "invalid_rate_card"
+	ErrCodeRateItemMissing         = "rate_item_missing"
+	ErrCodeBudgetUnfeasible        = "budget_unfeasible"
+	ErrCodeAllocationInvalid       = "allocation_invalid"
+	ErrCodeProviderInvalidCred     = "provider_invalid_credential"
+	ErrCodeProviderRateLimited     = "provider_rate_limited"
+	ErrCodeProviderTimeout         = "provider_timeout"
+	ErrCodeUnsafeHTML              = "unsafe_html"
+	ErrCodeGenerationFailed        = "generation_failed"
+	ErrCodeQuotationNumberConflict = "quotation_number_conflict"
 
 	// Session 5 regeneration-specific safe codes.
 	ErrCodeRegenerateRateLimited = "regenerate_rate_limited"
@@ -179,6 +180,7 @@ type QuotationGenerationService struct {
 	standaloneMaintenanceRenderer StandaloneMaintenanceHTMLRenderer
 	customDevelopmentRenderer     CustomDevelopmentRenderer
 	kioskQueueRenderer            KioskQueueHTMLRenderer
+	talentOutsourcingRenderer     TalentOutsourcingRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -209,6 +211,11 @@ func WithKioskQueueRenderer(r KioskQueueHTMLRenderer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.kioskQueueRenderer = r }
 }
 
+// WithTalentOutsourcingRenderer overrides the deterministic talent renderer.
+func WithTalentOutsourcingRenderer(r TalentOutsourcingRenderer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.talentOutsourcingRenderer = r }
+}
+
 // WithHTMLSanitizer overrides the HTMLSanitizer (useful for tests).
 func WithHTMLSanitizer(sanitizer HTMLSanitizer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.sanitizer = sanitizer }
@@ -233,6 +240,7 @@ func NewQuotationGenerationService(
 		standaloneMaintenanceRenderer: NewStandaloneMaintenanceHTMLRenderer(),
 		customDevelopmentRenderer:     NewCustomDevelopmentRenderer(),
 		kioskQueueRenderer:            NewKioskQueueHTMLRenderer(),
+		talentOutsourcingRenderer:     NewTalentOutsourcingRenderer(),
 		attemptTimeout:                DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
@@ -267,7 +275,8 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel ||
 		req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance ||
 		req.CommercialScheme == domain.CommercialSchemeCustomDevelopment ||
-		req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem {
+		req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem ||
+		req.CommercialScheme == domain.CommercialSchemeTalentOutsourcing {
 		cfg, gerr = s.loadStructuredConfiguration(ctx, companyID, req)
 	} else {
 		cfg, gerr = s.loadConfiguration(ctx, companyID, req)
@@ -302,12 +311,24 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrQuotationNumberAlreadyExists) || (err != nil && err.Error() == "quotation number already exists") {
-			return uuid.Nil, newGenerationError(ErrCodeGenerationFailed, "quotation number already exists")
+			return uuid.Nil, newGenerationError(ErrCodeQuotationNumberConflict, "quotation number already exists")
 		}
 		return uuid.Nil, newGenerationError(ErrCodeGenerationFailed, "failed to create draft")
 	}
 
 	switch req.CommercialScheme {
+	case domain.CommercialSchemeTalentOutsourcing:
+		gerr := s.generateTalentOutsourcing(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			var ge *GenerationError
+			reason := "talent outsourcing generation failed"
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
 	case domain.CommercialSchemeKioskQueueSystem:
 		gerr := s.generateKioskQueueSystem(ctx, companyID, req, cfg, draft.RevisionID)
 		if gerr != nil {
@@ -1177,6 +1198,103 @@ func (s *QuotationGenerationService) generateKioskQueueSystem(ctx context.Contex
 	return s.renderAndPersistKioskQueueSystem(ctx, companyID, revisionID, false, document)
 }
 
+func (s *QuotationGenerationService) generateTalentOutsourcing(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	if req.TalentOutsourcing == nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "talent outsourcing input is required")
+	}
+	input := domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing)
+	calculation, err := CalculateTalentOutsourcing(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "talent outsourcing calculation failed")
+	}
+	profile, err := ResolveTalentOutsourcingProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "talent outsourcing profile failed")
+	}
+	document := TalentOutsourcingDocumentInput{Metadata: QuotationMetadata{QuotationNumber: input.DocumentNumber, Subject: strings.TrimSpace(req.Subject), ClientName: cfg.clientName, ClientCompanyName: cfg.clientCompanyName, IssueDate: indonesianDate(input.QuotationDate)}, Input: input, Calculation: calculation, Profile: profile, LegalHTML: cfg.legal.ContentHTML}
+	return s.renderAndPersistTalentOutsourcing(ctx, companyID, revisionID, false, document, NormalizeTalentScopeBlocks(input), NormalizeTalentTimeline(input))
+}
+
+func (s *QuotationGenerationService) renderAndPersistTalentOutsourcing(ctx context.Context, companyID, revisionID uuid.UUID, regenerated bool, document TalentOutsourcingDocumentInput, modules []domain.TalentScopeBlockInput, timeline []domain.TalentTimelineSnapshotItem) error {
+	rawHTML, err := s.talentOutsourcingRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing document sanitization failed")
+	}
+	if err := ValidateTalentOutsourcingIntegrity(sanitized, TalentOutsourcingIntegrityExpectations{Input: document.Input, Calculation: document.Calculation, Profile: document.Profile}); err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "talent outsourcing document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+	params := repository.CompleteDeterministicGenerationParams{CompanyID: companyID, RevisionID: revisionID, ContentHTML: sanitized, ResolvedProfileSnapshot: mustJSON(document.Profile), CalculationSnapshot: mustJSON(document.Calculation), ModuleSnapshot: mustJSON(modules), TimelineSnapshot: mustJSON(timeline), AiProvider: "", AiModel: "", ContentHash: &hashString, Regenerated: regenerated}
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin talent outsourcing generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist talent outsourcing generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit talent outsourcing generation result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateTalentOutsourcing(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	if req.TalentOutsourcing == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing talent outsourcing")
+	}
+	input := domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing)
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored talent outsourcing input failed validation")
+	}
+	var calculation domain.TalentOutsourcingCalculation
+	if err := decodeTalentSnapshot(draft.CalculationSnapshot, &calculation); err != nil || calculation.GrandTotal <= 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+	computed, err := CalculateTalentOutsourcing(input)
+	if err != nil || computed.GrandTotal != calculation.GrandTotal || computed.PaymentTotal != calculation.PaymentTotal {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is inconsistent")
+	}
+	var profile domain.ResolvedTalentOutsourcingProfile
+	if err := decodeTalentSnapshot(draft.ResolvedProfileSnapshot, &profile); err != nil || len(profile.Sections) != 4 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+	var modules []domain.TalentScopeBlockInput
+	if err := decodeTalentSnapshot(draft.ModuleSnapshot, &modules); err != nil || len(modules) == 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+	}
+	var timeline []domain.TalentTimelineSnapshotItem
+	if err := decodeTalentSnapshot(draft.TimelineSnapshot, &timeline); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
+	}
+	if len(timeline) != len(modules) {
+		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is inconsistent")
+	}
+	input.ScopeBlocks = modules
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot failed validation")
+	}
+	var legal legalSnapshotView
+	if err := decodeTalentSnapshot(draft.LegalTemplateSnapshot, &legal); err != nil || strings.TrimSpace(legal.ContentHTML) == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
+	}
+	document := TalentOutsourcingDocumentInput{Metadata: QuotationMetadata{QuotationNumber: draft.QuotationNumber, Subject: strings.TrimSpace(req.Subject), ClientName: strings.TrimSpace(req.ClientName), ClientCompanyName: strings.TrimSpace(req.ClientCompanyName), IssueDate: indonesianDate(input.QuotationDate)}, Input: input, Calculation: calculation, Profile: profile, LegalHTML: legal.ContentHTML}
+	return s.renderAndPersistTalentOutsourcing(ctx, companyID, draft.RevisionID, true, document, modules, timeline)
+}
+
+func decodeTalentSnapshot(raw json.RawMessage, target any) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "[]" {
+		return errors.New("empty snapshot")
+	}
+	return json.Unmarshal(raw, target)
+}
+
 func (s *QuotationGenerationService) renderAndPersistKioskQueueSystem(
 	ctx context.Context,
 	companyID uuid.UUID,
@@ -1442,6 +1560,8 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 	}
 
 	switch draft.CommercialScheme {
+	case domain.CommercialSchemeTalentOutsourcing:
+		return s.regenerateTalentOutsourcing(ctx, companyID, req, draft)
 	case domain.CommercialSchemeKioskQueueSystem:
 		return s.regenerateKioskQueueSystem(ctx, companyID, req, draft)
 	case domain.CommercialSchemeSubscriptionSaaS:
@@ -2447,6 +2567,10 @@ func (s *QuotationGenerationService) loadStructuredConfiguration(ctx context.Con
 		if req.KioskQueueSystem != nil {
 			cfg.quotationNumber = req.KioskQueueSystem.Normalize().DocumentNumber
 		}
+	} else if req.CommercialScheme == domain.CommercialSchemeTalentOutsourcing {
+		if req.TalentOutsourcing != nil {
+			cfg.quotationNumber = domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing).DocumentNumber
+		}
 	} else {
 		number, err := s.genRepo.NextQuotationNumber(ctx, companyID)
 		if err != nil {
@@ -2903,7 +3027,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 
 	switch req.CommercialScheme {
 	case domain.CommercialSchemeDedicatedSquad:
-		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
+		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil || req.TalentOutsourcing != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad payload is invalid")
 		}
 		if req.DedicatedSquad != nil {
@@ -2939,7 +3063,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeSubscriptionSaaS:
-		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
+		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil || req.TalentOutsourcing != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas payload is invalid")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2951,7 +3075,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeWhiteLabel:
-		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
+		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil || req.TalentOutsourcing != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "white_label requires exactly white_label input")
 		}
 		if err := req.WhiteLabel.Validate(); err != nil {
@@ -2960,7 +3084,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeStandaloneMaintenance:
-		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
+		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil || req.TalentOutsourcing != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "standalone_maintenance requires exactly standalone_maintenance input")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2972,7 +3096,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeCustomDevelopment:
-		if req.CustomDevelopment == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.KioskQueueSystem != nil {
+		if req.CustomDevelopment == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.KioskQueueSystem != nil || req.TalentOutsourcing != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "custom_development requires exactly custom_development input")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2987,7 +3111,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeKioskQueueSystem:
-		if req.KioskQueueSystem == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
+		if req.KioskQueueSystem == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.TalentOutsourcing != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "kiosk_queue_system requires exactly kiosk_queue_system input")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2996,6 +3120,21 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		input := req.KioskQueueSystem.Normalize()
 		if err := input.Validate(); err != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "kiosk queue system input is invalid")
+		}
+		return nil
+
+	case domain.CommercialSchemeTalentOutsourcing:
+		if req.TalentOutsourcing == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "talent_outsourcing requires exactly talent_outsourcing input")
+		}
+		if req.RateCardID != uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is not accepted for talent_outsourcing")
+		}
+		if req.ProjectDurationMonths != 0 || req.BudgetMaximum != 0 || len(req.MandatoryScope) != 0 || len(req.OptionalScope) != 0 || req.PaymentTerms.Mode != "" || len(req.PaymentTerms.Items) != 0 {
+			return newGenerationError(ErrCodeGenerationFailed, "legacy quotation fields are not accepted for talent_outsourcing")
+		}
+		if err := domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing).Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "talent outsourcing input is invalid")
 		}
 		return nil
 
