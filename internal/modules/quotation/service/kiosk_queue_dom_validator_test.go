@@ -232,3 +232,159 @@ func TestCheckKioskQueueRightsModified(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, mod)
 }
+
+func TestKioskQueue_ValidateAndCommercialCheck_PaymentDueClause(t *testing.T) {
+	docIn := governmentDocumentInput()
+	html, err := service.NewKioskQueueHTMLRenderer().Render(docIn)
+	require.NoError(t, err)
+
+	// 1. Mutate due days text from H+14 to H+30
+	mutated := strings.Replace(html, "H+14", "H+30", 1)
+	err = service.ValidateKioskQueueIntegrity(mutated, docIn.Input, docIn.Calculation, docIn.Profile, docIn.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payment_due_clause")
+
+	commercialMod, err := service.CheckKioskQueueCommercialModified(mutated, docIn.Input, docIn.Calculation, docIn.Profile)
+	require.NoError(t, err)
+	assert.True(t, commercialMod)
+
+	// 2. Remove payment_due_clause entirely
+	mutatedRemoved := strings.Replace(html, `<p data-field="payment_due_clause">Pembayaran dilakukan maksimal H+14 hari kalender setelah invoice diterbitkan.</p>`, "", 1)
+	err = service.ValidateKioskQueueIntegrity(mutatedRemoved, docIn.Input, docIn.Calculation, docIn.Profile, docIn.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payment_due_clause")
+
+	commercialMod, err = service.CheckKioskQueueCommercialModified(mutatedRemoved, docIn.Input, docIn.Calculation, docIn.Profile)
+	require.NoError(t, err)
+	assert.True(t, commercialMod)
+
+	// 3. Unexpected payment_due_clause when PaymentDueDays == 0
+	docZeroDue := privateDocumentInput()
+	docZeroDue.Profile.PaymentDueDays = 0
+	docZeroDue.Input.PaymentDueDays = 0
+	htmlZero, err := service.NewKioskQueueHTMLRenderer().Render(docZeroDue)
+	require.NoError(t, err)
+
+	mutatedInjected := strings.Replace(htmlZero, `</section>`, `<p data-field="payment_due_clause">Pembayaran dilakukan maksimal H+7 hari kalender setelah invoice diterbitkan.</p></section>`, 1)
+	err = service.ValidateKioskQueueIntegrity(mutatedInjected, docZeroDue.Input, docZeroDue.Calculation, docZeroDue.Profile, docZeroDue.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payment_due_clause")
+
+	commercialMod, err = service.CheckKioskQueueCommercialModified(mutatedInjected, docZeroDue.Input, docZeroDue.Calculation, docZeroDue.Profile)
+	require.NoError(t, err)
+	assert.True(t, commercialMod)
+}
+
+func TestKioskQueue_ValidateAndCommercialCheck_RejectsSilentRowInjection(t *testing.T) {
+	docIn := governmentDocumentInput()
+	html, err := service.NewKioskQueueHTMLRenderer().Render(docIn)
+	require.NoError(t, err)
+
+	// 1. Injected service row with data-role
+	injectedService := strings.Replace(html, `<tr data-role="service_0_0">`, `<tr data-role="service_0_99"><td>Ghost Service</td><td>Rp 10.000.000</td><td>1</td><td>1 Bulan</td><td data-field="service_line_total">Rp 10.000.000</td></tr><tr data-role="service_0_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedService, docIn.Input, docIn.Calculation, docIn.Profile, docIn.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "service row count mismatch")
+
+	commMod, err := service.CheckKioskQueueCommercialModified(injectedService, docIn.Input, docIn.Calculation, docIn.Profile)
+	require.NoError(t, err)
+	assert.True(t, commMod)
+
+	// 2. Injected hardware row
+	injectedHw := strings.Replace(html, `<tr data-role="hardware_0">`, `<tr data-role="hardware_99"><td>Ghost Hardware</td><td>Rp 5.000.000</td><td>1</td><td data-field="hardware_line_total">Rp 5.000.000</td></tr><tr data-role="hardware_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedHw, docIn.Input, docIn.Calculation, docIn.Profile, docIn.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hardware row count mismatch")
+
+	commMod, err = service.CheckKioskQueueCommercialModified(injectedHw, docIn.Input, docIn.Calculation, docIn.Profile)
+	require.NoError(t, err)
+	assert.True(t, commMod)
+
+	// 3. Injected government payment row
+	injectedGovPay := strings.Replace(html, `<tr data-role="government_payment_0">`, `<tr data-role="government_payment_99"><td>Extra Stage</td><td>Basis</td><td data-field="payment_nominal">Rp 10.000.000</td></tr><tr data-role="government_payment_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedGovPay, docIn.Input, docIn.Calculation, docIn.Profile, docIn.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "government payment row count mismatch")
+
+	commMod, err = service.CheckKioskQueueCommercialModified(injectedGovPay, docIn.Input, docIn.Calculation, docIn.Profile)
+	require.NoError(t, err)
+	assert.True(t, commMod)
+
+	// 4. Injected private maintenance row in private document
+	docPriv := privateDocumentInput()
+	htmlPriv, err := service.NewKioskQueueHTMLRenderer().Render(docPriv)
+	require.NoError(t, err)
+
+	injectedMaint := strings.Replace(htmlPriv, `<tr data-role="maintenance_0">`, `<tr data-role="maintenance_99"><td>Ghost Squad</td><td>Rp 5.000.000</td><td>1</td><td>1 Qtr</td><td data-field="maintenance_line_total">Rp 5.000.000</td></tr><tr data-role="maintenance_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedMaint, docPriv.Input, docPriv.Calculation, docPriv.Profile, docPriv.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maintenance row count mismatch")
+
+	commMod, err = service.CheckKioskQueueCommercialModified(injectedMaint, docPriv.Input, docPriv.Calculation, docPriv.Profile)
+	require.NoError(t, err)
+	assert.True(t, commMod)
+
+	// 5. Injected private payment row in private document
+	injectedPrivPay := strings.Replace(htmlPriv, `<tr data-role="private_payment_0">`, `<tr data-role="private_payment_99"><td>WP</td><td>Terms</td><td>Inv</td><td>Due</td><td data-field="payment_nominal">Rp 1.000.000</td></tr><tr data-role="private_payment_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedPrivPay, docPriv.Input, docPriv.Calculation, docPriv.Profile, docPriv.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "private payment row count mismatch")
+
+	commMod, err = service.CheckKioskQueueCommercialModified(injectedPrivPay, docPriv.Input, docPriv.Calculation, docPriv.Profile)
+	require.NoError(t, err)
+	assert.True(t, commMod)
+}
+
+func TestKioskQueue_ValidateIntegrity_ExpertsAndTimelineRowCounts(t *testing.T) {
+	// 1. Government experts injection and removal
+	docGov := governmentDocumentInput()
+	htmlGov, err := service.NewKioskQueueHTMLRenderer().Render(docGov)
+	require.NoError(t, err)
+
+	// Inject extra expert row
+	injectedExpert := strings.Replace(htmlGov, `<tr data-role="expert_0">`, `<tr data-role="expert_1"><td>Senior DBA</td><td>1</td><td>3 Bulan</td><td>S1 Informatika</td></tr><tr data-role="expert_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedExpert, docGov.Input, docGov.Calculation, docGov.Profile, docGov.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expert row count mismatch")
+
+	// Expert edit does NOT trigger commercial modified
+	commMod, err := service.CheckKioskQueueCommercialModified(injectedExpert, docGov.Input, docGov.Calculation, docGov.Profile)
+	require.NoError(t, err)
+	assert.False(t, commMod, "Expert edit is non-commercial")
+
+	// Remove expert row
+	start := strings.Index(htmlGov, `<tr data-role="expert_0">`)
+	require.True(t, start > 0)
+	end := strings.Index(htmlGov[start:], `</tr>`)
+	require.True(t, end > 0)
+	removedExpert := htmlGov[:start] + htmlGov[start+end+5:]
+	err = service.ValidateKioskQueueIntegrity(removedExpert, docGov.Input, docGov.Calculation, docGov.Profile, docGov.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expert")
+
+	// 2. Private timeline injection and removal
+	docPriv := privateDocumentInput()
+	htmlPriv, err := service.NewKioskQueueHTMLRenderer().Render(docPriv)
+	require.NoError(t, err)
+
+	// Inject extra timeline row
+	injectedTimeline := strings.Replace(htmlPriv, `<tr data-role="timeline_0">`, `<tr data-role="timeline_99"><td>Extra Phase</td><td>Week 10</td></tr><tr data-role="timeline_0">`, 1)
+	err = service.ValidateKioskQueueIntegrity(injectedTimeline, docPriv.Input, docPriv.Calculation, docPriv.Profile, docPriv.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeline row count mismatch")
+
+	// Timeline edit does NOT trigger commercial modified
+	commMod, err = service.CheckKioskQueueCommercialModified(injectedTimeline, docPriv.Input, docPriv.Calculation, docPriv.Profile)
+	require.NoError(t, err)
+	assert.False(t, commMod, "Timeline edit is non-commercial")
+
+	// Remove timeline row
+	tStart := strings.Index(htmlPriv, `<tr data-role="timeline_0">`)
+	require.True(t, tStart > 0)
+	tEnd := strings.Index(htmlPriv[tStart:], `</tr>`)
+	require.True(t, tEnd > 0)
+	removedTimeline := htmlPriv[:tStart] + htmlPriv[tStart+tEnd+5:]
+	err = service.ValidateKioskQueueIntegrity(removedTimeline, docPriv.Input, docPriv.Calculation, docPriv.Profile, docPriv.LegalHTML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeline")
+}

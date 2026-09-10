@@ -144,6 +144,7 @@ func TestKioskQueueRendererPrivateFoodCourt(t *testing.T) {
 	assert.Contains(t, html, `data-section-number="3"><h2>3. Lingkup Pekerjaan &amp; Timeline`)
 	assert.Contains(t, html, `data-field="service_total">Rp 96.305.000`)
 	assert.Contains(t, html, `data-field="maintenance_total">Rp 83.625.000`)
+	assert.Contains(t, html, `TOTAL MAINTENANCE`)
 	assert.NotContains(t, html, `TOTAL (6 Bulan)`)
 	assert.NotContains(t, html, `data-role="hardware_cost_table"`)
 }

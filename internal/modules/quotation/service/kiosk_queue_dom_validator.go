@@ -116,10 +116,35 @@ func ValidateKioskQueueIntegrity(
 
 	// 6. Explicit component and row checks
 	if input.Variant == domain.KioskQueueGovernmentMPP {
+		// Finding 3: Validate presence and row counts for experts block
+		expertBlock, err := findExactlyOne(nodes, "data-block-type", "experts")
+		if err != nil || expertBlock == nil {
+			return fmt.Errorf("%w: experts block is missing", ErrUnsafeHTML)
+		}
+		expertCount := countNodesWithRolePrefix(nodes, "expert_", "")
+		if expertCount != len(input.ExpertRequirements) {
+			return fmt.Errorf("%w: expert row count mismatch: got %d, want %d", ErrUnsafeHTML, expertCount, len(input.ExpertRequirements))
+		}
+		expertNodes := collectNodes(expertBlock)
+		for i := range input.ExpertRequirements {
+			row, err := findExactlyOne(expertNodes, "data-role", fmt.Sprintf("expert_%d", i))
+			if err != nil || row == nil {
+				return fmt.Errorf("%w: expert row expert_%d is missing", ErrUnsafeHTML, i)
+			}
+		}
+		if tbodyTrCount(findFirstTable(expertBlock)) != len(input.ExpertRequirements) {
+			return fmt.Errorf("%w: expert table tbody row count mismatch", ErrUnsafeHTML)
+		}
+
+		// Hardware checks
 		if profile.ShowHardware {
 			hwTable, err := findExactlyOne(nodes, "data-role", "hardware_cost_table")
 			if err != nil || hwTable == nil {
 				return fmt.Errorf("%w: hardware_cost_table is missing", ErrUnsafeHTML)
+			}
+			hwCount := countNodesWithRolePrefix(nodes, "hardware_", "hardware_cost_table")
+			if hwCount != len(calc.Hardware) {
+				return fmt.Errorf("%w: hardware row count mismatch: got %d, want %d", ErrUnsafeHTML, hwCount, len(calc.Hardware))
 			}
 			hwNodes := collectNodes(hwTable)
 			for hIdx := range calc.Hardware {
@@ -128,6 +153,167 @@ func ValidateKioskQueueIntegrity(
 					return fmt.Errorf("%w: hardware row hardware_%d is missing", ErrUnsafeHTML, hIdx)
 				}
 			}
+			if tbodyTrCount(hwTable) != len(calc.Hardware)+3 {
+				return fmt.Errorf("%w: hardware table tbody row count mismatch", ErrUnsafeHTML)
+			}
+		} else {
+			if hwCount := countNodesWithRolePrefix(nodes, "hardware_", "hardware_cost_table"); hwCount > 0 {
+				return fmt.Errorf("%w: unexpected hardware rows in service-only document: found %d", ErrUnsafeHTML, hwCount)
+			}
+			if hwTable, _ := findExactlyOne(nodes, "data-role", "hardware_cost_table"); hwTable != nil {
+				return fmt.Errorf("%w: unexpected hardware_cost_table in service-only document", ErrUnsafeHTML)
+			}
+		}
+	} else if input.Variant == domain.KioskQueuePrivateFoodCourt {
+		// Finding 3: Validate presence and row counts for timeline block
+		scopeBlock, err := findExactlyOne(nodes, "data-block-type", "scope")
+		if err != nil || scopeBlock == nil {
+			return fmt.Errorf("%w: scope/timeline block is missing", ErrUnsafeHTML)
+		}
+		timelineCount := countNodesWithRolePrefix(nodes, "timeline_", "")
+		if timelineCount != len(input.PrivateTimelineRows) {
+			return fmt.Errorf("%w: timeline row count mismatch: got %d, want %d", ErrUnsafeHTML, timelineCount, len(input.PrivateTimelineRows))
+		}
+		timelineNodes := collectNodes(scopeBlock)
+		for i := range input.PrivateTimelineRows {
+			row, err := findExactlyOne(timelineNodes, "data-role", fmt.Sprintf("timeline_%d", i))
+			if err != nil || row == nil {
+				return fmt.Errorf("%w: timeline row timeline_%d is missing", ErrUnsafeHTML, i)
+			}
+		}
+		if tbodyTrCount(findFirstTable(scopeBlock)) != len(input.PrivateTimelineRows) {
+			return fmt.Errorf("%w: timeline table tbody row count mismatch", ErrUnsafeHTML)
+		}
+
+		// Maintenance checks
+		if profile.ShowMaintenance {
+			mBlock, err := findExactlyOne(nodes, "data-block-type", "commercial-maintenance")
+			if err != nil || mBlock == nil {
+				return fmt.Errorf("%w: commercial-maintenance block is missing", ErrUnsafeHTML)
+			}
+			mCount := countNodesWithRolePrefix(nodes, "maintenance_", "")
+			if mCount != len(calc.Maintenance) {
+				return fmt.Errorf("%w: maintenance row count mismatch: got %d, want %d", ErrUnsafeHTML, mCount, len(calc.Maintenance))
+			}
+			mNodes := collectNodes(mBlock)
+			for mIdx := range calc.Maintenance {
+				row, err := findExactlyOne(mNodes, "data-role", fmt.Sprintf("maintenance_%d", mIdx))
+				if err != nil || row == nil {
+					return fmt.Errorf("%w: maintenance row maintenance_%d is missing", ErrUnsafeHTML, mIdx)
+				}
+			}
+			if tbodyTrCount(findFirstTable(mBlock)) != len(calc.Maintenance)+1 {
+				return fmt.Errorf("%w: maintenance table tbody row count mismatch", ErrUnsafeHTML)
+			}
+		} else {
+			if mCount := countNodesWithRolePrefix(nodes, "maintenance_", ""); mCount > 0 {
+				return fmt.Errorf("%w: unexpected maintenance rows: found %d", ErrUnsafeHTML, mCount)
+			}
+			if mBlock, _ := findExactlyOne(nodes, "data-block-type", "commercial-maintenance"); mBlock != nil {
+				return fmt.Errorf("%w: unexpected commercial-maintenance block", ErrUnsafeHTML)
+			}
+		}
+	}
+
+	// Service row count and table structure validation (Finding 2)
+	expectedServiceRows := 0
+	for _, g := range calc.ServiceGroups {
+		expectedServiceRows += len(g.Items)
+	}
+	if sCount := countNodesWithRolePrefix(nodes, "service_", "service_cost_table"); sCount != expectedServiceRows {
+		return fmt.Errorf("%w: service row count mismatch: got %d, want %d", ErrUnsafeHTML, sCount, expectedServiceRows)
+	}
+	commBlock, err := findExactlyOne(nodes, "data-block-type", "commercial")
+	if err != nil || commBlock == nil {
+		return fmt.Errorf("%w: commercial block is missing", ErrUnsafeHTML)
+	}
+	if input.Variant == domain.KioskQueueGovernmentMPP {
+		sTable, err := findExactlyOne(collectNodes(commBlock), "data-role", "service_cost_table")
+		if err != nil || sTable == nil {
+			return fmt.Errorf("%w: service_cost_table is missing", ErrUnsafeHTML)
+		}
+		expectedTrs := len(calc.ServiceGroups) + expectedServiceRows + 3
+		if calc.ServiceDiscountAmount > 0 {
+			expectedTrs++
+		}
+		if tbodyTrCount(sTable) != expectedTrs {
+			return fmt.Errorf("%w: service table tbody row count mismatch", ErrUnsafeHTML)
+		}
+	} else {
+		sTable := findFirstTable(commBlock)
+		groupHeaders := 0
+		for _, g := range calc.ServiceGroups {
+			if len(calc.ServiceGroups) > 1 || g.Title != "" {
+				groupHeaders++
+			}
+		}
+		expectedTrs := groupHeaders + expectedServiceRows + 2
+		if calc.ServiceDiscountAmount > 0 {
+			expectedTrs++
+		}
+		if tbodyTrCount(sTable) != expectedTrs {
+			return fmt.Errorf("%w: private service table tbody row count mismatch", ErrUnsafeHTML)
+		}
+	}
+
+	// Payment row count and table structure validation (Finding 2)
+	payBlock, err := findExactlyOne(nodes, "data-block-type", "payment")
+	if err != nil || payBlock == nil {
+		return fmt.Errorf("%w: payment block is missing", ErrUnsafeHTML)
+	}
+	payTable := findFirstTable(payBlock)
+	if input.Variant == domain.KioskQueueGovernmentMPP {
+		if pCount := countNodesWithRolePrefix(nodes, "government_payment_", ""); pCount != len(input.GovernmentPaymentSchedule) {
+			return fmt.Errorf("%w: government payment row count mismatch: got %d, want %d", ErrUnsafeHTML, pCount, len(input.GovernmentPaymentSchedule))
+		}
+		if pPrivCount := countNodesWithRolePrefix(nodes, "private_payment_", ""); pPrivCount > 0 {
+			return fmt.Errorf("%w: unexpected private payment rows in government document", ErrUnsafeHTML)
+		}
+		if tbodyTrCount(payTable) != len(input.GovernmentPaymentSchedule)+1 {
+			return fmt.Errorf("%w: government payment table tbody row count mismatch", ErrUnsafeHTML)
+		}
+	} else {
+		if pCount := countNodesWithRolePrefix(nodes, "private_payment_", ""); pCount != len(input.PrivatePaymentSchedule) {
+			return fmt.Errorf("%w: private payment row count mismatch: got %d, want %d", ErrUnsafeHTML, pCount, len(input.PrivatePaymentSchedule))
+		}
+		if pGovCount := countNodesWithRolePrefix(nodes, "government_payment_", ""); pGovCount > 0 {
+			return fmt.Errorf("%w: unexpected government payment rows in private document", ErrUnsafeHTML)
+		}
+		if tbodyTrCount(payTable) != len(input.PrivatePaymentSchedule)+1 {
+			return fmt.Errorf("%w: private payment table tbody row count mismatch", ErrUnsafeHTML)
+		}
+	}
+
+	// Finding 1: Payment due clause validation
+	if profile.PaymentDueDays > 0 {
+		expectedDueText := fmt.Sprintf("Pembayaran dilakukan maksimal H+%d hari kalender setelah invoice diterbitkan.", profile.PaymentDueDays)
+		dueNode, err := findExactlyOne(nodes, "data-field", "payment_due_clause")
+		if err != nil || dueNode == nil {
+			return fmt.Errorf("%w: payment_due_clause is missing", ErrUnsafeHTML)
+		}
+		if nodeText(dueNode) != expectedDueText {
+			return fmt.Errorf("%w: payment_due_clause text mismatch: got %q, want %q", ErrUnsafeHTML, nodeText(dueNode), expectedDueText)
+		}
+	} else {
+		dueNode, _ := findExactlyOne(nodes, "data-field", "payment_due_clause")
+		if dueNode != nil {
+			return fmt.Errorf("%w: unexpected payment_due_clause present", ErrUnsafeHTML)
+		}
+	}
+
+	// Tax clause validation
+	if profile.TaxClauseText != "" {
+		taxNode, err := findExactlyOne(nodes, "data-field", "tax_clause")
+		if err != nil || taxNode == nil {
+			return fmt.Errorf("%w: tax_clause is missing", ErrUnsafeHTML)
+		}
+		if nodeText(taxNode) != profile.TaxClauseText {
+			return fmt.Errorf("%w: tax_clause text mismatch: got %q, want %q", ErrUnsafeHTML, nodeText(taxNode), profile.TaxClauseText)
+		}
+	} else {
+		taxNode, _ := findExactlyOne(nodes, "data-field", "tax_clause")
+		if taxNode != nil {
+			return fmt.Errorf("%w: unexpected tax_clause present", ErrUnsafeHTML)
 		}
 	}
 
@@ -265,6 +451,40 @@ func CheckKioskQueueCommercialModified(
 	}
 	commNodes := collectNodes(commBlock)
 
+	expectedServiceRows := 0
+	for _, group := range calc.ServiceGroups {
+		expectedServiceRows += len(group.Items)
+	}
+	if countNodesWithRolePrefix(nodes, "service_", "service_cost_table") != expectedServiceRows {
+		return true, nil
+	}
+
+	if input.Variant == domain.KioskQueueGovernmentMPP {
+		sTable, _ := findExactlyOne(commNodes, "data-role", "service_cost_table")
+		expectedTrs := len(calc.ServiceGroups) + expectedServiceRows + 3
+		if calc.ServiceDiscountAmount > 0 {
+			expectedTrs++
+		}
+		if sTable == nil || tbodyTrCount(sTable) != expectedTrs {
+			return true, nil
+		}
+	} else {
+		sTable := findFirstTable(commBlock)
+		groupHeaders := 0
+		for _, g := range calc.ServiceGroups {
+			if len(calc.ServiceGroups) > 1 || g.Title != "" {
+				groupHeaders++
+			}
+		}
+		expectedTrs := groupHeaders + expectedServiceRows + 2
+		if calc.ServiceDiscountAmount > 0 {
+			expectedTrs++
+		}
+		if sTable == nil || tbodyTrCount(sTable) != expectedTrs {
+			return true, nil
+		}
+	}
+
 	// Check service line totals
 	for gIdx, group := range calc.ServiceGroups {
 		for iIdx, item := range group.Items {
@@ -316,6 +536,12 @@ func CheckKioskQueueCommercialModified(
 			if hwTable == nil {
 				return true, nil
 			}
+			if countNodesWithRolePrefix(nodes, "hardware_", "hardware_cost_table") != len(calc.Hardware) {
+				return true, nil
+			}
+			if tbodyTrCount(hwTable) != len(calc.Hardware)+3 {
+				return true, nil
+			}
 			hwNodes := collectNodes(hwTable)
 			for hIdx, item := range calc.Hardware {
 				row, err := findExactlyOne(hwNodes, "data-role", fmt.Sprintf("hardware_%d", hIdx))
@@ -339,7 +565,15 @@ func CheckKioskQueueCommercialModified(
 			if err != nil || hwTot == nil || nodeText(hwTot) != "Rp "+formatNumber(calc.HardwareTotal) {
 				return true, nil
 			}
-		} else if hwTable != nil {
+		} else {
+			if hwTable != nil || countNodesWithRolePrefix(nodes, "hardware_", "hardware_cost_table") > 0 {
+				return true, nil
+			}
+		}
+		if countNodesWithRolePrefix(nodes, "maintenance_", "") > 0 {
+			return true, nil
+		}
+		if countNodesWithRolePrefix(nodes, "private_payment_", "") > 0 {
 			return true, nil
 		}
 
@@ -348,6 +582,13 @@ func CheckKioskQueueCommercialModified(
 		mBlock, _ := findExactlyOne(nodes, "data-block-type", "commercial-maintenance")
 		if profile.ShowMaintenance {
 			if mBlock == nil {
+				return true, nil
+			}
+			if countNodesWithRolePrefix(nodes, "maintenance_", "") != len(calc.Maintenance) {
+				return true, nil
+			}
+			mTable := findFirstTable(mBlock)
+			if mTable == nil || tbodyTrCount(mTable) != len(calc.Maintenance)+1 {
 				return true, nil
 			}
 			mNodes := collectNodes(mBlock)
@@ -365,7 +606,15 @@ func CheckKioskQueueCommercialModified(
 			if err != nil || mTot == nil || nodeText(mTot) != "Rp "+formatNumber(calc.MaintenanceTotal) {
 				return true, nil
 			}
-		} else if mBlock != nil {
+		} else {
+			if mBlock != nil || countNodesWithRolePrefix(nodes, "maintenance_", "") > 0 {
+				return true, nil
+			}
+		}
+		if countNodesWithRolePrefix(nodes, "hardware_", "") > 0 {
+			return true, nil
+		}
+		if countNodesWithRolePrefix(nodes, "government_payment_", "") > 0 {
 			return true, nil
 		}
 	}
@@ -382,8 +631,22 @@ func CheckKioskQueueCommercialModified(
 		return true, nil
 	}
 
+	payTable := findFirstTable(payBlock)
+	if payTable == nil {
+		return true, nil
+	}
+
 	switch input.Variant {
 	case domain.KioskQueueGovernmentMPP:
+		if countNodesWithRolePrefix(nodes, "government_payment_", "") != len(input.GovernmentPaymentSchedule) {
+			return true, nil
+		}
+		if countNodesWithRolePrefix(nodes, "private_payment_", "") > 0 {
+			return true, nil
+		}
+		if tbodyTrCount(payTable) != len(input.GovernmentPaymentSchedule)+1 {
+			return true, nil
+		}
 		var paySum int64
 		for pIdx, p := range input.GovernmentPaymentSchedule {
 			row, err := findExactlyOne(payNodes, "data-role", fmt.Sprintf("government_payment_%d", pIdx))
@@ -401,6 +664,15 @@ func CheckKioskQueueCommercialModified(
 		}
 
 	case domain.KioskQueuePrivateFoodCourt:
+		if countNodesWithRolePrefix(nodes, "private_payment_", "") != len(input.PrivatePaymentSchedule) {
+			return true, nil
+		}
+		if countNodesWithRolePrefix(nodes, "government_payment_", "") > 0 {
+			return true, nil
+		}
+		if tbodyTrCount(payTable) != len(input.PrivatePaymentSchedule)+1 {
+			return true, nil
+		}
 		var paySum int64
 		for pIdx, p := range input.PrivatePaymentSchedule {
 			row, err := findExactlyOne(payNodes, "data-role", fmt.Sprintf("private_payment_%d", pIdx))
@@ -422,6 +694,25 @@ func CheckKioskQueueCommercialModified(
 	if profile.TaxClauseText != "" {
 		taxClauseNode, err := findExactlyOne(payNodes, "data-field", "tax_clause")
 		if err != nil || taxClauseNode == nil || nodeText(taxClauseNode) != profile.TaxClauseText {
+			return true, nil
+		}
+	} else {
+		taxClauseNode, _ := findExactlyOne(payNodes, "data-field", "tax_clause")
+		if taxClauseNode != nil {
+			return true, nil
+		}
+	}
+
+	// Finding 1: Payment due clause
+	if profile.PaymentDueDays > 0 {
+		expectedDueText := fmt.Sprintf("Pembayaran dilakukan maksimal H+%d hari kalender setelah invoice diterbitkan.", profile.PaymentDueDays)
+		dueNode, err := findExactlyOne(nodes, "data-field", "payment_due_clause")
+		if err != nil || dueNode == nil || nodeText(dueNode) != expectedDueText {
+			return true, nil
+		}
+	} else {
+		dueNode, _ := findExactlyOne(nodes, "data-field", "payment_due_clause")
+		if dueNode != nil {
 			return true, nil
 		}
 	}
@@ -465,4 +756,50 @@ func CheckKioskQueueRightsModified(document string, rights []string) (bool, erro
 	}
 
 	return false, nil
+}
+
+func countNodesWithRolePrefix(nodes []*html.Node, prefix string, exactExclude string) int {
+	count := 0
+	for _, n := range nodes {
+		role := attributeValue(n, "data-role")
+		if role != "" && strings.HasPrefix(role, prefix) {
+			if exactExclude != "" && role == exactExclude {
+				continue
+			}
+			count++
+		}
+	}
+	return count
+}
+
+func findTbody(tableNode *html.Node) *html.Node {
+	if tableNode == nil {
+		return nil
+	}
+	for child := tableNode.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.ElementNode && child.Data == "tbody" {
+			return child
+		}
+	}
+	return nil
+}
+
+func tbodyTrCount(tableNode *html.Node) int {
+	tb := findTbody(tableNode)
+	if tb == nil {
+		return 0
+	}
+	return len(directChildElements(tb, "tr"))
+}
+
+func findFirstTable(node *html.Node) *html.Node {
+	if node == nil {
+		return nil
+	}
+	for _, n := range collectNodes(node) {
+		if n.Type == html.ElementNode && n.Data == "table" {
+			return n
+		}
+	}
+	return nil
 }

@@ -254,7 +254,7 @@ func renderPrivateMaintenance(b *strings.Builder, sec domain.DocumentSection, ca
 			formatNumber(item.LineTotal),
 		)
 	}
-	fmt.Fprintf(b, `<tr><td colspan="4"><strong>TOTAL</strong></td><td data-field="maintenance_total">Rp %s</td></tr>`, formatNumber(calc.MaintenanceTotal))
+	fmt.Fprintf(b, `<tr><td colspan="4"><strong>TOTAL MAINTENANCE</strong></td><td data-field="maintenance_total">Rp %s</td></tr>`, formatNumber(calc.MaintenanceTotal))
 	b.WriteString(`</tbody></table></section>`)
 }
 
@@ -286,12 +286,6 @@ func renderKioskPayments(b *strings.Builder, sec domain.DocumentSection, input d
 		}
 		fmt.Fprintf(b, `<tr><td colspan="2"><strong>TOTAL</strong></td><td data-field="payment_total">Rp %s</td></tr>`, formatNumber(calc.PaymentTotal))
 		b.WriteString(`</tbody></table>`)
-		if profile.TaxClauseText != "" {
-			fmt.Fprintf(b, `<p data-field="tax_clause">%s</p>`, htmlEscape(profile.TaxClauseText))
-		}
-		if profile.PaymentDueDays > 0 {
-			fmt.Fprintf(b, `<p data-field="payment_due_clause">Pembayaran dilakukan maksimal H+%d hari kalender setelah invoice diterbitkan.</p>`, profile.PaymentDueDays)
-		}
 
 	case domain.KioskQueuePrivateFoodCourt:
 		b.WriteString(`<table><thead><tr><th>Work Period</th><th>Terms</th><th>Invoice Date</th><th>Due Date</th><th>Nominal</th></tr></thead><tbody>`)
@@ -307,9 +301,12 @@ func renderKioskPayments(b *strings.Builder, sec domain.DocumentSection, input d
 		}
 		fmt.Fprintf(b, `<tr><td colspan="4"><strong>TOTAL</strong></td><td data-field="payment_total">Rp %s</td></tr>`, formatNumber(calc.PaymentTotal))
 		b.WriteString(`</tbody></table>`)
-		if profile.TaxClauseText != "" {
-			fmt.Fprintf(b, `<p data-field="tax_clause">%s</p>`, htmlEscape(profile.TaxClauseText))
-		}
+	}
+	if profile.TaxClauseText != "" {
+		fmt.Fprintf(b, `<p data-field="tax_clause">%s</p>`, htmlEscape(profile.TaxClauseText))
+	}
+	if profile.PaymentDueDays > 0 {
+		fmt.Fprintf(b, `<p data-field="payment_due_clause">Pembayaran dilakukan maksimal H+%d hari kalender setelah invoice diterbitkan.</p>`, profile.PaymentDueDays)
 	}
 	b.WriteString(`</section>`)
 }
