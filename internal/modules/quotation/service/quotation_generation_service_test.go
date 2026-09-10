@@ -3020,6 +3020,78 @@ func TestRegenerateCustomDevelopment_CorruptSnapshots_RejectsAndPreservesVersion
 		assert.Equal(t, snap.html, snapAfter.html)
 	})
 
+	t.Run("EmptyArrayModule", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET module_snapshot = '[]'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on empty array module_snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on empty array module_snapshot")
+		assert.Equal(t, snap.status, snapAfter.status)
+	})
+
+	t.Run("EmptyArrayTimeline", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET timeline_snapshot = '[]'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on empty array timeline_snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on empty array timeline_snapshot")
+		assert.Equal(t, snap.status, snapAfter.status)
+	})
+
+	t.Run("InvalidStructureModule", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET module_snapshot = '[{"invalid_field":"missing_name_and_features"}]'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on invalid structure module_snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on invalid structure module_snapshot")
+		assert.Equal(t, snap.status, snapAfter.status)
+	})
+
+	t.Run("InvalidStructureTimeline", func(t *testing.T) {
+		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
+		snap := captureSnapshot(t, pool, qid)
+
+		_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET timeline_snapshot = '[{"invalid_field":"missing_desc_and_timeline"}]'::jsonb WHERE quotation_id = $1`, qid)
+		require.NoError(t, err)
+
+		svc, _ := newSvc(pool, &panicAIProvider{})
+		err = svc.Regenerate(ctx, companyID, qid)
+		require.Error(t, err)
+		assertGenerationCode(t, err, "generation_failed")
+
+		snapAfter := captureSnapshot(t, pool, qid)
+		assert.Equal(t, snap.version, snapAfter.version, "version must not change on invalid structure timeline_snapshot")
+		assert.Equal(t, snap.html, snapAfter.html, "html must not change on invalid structure timeline_snapshot")
+		assert.Equal(t, snap.status, snapAfter.status)
+	})
+
 	t.Run("MissingCustomDevelopmentGenerationInput", func(t *testing.T) {
 		qid, companyID, _ := generateCustomDevelopmentDraft(t, pool)
 		snap := captureSnapshot(t, pool, qid)
@@ -3048,4 +3120,501 @@ func TestRegenerateCustomDevelopment_CrossTenant_ReturnsNotFound(t *testing.T) {
 	err := svc.Regenerate(context.Background(), foreignCompanyID, qid)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, repository.ErrRevisionNotFound), "cross-tenant regenerate returns not found")
+}
+
+var testKioskDocSeq int64 = 1000
+
+func testKioskDocNumber() string {
+	n := atomic.AddInt64(&testKioskDocSeq, 1)
+	return fmt.Sprintf("LANDA/MPP-Antrian/0726/%05d", n)
+}
+
+func validKioskQueueInputForTest() domain.KioskQueueSystemInput {
+	return domain.KioskQueueSystemInput{
+		Variant:           domain.KioskQueueGovernmentMPP,
+		DocumentNumber:    testKioskDocNumber(),
+		SystemName:        "Sistem Antrian Terpadu MPP",
+		QuotationDate:     time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC),
+		HardwareProvision: domain.HardwareVenturoSupplied,
+		TaxTreatment:      domain.KioskTaxInclusivePPN11,
+		GovernmentScopePhases: []domain.KioskQueueScopePhaseInput{
+			{
+				Title: "Fase 1: Persiapan & Desain",
+				Deliverables: []string{
+					"Dokumen Analisis Kebutuhan",
+					"UI/UX Design Mockup",
+				},
+			},
+		},
+		ExpertRequirements: []domain.KioskQueueExpertInput{
+			{
+				Role:                 "Project Manager",
+				Headcount:            1,
+				DurationLabel:        "3 Bulan",
+				MinimumQualification: "S1 Sistem Informasi, pengalaman 5 tahun",
+			},
+		},
+		ServiceGroups: []domain.KioskQueueServiceGroupInput{
+			{
+				Title: "Requirement, Design & Development",
+				Items: []domain.KioskQueueServiceItemInput{
+					{Name: "UI UX", MonthlyRate: 13_370_000, Headcount: 1, PeriodQuarters: 1},
+					{Name: "Senior Programmer", MonthlyRate: 16_170_000, Headcount: 1, PeriodQuarters: 4},
+					{Name: "Quality Assurance", MonthlyRate: 13_370_000, Headcount: 1, PeriodQuarters: 3},
+				},
+			},
+			{
+				Title: "SIT, UAT & Go-Live Beta Release",
+				Items: []domain.KioskQueueServiceItemInput{
+					{Name: "Senior Programmer", MonthlyRate: 16_170_000, Headcount: 1, PeriodQuarters: 2},
+					{Name: "Quality Assurance", MonthlyRate: 13_370_000, Headcount: 1, PeriodQuarters: 2},
+				},
+			},
+		},
+		ServiceDiscountAmount:  799_100,
+		ShowServiceDiscountRow: true,
+		HardwareItems: []domain.KioskQueueHardwareItemInput{
+			{Name: "Mesin Kiosk Touchscreen 21.5 inch", UnitPrice: 24_500_000, Quantity: 1},
+			{Name: "Printer Thermal & Audio Master", UnitPrice: 4_500_000, Quantity: 1},
+			{Name: "TV Display 43 Inch", UnitPrice: 3_500_000, Quantity: 3},
+			{Name: "Bracket TV", UnitPrice: 300_000, Quantity: 3},
+			{Name: "HDMI Switch", UnitPrice: 100_000, Quantity: 1},
+			{Name: "Mini PC Core i5", UnitPrice: 6_000_000, Quantity: 1},
+		},
+		GovernmentPaymentSchedule: []domain.KioskQueueGovernmentPaymentInput{
+			{
+				Stage:        "Uang Muka 50%",
+				BillingBasis: "Kontrak ditandatangani & SPMK terbit",
+				Nominal:      51_615_000,
+			},
+			{
+				Stage:        "Pelunasan 50%",
+				BillingBasis: "Pekerjaan selesai 100%\nBerita Acara Serah Terima (BAST)",
+				Nominal:      48_385_000,
+			},
+		},
+		PaymentDueDays: 14,
+		LimitationCodes: []domain.KioskQueueLimitationCode{
+			domain.KioskLimitCivilElectrical,
+		},
+		AdditionalLimitations: []string{
+			"Pekerjaan sipil dan perkabelan tidak termasuk penawaran ini.",
+		},
+	}
+}
+
+func kioskQueueRequest(fx pipelineFixture, input domain.KioskQueueSystemInput) dto.GenerateQuotationRequest {
+	req := fx.request()
+	req.CommercialScheme = domain.CommercialSchemeKioskQueueSystem
+	req.RateCardID = uuid.Nil
+	req.KioskQueueSystem = &input
+	req.DedicatedSquad = nil
+	req.SubscriptionSaaS = nil
+	req.WhiteLabel = nil
+	req.StandaloneMaintenance = nil
+	req.CustomDevelopment = nil
+	req.BudgetMaximum = 0
+	req.ProjectDurationMonths = 0
+	req.MandatoryScope = nil
+	req.OptionalScope = nil
+	req.PaymentTerms = dto.PaymentTermsInput{}
+	return req
+}
+
+type failingKioskQueueRenderer struct{}
+
+func (f *failingKioskQueueRenderer) Render(_ service.KioskQueueDocumentInput) (string, error) {
+	return "", errors.New("simulated kiosk queue render failure")
+}
+
+type missingBlockKioskQueueRenderer struct{}
+
+func (m *missingBlockKioskQueueRenderer) Render(_ service.KioskQueueDocumentInput) (string, error) {
+	return `<article class="quotation-document kiosk-queue-document"><section data-block-type="metadata">Meta</section></article>`, nil
+}
+
+func generateKioskQueueDraft(t *testing.T, pool *pgxpool.Pool, customize ...func(input *domain.KioskQueueSystemInput)) (uuid.UUID, uuid.UUID, pipelineFixture) {
+	t.Helper()
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validKioskQueueInputForTest()
+	for _, fn := range customize {
+		fn(&input)
+	}
+	req := kioskQueueRequest(fx, input)
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	return qid, fx.companyID, fx
+}
+
+func TestValidateGenerateInputKioskQueueRequiresExactlyOneInput(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	t.Run("NilPayload_RejectsAllocationInvalid", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		req.KioskQueueSystem = nil
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WithDedicatedSquad_RejectsAllocationInvalid", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		req.DedicatedSquad = &domain.DedicatedSquadInput{}
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WithSubscriptionSaaS_RejectsAllocationInvalid", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		saas := validSubscriptionSaaSInput()
+		req.SubscriptionSaaS = &saas
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WithWhiteLabel_RejectsAllocationInvalid", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		wl := validWhiteLabelInputForTest()
+		req.WhiteLabel = &wl
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WithStandaloneMaintenance_RejectsAllocationInvalid", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		maint := nexRetainerInputForCalculator()
+		req.StandaloneMaintenance = &maint
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("WithCustomDevelopment_RejectsAllocationInvalid", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		dev := validCustomDevelopmentInputForTest()
+		req.CustomDevelopment = &dev
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("ValidSingleInput_PassesValidateGenerateInput", func(t *testing.T) {
+		req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+		require.NoError(t, service.ValidateGenerateInput(req))
+	})
+
+	t.Run("Regression_DedicatedSquadWithKioskQueue_RejectsAllocationInvalid", func(t *testing.T) {
+		req := fx.request()
+		kq := validKioskQueueInputForTest()
+		req.KioskQueueSystem = &kq
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("Regression_SubscriptionSaaSWithKioskQueue_RejectsAllocationInvalid", func(t *testing.T) {
+		saas := validSubscriptionSaaSInput()
+		req := saasRequest(fx, saas)
+		kq := validKioskQueueInputForTest()
+		req.KioskQueueSystem = &kq
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("Regression_WhiteLabelWithKioskQueue_RejectsAllocationInvalid", func(t *testing.T) {
+		req := whiteLabelRequest(fx, validWhiteLabelInputForTest())
+		kq := validKioskQueueInputForTest()
+		req.KioskQueueSystem = &kq
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("Regression_StandaloneMaintenanceWithKioskQueue_RejectsAllocationInvalid", func(t *testing.T) {
+		req := standaloneMaintenanceRequest(fx, nexRetainerInputForCalculator())
+		kq := validKioskQueueInputForTest()
+		req.KioskQueueSystem = &kq
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+
+	t.Run("Regression_CustomDevelopmentWithKioskQueue_RejectsAllocationInvalid", func(t *testing.T) {
+		req := customDevelopmentRequest(fx, validCustomDevelopmentInputForTest())
+		kq := validKioskQueueInputForTest()
+		req.KioskQueueSystem = &kq
+		_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+		assertGenerationCode(t, err, "allocation_invalid")
+	})
+}
+
+func TestValidateGenerateInputKioskQueueRejectsRateCard(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	req := kioskQueueRequest(fx, validKioskQueueInputForTest())
+	req.RateCardID = fx.rateCardID
+	_, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	assertGenerationCode(t, err, "invalid_rate_card")
+}
+
+func TestLoadStructuredConfigurationUsesKioskDocumentNumber(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = "DOC-KIOSK-EXPLICIT-001"
+	req := kioskQueueRequest(fx, input)
+
+	number, err := svc.LoadStructuredQuotationNumberForTest(context.Background(), fx.companyID, req)
+	require.NoError(t, err)
+	assert.Equal(t, "DOC-KIOSK-EXPLICIT-001", number)
+}
+
+func TestGenerateKioskQueuePersistsExplicitDocumentNumber(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = testKioskDocNumber()
+	req := kioskQueueRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	var persistedNumber string
+	err = pool.QueryRow(context.Background(), `SELECT quotation_number FROM quotations WHERE id = $1`, qid).Scan(&persistedNumber)
+	require.NoError(t, err)
+	assert.Equal(t, input.DocumentNumber, persistedNumber)
+}
+
+func TestGenerateKioskQueueRejectsDuplicateDocumentNumberWithinCompany(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	docNum := testKioskDocNumber()
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = docNum
+
+	req1 := kioskQueueRequest(fx, input)
+	idempotencyKey1 := uuid.New().String()
+	req1.IdempotencyKey = &idempotencyKey1
+
+	qid1, err := svc.Generate(context.Background(), fx.companyID, nil, req1)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, qid1)
+
+	// Second generation with same document number but different idempotency key in SAME company
+	req2 := kioskQueueRequest(fx, input)
+	idempotencyKey2 := uuid.New().String()
+	req2.IdempotencyKey = &idempotencyKey2
+
+	_, err2 := svc.Generate(context.Background(), fx.companyID, nil, req2)
+	require.Error(t, err2)
+	var ge *service.GenerationError
+	require.True(t, errors.As(err2, &ge))
+	assert.Equal(t, "generation_failed", ge.Code)
+	assert.Equal(t, "quotation number already exists", ge.Message())
+}
+
+func TestGenerateKioskQueueAllowsSameDocumentNumberAcrossCompanies(t *testing.T) {
+	pool := getTestPool(t)
+	fxA := seedPipelineFixtures(t, pool)
+	fxB := seedPipelineFixtures(t, pool)
+	svc, _ := newSvc(pool, &panicAIProvider{})
+
+	docNum := testKioskDocNumber()
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = docNum
+
+	reqA := kioskQueueRequest(fxA, input)
+	idempotencyKeyA := uuid.New().String()
+	reqA.IdempotencyKey = &idempotencyKeyA
+
+	qidA, err := svc.Generate(context.Background(), fxA.companyID, nil, reqA)
+	require.NoError(t, err)
+
+	reqB := kioskQueueRequest(fxB, input)
+	idempotencyKeyB := uuid.New().String()
+	reqB.IdempotencyKey = &idempotencyKeyB
+
+	qidB, err := svc.Generate(context.Background(), fxB.companyID, nil, reqB)
+	require.NoError(t, err)
+	assert.NotEqual(t, qidA, qidB)
+
+	var numA, numB string
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT quotation_number FROM quotations WHERE id = $1`, qidA).Scan(&numA))
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT quotation_number FROM quotations WHERE id = $1`, qidB).Scan(&numB))
+	assert.Equal(t, docNum, numA)
+	assert.Equal(t, docNum, numB)
+}
+
+func TestGenerateKioskQueueDoesNotCallProviderOrRateCard(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = testKioskDocNumber()
+	req := kioskQueueRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, qid)
+
+	assert.Empty(t, source.requests(), "AI provider must not be called during kiosk queue generation")
+}
+
+func TestGenerateKioskQueuePersistsAllSnapshotsAtomically(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = testKioskDocNumber()
+	req := kioskQueueRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	var (
+		quotationStatus, revisionStatus string
+		contentHTML, contentHash        string
+		resolvedProfileSnapshot         string
+		calculationSnapshot             string
+		moduleSnapshot                  string
+		timelineSnapshot                string
+		rateCardSnapshot                string
+		skillSnapshot                   string
+		aiProvider, aiModel             *string
+		budgetMaximum                   *int64
+	)
+
+	err = pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, r.content_html, r.content_hash,
+		       r.resolved_profile_snapshot::text, r.calculation_snapshot::text,
+		       r.module_snapshot::text, r.timeline_snapshot::text,
+		       r.rate_card_snapshot::text, r.skill_snapshot::text,
+		       r.ai_provider, r.ai_model, r.budget_maximum
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id AND r.revision_number = q.current_revision
+		WHERE q.id = $1
+	`, qid).Scan(
+		&quotationStatus, &revisionStatus, &contentHTML, &contentHash,
+		&resolvedProfileSnapshot, &calculationSnapshot,
+		&moduleSnapshot, &timelineSnapshot,
+		&rateCardSnapshot, &skillSnapshot,
+		&aiProvider, &aiModel, &budgetMaximum,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "draft", quotationStatus)
+	assert.Equal(t, "completed", revisionStatus)
+	assert.Contains(t, contentHTML, "kiosk-queue-document")
+	assert.NotEmpty(t, contentHash)
+
+	var calc domain.KioskQueueCalculation
+	require.NoError(t, json.Unmarshal([]byte(calculationSnapshot), &calc))
+	assert.Equal(t, int64(100_000_000), calc.PaymentTotal)
+
+	var profile domain.ResolvedKioskQueueProfile
+	require.NoError(t, json.Unmarshal([]byte(resolvedProfileSnapshot), &profile))
+	assert.Equal(t, domain.KioskQueueGovernmentMPP, profile.Variant)
+
+	var phases []domain.KioskQueueScopePhaseInput
+	require.NoError(t, json.Unmarshal([]byte(moduleSnapshot), &phases))
+	assert.Len(t, phases, 1)
+
+	var timeline []domain.KioskQueueTimelineRowInput
+	require.NoError(t, json.Unmarshal([]byte(timelineSnapshot), &timeline))
+
+	assert.JSONEq(t, "{}", rateCardSnapshot)
+	assert.JSONEq(t, "{}", skillSnapshot)
+	assert.Nil(t, aiProvider)
+	assert.Nil(t, aiModel)
+	assert.Nil(t, budgetMaximum)
+}
+
+func TestGenerateKioskQueueRendererFailureLeavesPendingRevision(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithKioskQueueRenderer(&failingKioskQueueRenderer{}))
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = testKioskDocNumber()
+	req := kioskQueueRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var qStatus, revStatus string
+	var contentHTML, contentHash *string
+	err = pool.QueryRow(context.Background(), `
+		SELECT q.status, r.generation_status, r.content_html, r.content_hash
+		FROM quotations q
+		JOIN quotation_revisions r ON r.quotation_id = q.id AND r.revision_number = q.current_revision
+		WHERE q.id = $1
+	`, qid).Scan(&qStatus, &revStatus, &contentHTML, &contentHash)
+	require.NoError(t, err)
+
+	assert.Equal(t, "failed", revStatus)
+	assert.NotNil(t, contentHTML)
+	assert.Empty(t, *contentHTML)
+	assert.Nil(t, contentHash)
+}
+
+func TestGenerateKioskQueueIntegrityFailureDoesNotCommitContent(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock, service.WithKioskQueueRenderer(&missingBlockKioskQueueRenderer{}))
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = testKioskDocNumber()
+	req := kioskQueueRequest(fx, input)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	assertGenerationCode(t, err, "unsafe_html")
+	require.NotEqual(t, uuid.Nil, qid)
+
+	var revStatus string
+	var contentHTML, contentHash *string
+	err = pool.QueryRow(context.Background(), `
+		SELECT r.generation_status, r.content_html, r.content_hash
+		FROM quotation_revisions r
+		WHERE r.quotation_id = $1
+	`, qid).Scan(&revStatus, &contentHTML, &contentHash)
+	require.NoError(t, err)
+
+	assert.Equal(t, "failed", revStatus)
+	assert.NotNil(t, contentHTML)
+	assert.Empty(t, *contentHTML)
+	assert.Nil(t, contentHash)
+}
+
+func TestGenerateKioskQueueIdempotentReplayReturnsSameQuotation(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+	mock := &panicAIProvider{}
+	svc, _ := newSvc(pool, mock)
+
+	input := validKioskQueueInputForTest()
+	input.DocumentNumber = testKioskDocNumber()
+	req := kioskQueueRequest(fx, input)
+	idemKey := uuid.New().String()
+	req.IdempotencyKey = &idemKey
+
+	qid1, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+
+	qid2, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	assert.Equal(t, qid1, qid2)
 }

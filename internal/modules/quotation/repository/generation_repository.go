@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,10 +29,17 @@ const (
 
 	PublicationStatusDraft = "draft"
 
-	pgUniqueViolationCode       = "23505"
-	uqRevisionsIdempotencyIndex = "uq_revisions_idempotency_key"
+	pgUniqueViolationCode                = "23505"
+	uqRevisionsIdempotencyIndex          = "uq_revisions_idempotency_key"
+	uqQuotationsCompanyNumberActiveIndex = "uq_quotations_company_number_active"
 
 	maxCreateDraftAttempts = 3
+)
+
+var (
+	// ErrQuotationNumberAlreadyExists reports that the quotation number is already taken
+	// within the active quotations of the same company.
+	ErrQuotationNumberAlreadyExists = errors.New("quotation number already exists")
 )
 
 // GenerationRepository owns persistence for the AI-first quotation
@@ -90,7 +98,7 @@ type UpdateGenerationResultParams struct {
 }
 
 // CompleteDeterministicGenerationParams contains the deterministic artefacts of a
-// structured or deterministic generation (Dedicated Squad, Subscription SaaS, White Label, Standalone Maintenance, or Custom Development).
+// structured or deterministic generation (Dedicated Squad, Subscription SaaS, White Label, Standalone Maintenance, Custom Development, or Kiosk Queue System).
 // The snapshots are stored together with the rendered HTML so readers can never observe a partially completed
 // commercial snapshot.
 type CompleteDeterministicGenerationParams struct {
@@ -137,6 +145,19 @@ func (r *GenerationRepository) CreateDraftTransaction(ctx context.Context, param
 			return result, nil
 		}
 		lastErr = err
+
+		if isDuplicateQuotationNumber(err) {
+			// Check if this error was caused by a concurrent idempotent replay of the SAME key
+			for retry := 0; retry < maxCreateDraftAttempts; retry++ {
+				existing, lookupErr := r.findResultByKey(ctx, params.CompanyID, keyUUID)
+				if lookupErr == nil && existing != nil {
+					existing.IdempotentReplay = true
+					return existing, nil
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			return nil, ErrQuotationNumberAlreadyExists
+		}
 
 		if !isIdempotencyConflict(err) {
 			logger.Error("Failed to create generation draft", logger.Err(err))
@@ -279,6 +300,15 @@ func isIdempotencyConflict(err error) bool {
 	if errors.As(err, &pgErr) {
 		return pgErr.Code == pgUniqueViolationCode &&
 			pgErr.ConstraintName == uqRevisionsIdempotencyIndex
+	}
+	return false
+}
+
+func isDuplicateQuotationNumber(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgUniqueViolationCode &&
+			(pgErr.ConstraintName == uqQuotationsCompanyNumberActiveIndex || strings.Contains(pgErr.Message, uqQuotationsCompanyNumberActiveIndex))
 	}
 	return false
 }

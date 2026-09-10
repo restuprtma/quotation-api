@@ -178,6 +178,7 @@ type QuotationGenerationService struct {
 	whiteLabelRenderer            WhiteLabelHTMLRenderer
 	standaloneMaintenanceRenderer StandaloneMaintenanceHTMLRenderer
 	customDevelopmentRenderer     CustomDevelopmentRenderer
+	kioskQueueRenderer            KioskQueueHTMLRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -203,6 +204,11 @@ func WithCustomDevelopmentRenderer(r CustomDevelopmentRenderer) GenerationOption
 	return func(s *QuotationGenerationService) { s.customDevelopmentRenderer = r }
 }
 
+// WithKioskQueueRenderer overrides the KioskQueueHTMLRenderer (useful for tests).
+func WithKioskQueueRenderer(r KioskQueueHTMLRenderer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.kioskQueueRenderer = r }
+}
+
 // WithHTMLSanitizer overrides the HTMLSanitizer (useful for tests).
 func WithHTMLSanitizer(sanitizer HTMLSanitizer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.sanitizer = sanitizer }
@@ -226,6 +232,7 @@ func NewQuotationGenerationService(
 		whiteLabelRenderer:            NewWhiteLabelHTMLRenderer(),
 		standaloneMaintenanceRenderer: NewStandaloneMaintenanceHTMLRenderer(),
 		customDevelopmentRenderer:     NewCustomDevelopmentRenderer(),
+		kioskQueueRenderer:            NewKioskQueueHTMLRenderer(),
 		attemptTimeout:                DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
@@ -257,7 +264,10 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 
 	var cfg *generationConfig
 	var gerr error
-	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel || req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance || req.CommercialScheme == domain.CommercialSchemeCustomDevelopment {
+	if req.CommercialScheme == domain.CommercialSchemeWhiteLabel ||
+		req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance ||
+		req.CommercialScheme == domain.CommercialSchemeCustomDevelopment ||
+		req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem {
 		cfg, gerr = s.loadStructuredConfiguration(ctx, companyID, req)
 	} else {
 		cfg, gerr = s.loadConfiguration(ctx, companyID, req)
@@ -291,10 +301,25 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		CreatedBy:             createdBy,
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrQuotationNumberAlreadyExists) || (err != nil && err.Error() == "quotation number already exists") {
+			return uuid.Nil, newGenerationError(ErrCodeGenerationFailed, "quotation number already exists")
+		}
 		return uuid.Nil, newGenerationError(ErrCodeGenerationFailed, "failed to create draft")
 	}
 
 	switch req.CommercialScheme {
+	case domain.CommercialSchemeKioskQueueSystem:
+		gerr := s.generateKioskQueueSystem(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			var ge *GenerationError
+			reason := "kiosk queue system generation failed"
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
 	case domain.CommercialSchemeSubscriptionSaaS:
 		gerr := s.generateSubscriptionSaaS(ctx, companyID, req, cfg, draft.RevisionID)
 		if gerr != nil {
@@ -1053,34 +1078,54 @@ func (s *QuotationGenerationService) renderAndPersistCustomDevelopment(
 }
 
 func (s *QuotationGenerationService) regenerateCustomDevelopment(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	trimmedCalc := strings.TrimSpace(string(draft.CalculationSnapshot))
 	var calculation domain.CustomDevelopmentCalculation
-	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
+	if len(draft.CalculationSnapshot) == 0 || trimmedCalc == "null" || trimmedCalc == "{}" || trimmedCalc == "[]" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.TotalInvestment <= 0 {
 		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
 	}
+
+	trimmedProfile := strings.TrimSpace(string(draft.ResolvedProfileSnapshot))
 	var profile domain.ResolvedCustomDevelopmentProfile
-	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil || len(profile.Sections) == 0 {
+	if len(draft.ResolvedProfileSnapshot) == 0 || trimmedProfile == "null" || trimmedProfile == "{}" || trimmedProfile == "[]" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil || len(profile.Sections) == 0 {
 		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
 	}
+
+	trimmedModules := strings.TrimSpace(string(draft.ModuleSnapshot))
 	var modules []domain.CustomDevelopmentModuleGroupInput
-	if len(draft.ModuleSnapshot) == 0 || string(draft.ModuleSnapshot) == "null" || json.Unmarshal(draft.ModuleSnapshot, &modules) != nil {
+	if len(draft.ModuleSnapshot) == 0 || trimmedModules == "null" || trimmedModules == "{}" || trimmedModules == "[]" || json.Unmarshal(draft.ModuleSnapshot, &modules) != nil || len(modules) == 0 {
 		return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
 	}
+
+	trimmedTimeline := strings.TrimSpace(string(draft.TimelineSnapshot))
 	var timeline []domain.CustomDevelopmentTimelineRowInput
-	if len(draft.TimelineSnapshot) == 0 || string(draft.TimelineSnapshot) == "null" || json.Unmarshal(draft.TimelineSnapshot, &timeline) != nil {
+	if len(draft.TimelineSnapshot) == 0 || trimmedTimeline == "null" || trimmedTimeline == "{}" || trimmedTimeline == "[]" || json.Unmarshal(draft.TimelineSnapshot, &timeline) != nil || len(timeline) == 0 {
 		return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
 	}
+
+	trimmedLegal := strings.TrimSpace(string(draft.LegalTemplateSnapshot))
 	var legalSnap legalSnapshotView
-	if len(draft.LegalTemplateSnapshot) == 0 || string(draft.LegalTemplateSnapshot) == "null" || string(draft.LegalTemplateSnapshot) == "{}" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
+	if len(draft.LegalTemplateSnapshot) == 0 || trimmedLegal == "null" || trimmedLegal == "{}" || trimmedLegal == "[]" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
 		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
 	}
+
 	if req.CustomDevelopment == nil {
 		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing custom development")
 	}
+
 	input := *req.CustomDevelopment
 	input.SystemName = strings.TrimSpace(input.SystemName)
 	input.DiscountLabel = strings.TrimSpace(input.DiscountLabel)
-	input.ModuleGroups = modules
-	input.TimelineRows = timeline
+	input.ModuleGroups = NormalizeCustomDevelopmentModules(modules)
+	input.TimelineRows = NormalizeCustomDevelopmentTimeline(timeline)
+
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored custom development input failed validation")
+	}
+
+	recomputedCalc, err := CalculateCustomDevelopment(input)
+	if err != nil || recomputedCalc.TotalInvestment != calculation.TotalInvestment || recomputedCalc.DevelopmentSubtotal != calculation.DevelopmentSubtotal {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is invalid")
+	}
 
 	metadata := QuotationMetadata{
 		QuotationNumber:   draft.QuotationNumber,
@@ -1099,6 +1144,160 @@ func (s *QuotationGenerationService) regenerateCustomDevelopment(ctx context.Con
 	return s.renderAndPersistCustomDevelopment(ctx, companyID, draft.RevisionID, true, document, modules, timeline)
 }
 
+func (s *QuotationGenerationService) generateKioskQueueSystem(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	if req.KioskQueueSystem == nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "kiosk queue system input is missing")
+	}
+	input := req.KioskQueueSystem.Normalize()
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "kiosk queue system input is invalid")
+	}
+	calculation, err := CalculateKioskQueueSystem(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "kiosk queue system calculation is invalid")
+	}
+	profile, err := ResolveKioskQueueProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "kiosk queue system profile is invalid")
+	}
+	metadata := QuotationMetadata{
+		QuotationNumber:   cfg.quotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        cfg.clientName,
+		ClientCompanyName: cfg.clientCompanyName,
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := KioskQueueDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   cfg.legal.ContentHTML,
+	}
+	return s.renderAndPersistKioskQueueSystem(ctx, companyID, revisionID, false, document)
+}
+
+func (s *QuotationGenerationService) renderAndPersistKioskQueueSystem(
+	ctx context.Context,
+	companyID uuid.UUID,
+	revisionID uuid.UUID,
+	regenerated bool,
+	document KioskQueueDocumentInput,
+) error {
+	rawHTML, err := s.kioskQueueRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "kiosk queue document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "kiosk queue document sanitization failed")
+	}
+	if err := ValidateKioskQueueIntegrity(sanitized, document.Input, document.Calculation, document.Profile, document.LegalHTML); err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "kiosk queue document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+
+	params := repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              revisionID,
+		ContentHTML:             sanitized,
+		ResolvedProfileSnapshot: mustJSON(document.Profile),
+		CalculationSnapshot:     mustJSON(document.Calculation),
+		ModuleSnapshot:          mustJSON(document.Input.GovernmentScopePhases),
+		TimelineSnapshot:        mustJSON(document.Input.PrivateTimelineRows),
+		AiProvider:              "",
+		AiModel:                 "",
+		ContentHash:             &hashString,
+		Regenerated:             regenerated,
+	}
+
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin kiosk queue generation completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist kiosk queue generation result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit kiosk queue generation result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateKioskQueueSystem(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	trimmedCalc := strings.TrimSpace(string(draft.CalculationSnapshot))
+	var calculation domain.KioskQueueCalculation
+	if len(draft.CalculationSnapshot) == 0 || trimmedCalc == "null" || trimmedCalc == "{}" || trimmedCalc == "[]" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.PaymentTargetTotal <= 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored calculation snapshot is unreadable")
+	}
+
+	trimmedProfile := strings.TrimSpace(string(draft.ResolvedProfileSnapshot))
+	var profile domain.ResolvedKioskQueueProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || trimmedProfile == "null" || trimmedProfile == "{}" || trimmedProfile == "[]" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil || len(profile.Sections) == 0 {
+		return newGenerationError(ErrCodeGenerationFailed, "stored resolved profile snapshot is unreadable")
+	}
+
+	trimmedModules := strings.TrimSpace(string(draft.ModuleSnapshot))
+	var modules []domain.KioskQueueScopePhaseInput
+	if len(draft.ModuleSnapshot) > 0 && trimmedModules != "null" && trimmedModules != "" {
+		if err := json.Unmarshal(draft.ModuleSnapshot, &modules); err != nil {
+			return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is unreadable")
+		}
+	}
+
+	trimmedTimeline := strings.TrimSpace(string(draft.TimelineSnapshot))
+	var timeline []domain.KioskQueueTimelineRowInput
+	if len(draft.TimelineSnapshot) > 0 && trimmedTimeline != "null" && trimmedTimeline != "" {
+		if err := json.Unmarshal(draft.TimelineSnapshot, &timeline); err != nil {
+			return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is unreadable")
+		}
+	}
+
+	trimmedLegal := strings.TrimSpace(string(draft.LegalTemplateSnapshot))
+	var legalSnap legalSnapshotView
+	if len(draft.LegalTemplateSnapshot) == 0 || trimmedLegal == "null" || trimmedLegal == "{}" || trimmedLegal == "[]" || json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap) != nil || legalSnap.ContentHTML == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored legal template snapshot is unreadable")
+	}
+
+	if req.KioskQueueSystem == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing kiosk queue system")
+	}
+
+	input := req.KioskQueueSystem.Normalize()
+	if input.Variant == domain.KioskQueueGovernmentMPP {
+		if len(modules) == 0 {
+			return newGenerationError(ErrCodeGenerationFailed, "stored module snapshot is empty")
+		}
+		input.GovernmentScopePhases = modules
+	} else if input.Variant == domain.KioskQueuePrivateFoodCourt {
+		if len(timeline) == 0 {
+			return newGenerationError(ErrCodeGenerationFailed, "stored timeline snapshot is empty")
+		}
+		input.PrivateTimelineRows = timeline
+	}
+
+	if err := input.Validate(); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored kiosk queue system input failed validation")
+	}
+
+	metadata := QuotationMetadata{
+		QuotationNumber:   draft.QuotationNumber,
+		Subject:           strings.TrimSpace(req.Subject),
+		ClientName:        strings.TrimSpace(req.ClientName),
+		ClientCompanyName: strings.TrimSpace(req.ClientCompanyName),
+		IssueDate:         indonesianDate(input.QuotationDate),
+	}
+	document := KioskQueueDocumentInput{
+		Metadata:    metadata,
+		Input:       input,
+		Calculation: calculation,
+		Profile:     profile,
+		LegalHTML:   legalSnap.ContentHTML,
+	}
+	return s.renderAndPersistKioskQueueSystem(ctx, companyID, draft.RevisionID, true, document)
+}
 
 type rateSnapshotLookup struct{ items []domain.RateCardItem }
 
@@ -1243,6 +1442,8 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 	}
 
 	switch draft.CommercialScheme {
+	case domain.CommercialSchemeKioskQueueSystem:
+		return s.regenerateKioskQueueSystem(ctx, companyID, req, draft)
 	case domain.CommercialSchemeSubscriptionSaaS:
 		return s.regenerateSubscriptionSaaS(ctx, companyID, req, draft)
 	case domain.CommercialSchemeWhiteLabel:
@@ -1997,11 +2198,17 @@ func (s *QuotationGenerationService) loadStructuredConfiguration(ctx context.Con
 	cfg.clientName = clientName
 	cfg.clientCompanyName = clientCompanyName
 
-	number, err := s.genRepo.NextQuotationNumber(ctx, companyID)
-	if err != nil {
-		return nil, newGenerationError(ErrCodeGenerationFailed, "failed to derive quotation number")
+	if req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem {
+		if req.KioskQueueSystem != nil {
+			cfg.quotationNumber = req.KioskQueueSystem.Normalize().DocumentNumber
+		}
+	} else {
+		number, err := s.genRepo.NextQuotationNumber(ctx, companyID)
+		if err != nil {
+			return nil, newGenerationError(ErrCodeGenerationFailed, "failed to derive quotation number")
+		}
+		cfg.quotationNumber = number
 	}
-	cfg.quotationNumber = number
 
 	cfg.legalSnapshot = mustJSON(legalSnapshotView{
 		ID:          legal.ID,
@@ -2013,6 +2220,14 @@ func (s *QuotationGenerationService) loadStructuredConfiguration(ctx context.Con
 	cfg.skillSnapshot = []byte("{}")
 
 	return cfg, nil
+}
+
+func (s *QuotationGenerationService) LoadStructuredQuotationNumberForTest(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest) (string, error) {
+	cfg, err := s.loadStructuredConfiguration(ctx, companyID, req)
+	if err != nil {
+		return "", err
+	}
+	return cfg.quotationNumber, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2443,7 +2658,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 
 	switch req.CommercialScheme {
 	case domain.CommercialSchemeDedicatedSquad:
-		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
+		if req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "dedicated squad payload is invalid")
 		}
 		if req.DedicatedSquad != nil {
@@ -2479,7 +2694,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeSubscriptionSaaS:
-		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
+		if req.SubscriptionSaaS == nil || req.DedicatedSquad != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "subscription saas payload is invalid")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2491,7 +2706,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeWhiteLabel:
-		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
+		if req.WhiteLabel == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "white_label requires exactly white_label input")
 		}
 		if err := req.WhiteLabel.Validate(); err != nil {
@@ -2500,7 +2715,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeStandaloneMaintenance:
-		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.CustomDevelopment != nil {
+		if req.StandaloneMaintenance == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "standalone_maintenance requires exactly standalone_maintenance input")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2512,7 +2727,7 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		return nil
 
 	case domain.CommercialSchemeCustomDevelopment:
-		if req.CustomDevelopment == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil {
+		if req.CustomDevelopment == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.KioskQueueSystem != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "custom_development requires exactly custom_development input")
 		}
 		if req.RateCardID != uuid.Nil {
@@ -2523,6 +2738,19 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		}
 		if err := req.CustomDevelopment.Validate(); err != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "custom development input is invalid")
+		}
+		return nil
+
+	case domain.CommercialSchemeKioskQueueSystem:
+		if req.KioskQueueSystem == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "kiosk_queue_system requires exactly kiosk_queue_system input")
+		}
+		if req.RateCardID != uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is not accepted for kiosk_queue_system")
+		}
+		input := req.KioskQueueSystem.Normalize()
+		if err := input.Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "kiosk queue system input is invalid")
 		}
 		return nil
 

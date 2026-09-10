@@ -272,3 +272,84 @@ func TestRegenerate_StandaloneMaintenance_HappyPath_ReplacesHTMLIncrementsVersio
 	assert.Equal(t, 1, after.revisions, "regenerate must not create a new revision row")
 	assert.Equal(t, before.number, after.number, "quotation_number must be preserved")
 }
+
+func TestRegenerateKioskQueueUsesCommittedSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+
+	before := captureSnapshot(t, pool, qid)
+	assert.Equal(t, "completed", before.status)
+	assert.Equal(t, 1, before.version)
+
+	svc, _ := newSvc(pool, &panicAIProvider{})
+	err := svc.Regenerate(context.Background(), companyID, qid)
+	require.NoError(t, err)
+
+	after := captureSnapshot(t, pool, qid)
+	assert.Equal(t, "completed", after.status)
+	assert.Equal(t, before.version+1, after.version, "regenerate must increment content_version")
+	assert.Equal(t, 1, after.revisions, "regenerate must not create a new revision row")
+	assert.Equal(t, before.number, after.number, "quotation_number must be preserved")
+	assert.Equal(t, 1, after.regenCnt, "regenerate count must be 1")
+}
+
+func TestRegenerateKioskQueuePreservesDocumentNumber(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+
+	before := captureSnapshot(t, pool, qid)
+
+	svc, _ := newSvc(pool, &panicAIProvider{})
+	err := svc.Regenerate(context.Background(), companyID, qid)
+	require.NoError(t, err)
+
+	after := captureSnapshot(t, pool, qid)
+	assert.Equal(t, before.number, after.number)
+}
+
+func TestRegenerateKioskQueueDoesNotCallProvider(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+
+	mock := &panicAIProvider{}
+	svc, source := newSvc(pool, mock)
+
+	err := svc.Regenerate(context.Background(), companyID, qid)
+	require.NoError(t, err)
+
+	assert.Empty(t, source.requests(), "AI provider must not be called during kiosk queue regenerate")
+}
+
+func TestRegenerateKioskQueueRejectsCorruptCalculationSnapshot(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	before := captureSnapshot(t, pool, qid)
+
+	_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET calculation_snapshot = '{"total_investment":-1}' WHERE quotation_id = $1`, qid)
+	require.NoError(t, err)
+
+	svc, _ := newSvc(pool, &panicAIProvider{})
+	err = svc.Regenerate(ctx, companyID, qid)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "generation_failed")
+
+	after := captureSnapshot(t, pool, qid)
+	assert.Equal(t, before.html, after.html)
+	assert.Equal(t, before.version, after.version)
+}
+
+func TestRegenerateKioskQueueFailurePreservesPreviousContentAndVersion(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	before := captureSnapshot(t, pool, qid)
+
+	svc, _ := newSvc(pool, &panicAIProvider{}, service.WithKioskQueueRenderer(&failingKioskQueueRenderer{}))
+	err := svc.Regenerate(context.Background(), companyID, qid)
+	require.Error(t, err)
+	assertGenerationCode(t, err, "unsafe_html")
+
+	after := captureSnapshot(t, pool, qid)
+	assert.Equal(t, before.html, after.html)
+	assert.Equal(t, before.version, after.version)
+}

@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/modules/quotation/repository"
 )
@@ -694,3 +696,135 @@ func TestCompleteDeterministicGeneration_CustomDevelopmentSnapshots(t *testing.T
 	}
 }
 
+func TestCreateDraftTransaction_KioskQueue_DuplicateDocumentNumberWithinCompany(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	docNum := "LANDA/MPP-Antrian/REPO/" + uuid.New().String()[:8]
+	params1 := validDraftParams(companyID)
+	params1.CommercialScheme = "kiosk_queue_system"
+	params1.QuotationNumber = docNum
+	params1.BudgetMaximum = nil
+	params1.RateCardSnapshot = []byte("{}")
+	params1.SkillSnapshot = []byte("{}")
+
+	res1, err := repo.CreateDraftTransaction(ctx, params1)
+	require.NoError(t, err)
+	require.NotNil(t, res1)
+
+	// Second draft with same company and quotation number, but DIFFERENT idempotency key
+	params2 := validDraftParams(companyID)
+	params2.CommercialScheme = "kiosk_queue_system"
+	params2.QuotationNumber = docNum
+	params2.BudgetMaximum = nil
+	params2.RateCardSnapshot = []byte("{}")
+	params2.SkillSnapshot = []byte("{}")
+
+	_, err2 := repo.CreateDraftTransaction(ctx, params2)
+	require.Error(t, err2)
+	assert.Equal(t, repository.ErrQuotationNumberAlreadyExists, err2)
+}
+
+func TestCreateDraftTransaction_KioskQueue_SameDocumentNumberAcrossCompanies(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyA := uuid.New()
+	companyB := uuid.New()
+	cleanupCompanies(t, pool, companyA, companyB)
+
+	docNum := "LANDA/MPP-Antrian/SHARED-REPO/" + uuid.New().String()[:8]
+
+	paramsA := validDraftParams(companyA)
+	paramsA.CommercialScheme = "kiosk_queue_system"
+	paramsA.QuotationNumber = docNum
+	paramsA.BudgetMaximum = nil
+	paramsA.RateCardSnapshot = []byte("{}")
+	paramsA.SkillSnapshot = []byte("{}")
+
+	resA, err := repo.CreateDraftTransaction(ctx, paramsA)
+	require.NoError(t, err)
+	require.NotNil(t, resA)
+
+	paramsB := validDraftParams(companyB)
+	paramsB.CommercialScheme = "kiosk_queue_system"
+	paramsB.QuotationNumber = docNum
+	paramsB.BudgetMaximum = nil
+	paramsB.RateCardSnapshot = []byte("{}")
+	paramsB.SkillSnapshot = []byte("{}")
+
+	resB, err := repo.CreateDraftTransaction(ctx, paramsB)
+	require.NoError(t, err)
+	require.NotNil(t, resB)
+	assert.NotEqual(t, resA.QuotationID, resB.QuotationID)
+}
+
+func TestCompleteDeterministicGeneration_KioskQueueSnapshots(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	companyID := uuid.New()
+	cleanupCompanies(t, pool, companyID)
+
+	params := validDraftParams(companyID)
+	params.CommercialScheme = "kiosk_queue_system"
+	params.BudgetMaximum = nil
+	params.RateCardSnapshot = []byte("{}")
+	params.SkillSnapshot = []byte("{}")
+	draft, err := repo.CreateDraftTransaction(ctx, params)
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+
+	err = repo.CompleteDeterministicGeneration(ctx, tx, repository.CompleteDeterministicGenerationParams{
+		CompanyID:               companyID,
+		RevisionID:              draft.RevisionID,
+		ContentHTML:             `<article class="quotation-document kiosk-queue-document"><section data-block-type="commercial">kiosk_queue</section></article>`,
+		ResolvedProfileSnapshot: []byte(`{"variant":"government_mpp","tax_treatment":"inclusive_ppn_11"}`),
+		CalculationSnapshot:     []byte(`{"service_subtotal":44310000,"payment_total":100000000}`),
+		ModuleSnapshot:          []byte(`[{"title":"Fase 1","deliverables":["Desain"]}]`),
+		TimelineSnapshot:        []byte(`[]`),
+		AiProvider:              "",
+		AiModel:                 "",
+		Regenerated:             false,
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	var profile, calculation, modules, timeline, html, status string
+	var aiProv, aiModel *string
+	var budgetMax *int64
+	err = pool.QueryRow(ctx, `
+		SELECT resolved_profile_snapshot::text, calculation_snapshot::text,
+		       module_snapshot::text, timeline_snapshot::text,
+		       content_html, generation_status, ai_provider, ai_model,
+		       budget_maximum
+		FROM quotation_revisions WHERE id = $1 AND company_id = $2
+	`, draft.RevisionID, companyID).Scan(&profile, &calculation, &modules, &timeline, &html, &status, &aiProv, &aiModel, &budgetMax)
+	require.NoError(t, err)
+
+	assert.Equal(t, repository.GenerationStatusCompleted, status)
+	assert.Equal(t, `<article class="quotation-document kiosk-queue-document"><section data-block-type="commercial">kiosk_queue</section></article>`, html)
+	assert.Nil(t, aiProv)
+	assert.Nil(t, aiModel)
+	assert.Nil(t, budgetMax)
+
+	var pMap, cMap map[string]any
+	require.NoError(t, json.Unmarshal([]byte(profile), &pMap))
+	assert.Equal(t, "government_mpp", pMap["variant"])
+
+	require.NoError(t, json.Unmarshal([]byte(calculation), &cMap))
+	assert.Equal(t, float64(100000000), cMap["payment_total"])
+
+	var mList []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(modules), &mList))
+	assert.Len(t, mList, 1)
+	assert.Equal(t, "Fase 1", mList[0]["title"])
+
+	assert.JSONEq(t, `[]`, timeline)
+}
