@@ -13,6 +13,7 @@ const (
 	CommercialSchemeWhiteLabel            = "white_label"
 	CommercialSchemeStandaloneMaintenance = "standalone_maintenance"
 	CommercialSchemeCustomDevelopment     = "custom_development"
+	CommercialSchemeKioskQueueSystem      = "kiosk_queue_system"
 )
 
 // Quotation merepresentasikan data master quotation.

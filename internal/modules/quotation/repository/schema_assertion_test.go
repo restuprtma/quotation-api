@@ -210,6 +210,7 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			assert.Contains(t, definition, "white_label")
 			assert.Contains(t, definition, "standalone_maintenance")
 			assert.Contains(t, definition, "custom_development")
+			assert.Contains(t, definition, "kiosk_queue_system")
 		})
 
 		t.Run("fk_quotations_active_published_revision", func(t *testing.T) {
@@ -250,6 +251,12 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			if !exists {
 				t.Error("expected index 'idx_quotations_public_token' on quotations table")
 			}
+		})
+
+		t.Run("uq_quotations_company_number_active", func(t *testing.T) {
+			exists, err := indexExists(ctx, pool, "quotations", "uq_quotations_company_number_active")
+			require.NoError(t, err)
+			assert.True(t, exists)
 		})
 	})
 
@@ -1267,6 +1274,27 @@ func TestCommercialSchemeConstraint(t *testing.T) {
 		`).Scan(&id)
 		if err != nil {
 			t.Fatalf("expected insert with custom_development to succeed, but failed: %v", err)
+		}
+		if id == "" {
+			t.Errorf("expected returning id, got empty")
+		}
+	})
+
+	t.Run("AcceptsKioskQueueSystem", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("failed to begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx)
+
+		var id string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-KIOSK', 'custom_software', 'kiosk_queue_system', 'Test Kiosk Queue System Scheme')
+			RETURNING id
+		`).Scan(&id)
+		if err != nil {
+			t.Fatalf("expected insert with kiosk_queue_system to succeed, but failed: %v", err)
 		}
 		if id == "" {
 			t.Errorf("expected returning id, got empty")
