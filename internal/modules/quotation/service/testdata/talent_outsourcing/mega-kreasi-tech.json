@@ -1,0 +1,12 @@
+{
+  "source":{"workbook":"spreadsheet.xlsx","sheet":"Mega Kreasi Tech","source_gid":"728165892","verified_on":"2026-09-09"},
+  "request":{"subject":"Penawaran Managed Squad Mega Kreasi Tech","solution_type":"talent_outsourcing","commercial_scheme":"talent_outsourcing","talent_outsourcing":{
+    "engagement_mode":"managed_squad","document_number":"CTH/Outsourcing-programmer-mkt/0726/001","service_name":"Managed Squad Mega Kreasi Tech","quotation_date":"2026-07-01","tax_treatment":"exclusive_ppn","payment_due_days":14,
+    "preparation_items":[{"name":"Recruitment","headcount":6,"quoted_line_total":9000000},{"name":"Onboarding","headcount":6,"quoted_line_total":65000000}],"preparation_discount_amount":37000000,"show_preparation_discount_row":true,
+    "squad_items":[{"role":"Intermediate Web Programmer","monthly_rate":9275000,"headcount":5,"period_months":3},{"role":"Intermediate QA","monthly_rate":8500000,"headcount":1,"period_months":1}],
+    "scope_blocks":[{"title":"Back End","description":"Pengembangan Back End.","timeline":"Juli - September 2026"},{"title":"Quality Assurance","description":"Pengujian Quality Assurance.","timeline":"Juli 2026"}],
+    "payment_schedule":[{"work_period":"Down Payment","terms":"Down Payment","invoice_date_label":"Saat perjanjian disetujui","due_date_label":"H+14","nominal":37000000},{"work_period":"Termin 1","terms":"Termin 1","invoice_date_label":"Agustus 2026","due_date_label":"H+14","nominal":49208333},{"work_period":"Termin 2","terms":"Termin 2","invoice_date_label":"September 2026","due_date_label":"H+14","nominal":49208333},{"work_period":"Termin 3","terms":"Termin 3","invoice_date_label":"Oktober 2026","due_date_label":"H+14","nominal":49208334}],
+    "limitation_codes":["out_of_pocket","overtime","third_party","scope_change"]
+  }},
+  "expected":{"total_before_tax":184625000,"dpp_amount":0,"tax_amount":0,"grand_total":184625000,"payment_rows":4}
+}
