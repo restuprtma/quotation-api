@@ -176,6 +176,19 @@ type KioskQueueCalculation struct {
 	PaymentTotal          int64                               `json:"payment_total"`
 }
 
+type ResolvedKioskQueueProfile struct {
+	Variant           KioskQueueVariant      `json:"variant"`
+	HardwareProvision HardwareProvision      `json:"hardware_provision"`
+	TaxTreatment      KioskQueueTaxTreatment `json:"tax_treatment"`
+	TaxClauseText     string                 `json:"tax_clause_text"`
+	ShowHardware      bool                   `json:"show_hardware"`
+	ShowMaintenance   bool                   `json:"show_maintenance"`
+	ShowRights        bool                   `json:"show_rights"`
+	PaymentDueDays    int32                  `json:"payment_due_days"`
+	LimitationTexts   []string               `json:"limitation_texts"`
+	Sections          []DocumentSection      `json:"sections"`
+}
+
 func (in *KioskQueueSystemInput) UnmarshalJSON(data []byte) error {
 	type inputAlias KioskQueueSystemInput
 	var wire struct {
