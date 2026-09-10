@@ -1564,3 +1564,261 @@ func TestSaveDraft_CustomDevelopment_CrossTenant_Rejection(t *testing.T) {
 	assert.Equal(t, before.version, after.version)
 	assert.Equal(t, before.html, after.html)
 }
+
+// ---------------------------------------------------------------------------
+// Kiosk Queue System Save Draft Integration Tests
+// ---------------------------------------------------------------------------
+
+func TestSaveDraftKioskQueueUnchangedKeepsAuditFlagsFalse(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	require.Equal(t, 1, snap.version)
+	require.NotEmpty(t, snap.html)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, qid, res.QuotationID)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+	assert.False(t, res.UpdatedAt.IsZero())
+
+	// Verify DB state
+	snapAfter := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 2, snapAfter.version)
+}
+
+func TestSaveDraftKioskQueueScopeOnlyDoesNotMarkCommercial(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	require.Equal(t, 1, snap.version)
+
+	modifiedHTML := strings.Replace(
+		snap.html,
+		"Dokumen Analisis Kebutuhan",
+		"Dokumen Analisis Kebutuhan Terintegrasi",
+		1,
+	)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+
+	snapAfter := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 2, snapAfter.version)
+}
+
+func TestSaveDraftKioskQueueCostChangeMarksCommercial(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modifiedHTML := strings.Replace(snap.html, `data-field="service_line_total">Rp 3.342.500`, `data-field="service_line_total">Rp 5.000.000`, 1)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.True(t, res.CommercialContentModified)
+	assert.False(t, res.LegalContentModified)
+}
+
+func TestSaveDraftKioskQueueHardwareChangeMarksCommercial(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modifiedHTML := strings.Replace(snap.html, `data-field="hardware_line_total">Rp 24.500.000`, `data-field="hardware_line_total">Rp 26.000.000`, 1)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.True(t, res.CommercialContentModified)
+	assert.False(t, res.LegalContentModified)
+}
+
+func TestSaveDraftKioskQueueTaxChangeMarksCommercial(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	taxText := "Total investasi telah termasuk PPN 11% sesuai regulasi perpajakan yang berlaku di Indonesia."
+	require.Contains(t, snap.html, taxText)
+	modifiedHTML := strings.Replace(snap.html, taxText, "Total investasi belum termasuk PPN.", 1)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.True(t, res.CommercialContentModified)
+	assert.False(t, res.LegalContentModified)
+}
+
+func TestSaveDraftKioskQueuePaymentChangeMarksCommercial(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modifiedHTML := strings.Replace(snap.html, "Rp 51.615.000", "Rp 55.000.000", 1)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.True(t, res.CommercialContentModified)
+	assert.False(t, res.LegalContentModified)
+}
+
+func TestSaveDraftKioskQueueRightsChangeMarksLegal(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool, func(input *domain.KioskQueueSystemInput) {
+		input.RightsStatements = []string{"Hak Cipta sistem antrean adalah milik vendor sepenuhnya."}
+	})
+	snap := captureSnapshot(t, pool, qid)
+	require.Contains(t, snap.html, "Hak Cipta sistem antrean adalah milik vendor sepenuhnya.")
+
+	modifiedHTML := strings.Replace(
+		snap.html,
+		"Hak Cipta sistem antrean adalah milik vendor sepenuhnya.",
+		"Hak Cipta sistem antrean dialihkan kepada pemda sepenuhnya.",
+		1,
+	)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.CommercialContentModified)
+	assert.True(t, res.LegalContentModified)
+}
+
+func TestSaveDraftKioskQueueLegalTemplateChangeMarksLegal(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	require.Contains(t, snap.html, "Syarat dan ketentuan penawaran resmi berlaku 30 hari.")
+	modifiedHTML := strings.Replace(
+		snap.html,
+		"Syarat dan ketentuan penawaran resmi berlaku 30 hari.",
+		"Syarat dan ketentuan penawaran resmi berlaku 60 hari.",
+		1,
+	)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.CommercialContentModified)
+	assert.True(t, res.LegalContentModified)
+}
+
+func TestSaveDraftKioskQueueRejectsStaleContentVersion(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	// Pass stale version (99 instead of 1)
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 99,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeRevisionConflict)
+
+	// Save successfully once to reach version 2
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+
+	// Attempt save again with old version 1
+	_, err = svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: 1,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeRevisionConflict)
+}
+
+func TestSaveDraftKioskQueueRejectsRemovedCivilClause(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID, _ := generateKioskQueueDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	civilClause := service.KioskQueueLimitationCatalog[domain.KioskLimitCivilElectrical]
+	require.Contains(t, snap.html, civilClause)
+
+	modifiedHTML := strings.Replace(snap.html, civilClause, "", 1)
+	require.NotEqual(t, snap.html, modifiedHTML)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modifiedHTML,
+		ContentVersion: 1,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+
+	after := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 1, after.version)
+}

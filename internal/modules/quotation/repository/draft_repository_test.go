@@ -292,3 +292,62 @@ func TestUpdateDraft_ConcurrentSaves_OnlyOneWins(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, finalVersion)
 }
+
+func TestUpdateDraft_OptimisticLockAndTenantScoped_Rejection(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewGenerationRepository(pool)
+	fx := seedRegenDraft(t, pool)
+
+	// 1. Cross-tenant update attempt: foreign company_id with real quotation_id and revision_id
+	foreignCompanyID := uuid.New()
+	_, err := repo.UpdateDraft(ctx, repo.Pool(), foreignCompanyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      fx.revisionID,
+		ExpectedVersion: 1,
+		ContentHTML:     "<p>cross tenant attempt</p>",
+	})
+	assert.ErrorIs(t, err, repository.ErrRevisionConflict, "Cross-tenant update must return ErrRevisionConflict without leaking aggregate existence")
+
+	// 2. Mismatched revision_id with correct company_id and quotation_id
+	randomRevisionID := uuid.New()
+	_, err = repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      randomRevisionID,
+		ExpectedVersion: 1,
+		ContentHTML:     "<p>mismatched revision attempt</p>",
+	})
+	assert.ErrorIs(t, err, repository.ErrRevisionConflict, "Mismatched revision_id must return ErrRevisionConflict")
+
+	// 3. Stale content_version with correct company_id, quotation_id, and revision_id
+	_, err = repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      fx.revisionID,
+		ExpectedVersion: 42,
+		ContentHTML:     "<p>stale content_version attempt</p>",
+	})
+	assert.ErrorIs(t, err, repository.ErrRevisionConflict, "Stale content_version must return ErrRevisionConflict")
+
+	// 4. Valid update succeeds and advances version to 2
+	res, err := repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      fx.revisionID,
+		ExpectedVersion: 1,
+		ContentHTML:     "<p>valid update</p>",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+
+	// 5. Subsequent update with old content_version (1) fails due to optimistic lock
+	_, err = repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      fx.revisionID,
+		ExpectedVersion: 1,
+		ContentHTML:     "<p>second update with old version</p>",
+	})
+	assert.ErrorIs(t, err, repository.ErrRevisionConflict, "Subsequent update with old version must fail optimistic lock")
+
+	// 6. Update with advanced content_version (2) succeeds and advances to 3
+	res2, err := repo.UpdateDraft(ctx, repo.Pool(), fx.companyID, fx.quotationID, repository.UpdateDraftParams{
+		RevisionID:      fx.revisionID,
+		ExpectedVersion: 2,
+		ContentHTML:     "<p>valid second update</p>",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, res2.ContentVersion)
+}

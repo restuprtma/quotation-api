@@ -1619,6 +1619,8 @@ func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, co
 		return s.inspectStandaloneMaintenanceDraft(ctx, companyID, draft, html)
 	case domain.CommercialSchemeCustomDevelopment:
 		return s.inspectCustomDevelopmentDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeKioskQueueSystem:
+		return s.inspectKioskQueueDraft(ctx, companyID, draft, html)
 	default:
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial scheme snapshot is unsupported")
 	}
@@ -1988,6 +1990,249 @@ func (s *QuotationGenerationService) inspectCustomDevelopmentDraft(
 
 	legalModified = stdLegalMod || rightsMod || limMod
 	return legalModified, commMod, calculation.TotalInvestment, nil
+}
+
+func (s *QuotationGenerationService) inspectKioskQueueDraft(
+	ctx context.Context,
+	companyID uuid.UUID,
+	draft *repository.DraftRevisionForSave,
+	htmlStr string,
+) (legalModified, commercialModified bool, total int64, err error) {
+	var calculation domain.KioskQueueCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calculation) != nil || calculation.PaymentTargetTotal <= 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "kiosk queue calculation snapshot is invalid")
+	}
+
+	var input domain.KioskQueueSystemInput
+	var hasInput bool
+
+	if len(draft.GenerationInput) > 0 && string(draft.GenerationInput) != "null" {
+		var genReq dto.GenerateQuotationRequest
+		if json.Unmarshal(draft.GenerationInput, &genReq) == nil && genReq.KioskQueueSystem != nil {
+			input = *genReq.KioskQueueSystem
+			hasInput = true
+		} else {
+			var directInput domain.KioskQueueSystemInput
+			if json.Unmarshal(draft.GenerationInput, &directInput) == nil && directInput.Variant != "" {
+				input = directInput
+				hasInput = true
+			}
+		}
+	}
+
+	if !hasInput && len(draft.ModuleSnapshot) > 0 && string(draft.ModuleSnapshot) != "null" {
+		var modInput domain.KioskQueueSystemInput
+		if json.Unmarshal(draft.ModuleSnapshot, &modInput) == nil && modInput.Variant != "" {
+			input = modInput
+			hasInput = true
+		}
+	}
+
+	if hasInput && input.Variant == domain.KioskQueueGovernmentMPP && len(input.GovernmentScopePhases) == 0 && len(draft.ModuleSnapshot) > 0 && string(draft.ModuleSnapshot) != "null" {
+		var phases []domain.KioskQueueScopePhaseInput
+		if json.Unmarshal(draft.ModuleSnapshot, &phases) == nil && len(phases) > 0 {
+			input.GovernmentScopePhases = phases
+		}
+	}
+
+	if !hasInput {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "kiosk queue generation input snapshot is invalid")
+	}
+
+	input = input.Normalize()
+	if err := input.Validate(); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "kiosk queue input snapshot is invalid")
+	}
+
+	var profile domain.ResolvedKioskQueueProfile
+	if len(draft.ResolvedProfileSnapshot) > 0 && string(draft.ResolvedProfileSnapshot) != "null" {
+		if err := json.Unmarshal(draft.ResolvedProfileSnapshot, &profile); err != nil || len(profile.Sections) == 0 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "kiosk queue resolved profile snapshot is invalid")
+		}
+	} else {
+		resolved, perr := ResolveKioskQueueProfile(input)
+		if perr != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to resolve kiosk queue profile")
+		}
+		profile = resolved
+	}
+
+	if verr := s.domValidator.ValidateDocumentSafety(htmlStr, draft.BudgetMaximum, calculation.PaymentTargetTotal); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	root, perr := html.Parse(strings.NewReader(htmlStr))
+	if perr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse document")
+	}
+	nodes := collectNodes(root)
+
+	// 1. Root article
+	var articleNodes []*html.Node
+	for _, n := range nodes {
+		if n.Type == html.ElementNode && n.Data == "article" {
+			articleNodes = append(articleNodes, n)
+		}
+	}
+	if len(articleNodes) != 1 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document must have exactly one root article")
+	}
+	cls := attributeValue(articleNodes[0], "class")
+	if !strings.Contains(cls, "quotation-document") || !strings.Contains(cls, "kiosk-queue-document") {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "root article missing required classes")
+	}
+
+	// 2. Mandatory block markers
+	mandatoryBlocks := []string{"metadata", "opening", "commercial", "payment", "limitations", "signature"}
+	if input.Variant == domain.KioskQueueGovernmentMPP {
+		mandatoryBlocks = append(mandatoryBlocks, "experts")
+	} else {
+		mandatoryBlocks = append(mandatoryBlocks, "scope")
+		if profile.ShowMaintenance {
+			mandatoryBlocks = append(mandatoryBlocks, "commercial-maintenance")
+		}
+	}
+	for _, bType := range mandatoryBlocks {
+		block, berr := findExactlyOne(nodes, "data-block-type", bType)
+		if berr != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("invalid %s block structure", bType))
+		}
+		if block == nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("%s block is missing", bType))
+		}
+	}
+
+	// 3. Cross-variant protection
+	switch input.Variant {
+	case domain.KioskQueueGovernmentMPP:
+		for _, n := range nodes {
+			bType := attributeValue(n, "data-block-type")
+			if bType == "commercial-maintenance" {
+				return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial-maintenance block is unexpected in government document")
+			}
+			role := attributeValue(n, "data-role")
+			if strings.HasPrefix(role, "maintenance_") || strings.HasPrefix(role, "private_payment_") || strings.HasPrefix(role, "timeline_") {
+				return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("unexpected private role %q in government document", role))
+			}
+		}
+	case domain.KioskQueuePrivateFoodCourt:
+		for _, n := range nodes {
+			bType := attributeValue(n, "data-block-type")
+			if bType == "experts" {
+				return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "experts block is unexpected in private document")
+			}
+			role := attributeValue(n, "data-role")
+			if role == "service_cost_table" || role == "hardware_cost_table" ||
+				strings.HasPrefix(role, "hardware_") || strings.HasPrefix(role, "government_payment_") || strings.HasPrefix(role, "expert_") {
+				return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, fmt.Sprintf("unexpected government role %q in private document", role))
+			}
+		}
+	}
+
+	// 4. Ordered sections & headings
+	var sectionNodes []*html.Node
+	for _, n := range nodes {
+		if n.Type == html.ElementNode && n.Data == "section" && attributeValue(n, "data-section-number") != "" {
+			sectionNodes = append(sectionNodes, n)
+		}
+	}
+	if len(sectionNodes) != len(profile.Sections) {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "section count mismatch")
+	}
+	for i, sec := range profile.Sections {
+		secNode := sectionNodes[i]
+		expectedNum := fmt.Sprintf("%d", sec.Number)
+		if attributeValue(secNode, "data-section-number") != expectedNum {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "section number mismatch")
+		}
+		h2List := directChildElements(secNode, "h2")
+		if len(h2List) != 1 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "section missing h2 heading")
+		}
+		expectedHeadingPrefix := fmt.Sprintf("%d. %s", sec.Number, sec.Title)
+		if !strings.HasPrefix(nodeText(h2List[0]), expectedHeadingPrefix) {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "section heading mismatch")
+		}
+	}
+
+	// 5. Mandatory limitations
+	limitationsBlock, _ := findExactlyOne(nodes, "data-block-type", "limitations")
+	limitationsText := nodeText(limitationsBlock)
+	if input.Variant == domain.KioskQueueGovernmentMPP {
+		civilExcl := KioskQueueLimitationCatalog[domain.KioskLimitCivilElectrical]
+		if !strings.Contains(limitationsText, civilExcl) {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "civil_electrical exclusion is missing")
+		}
+		if input.HardwareProvision == domain.HardwareClientSupplied {
+			clientHwExcl := KioskQueueLimitationCatalog[domain.KioskLimitClientHardware]
+			if !strings.Contains(limitationsText, clientHwExcl) {
+				return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "client_hardware exclusion is missing")
+			}
+		}
+	} else {
+		clientHwExcl := KioskQueueLimitationCatalog[domain.KioskLimitClientHardware]
+		if !strings.Contains(limitationsText, clientHwExcl) {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "client_hardware exclusion is missing")
+		}
+	}
+
+	// 6. Signature table
+	sigBlock, _ := findExactlyOne(nodes, "data-block-type", "signature")
+	sigTable, _ := findExactlyOne(collectNodes(sigBlock), "class", "signature-table")
+	if sigTable == nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "signature table is missing")
+	}
+	sigText := nodeText(sigTable)
+	if !strings.Contains(sigText, "Hormat Kami") || !strings.Contains(sigText, "Disetujui Oleh") {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "signature columns are invalid")
+	}
+
+	// 7. Forbidden terms
+	if err := scanForbiddenTerms(nodes); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "forbidden terms detected")
+	}
+
+	// 8. Commercial modification check
+	commercialModified, err = CheckKioskQueueCommercialModified(htmlStr, input, calculation, profile)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "kiosk queue commercial content is invalid")
+	}
+
+	// 9. Rights modification check
+	rightsModified, err := CheckKioskQueueRightsModified(htmlStr, input.RightsStatements)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "kiosk queue rights content is invalid")
+	}
+
+	// 10. Legal template modification check
+	var legalSnap struct {
+		Code        string `json:"code"`
+		ContentHTML string `json:"content_html"`
+	}
+	if len(draft.LegalTemplateSnapshot) > 0 && string(draft.LegalTemplateSnapshot) != "null" {
+		if err := json.Unmarshal(draft.LegalTemplateSnapshot, &legalSnap); err != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "legal template snapshot is invalid")
+		}
+	}
+	expectedLegalHTML := strings.TrimSpace(legalSnap.ContentHTML)
+	if expectedLegalHTML == "" && strings.TrimSpace(legalSnap.Code) != "" {
+		tmpl, terr := s.genRepo.GetActiveLegalTemplateForCompany(ctx, companyID, legalSnap.Code)
+		if terr == nil && strings.TrimSpace(tmpl.ContentHTML) != "" {
+			expectedLegalHTML = tmpl.ContentHTML
+		}
+	}
+
+	templateModified := false
+	if expectedLegalHTML != "" {
+		tMod, lerr := s.checkSectionLegalModified(htmlStr, expectedLegalHTML)
+		if lerr != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to parse legal block")
+		}
+		templateModified = tMod
+	}
+
+	legalModified = rightsModified || templateModified
+	return legalModified, commercialModified, calculation.PaymentTargetTotal, nil
 }
 
 func (s *QuotationGenerationService) checkSectionLegalModified(documentHTML string, expectedLegalHTML string) (bool, error) {
