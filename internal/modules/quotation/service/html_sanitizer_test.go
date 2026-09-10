@@ -510,3 +510,13 @@ func TestSanitize_StripsUnsafeInCustomDevelopmentDocument(t *testing.T) {
 	assert.Contains(t, out, `data-quotation-section="legal"`)
 }
 
+func TestHTMLSanitizerPreservesKioskQueueMarkers(t *testing.T) {
+	raw := `<article class="quotation-document kiosk-queue-document"><section data-block-type="commercial"><table data-role="hardware_cost_table"><tr data-role="hardware_0"><td data-field="hardware_total">Rp 1</td></tr></table></section><script>alert(1)</script></article>`
+	out, err := newSanitizerUnderTest().Sanitize(raw)
+	require.NoError(t, err)
+	assert.Contains(t, out, `class="quotation-document kiosk-queue-document"`)
+	assert.Contains(t, out, `data-role="hardware_cost_table"`)
+	assert.Contains(t, out, `data-field="hardware_total"`)
+	assert.NotContains(t, out, `<script`)
+	assert.NotContains(t, out, `alert(1)`)
+}
