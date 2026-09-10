@@ -355,7 +355,10 @@ func (in KioskQueueSystemInput) Validate() error {
 	if normalized.ServiceDiscountAmount > 0 && !normalized.ShowServiceDiscountRow {
 		return fmt.Errorf("show_service_discount_row: discount is positive but show_service_discount_row is false")
 	}
-	subtotal := kioskServiceSubtotal(normalized.ServiceGroups)
+	subtotal, err := kioskServiceSubtotal(normalized.ServiceGroups)
+	if err != nil {
+		return err
+	}
 	if normalized.ServiceDiscountAmount > subtotal {
 		return fmt.Errorf("service_discount_amount: cannot exceed service subtotal")
 	}
@@ -416,6 +419,7 @@ func (in KioskQueueSystemInput) validateGovernment() error {
 		if len(in.HardwareItems) < 1 || len(in.HardwareItems) > MaxKioskQueueHardwareItems {
 			return fmt.Errorf("hardware_items: must contain between 1 and %d items when hardware_provision is %q", MaxKioskQueueHardwareItems, HardwareVenturoSupplied)
 		}
+		var hardwareSubtotal int64
 		for hIdx, item := range in.HardwareItems {
 			if err := validateKioskPlainText(fmt.Sprintf("hardware_items[%d].name", hIdx), item.Name, 1, MaxKioskQueueShortTextRunes); err != nil {
 				return err
@@ -429,10 +433,14 @@ func (in KioskQueueSystemInput) validateGovernment() error {
 			if item.Quantity < 1 || item.Quantity > MaxKioskQueueHardwareQuantity {
 				return fmt.Errorf("hardware_items[%d].quantity: must be between 1 and %d", hIdx, MaxKioskQueueHardwareQuantity)
 			}
-			lineTotal := item.UnitPrice * int64(item.Quantity)
-			if lineTotal > KioskQueueMaxMoney {
+			if item.Quantity > 0 && item.UnitPrice > KioskQueueMaxMoney/int64(item.Quantity) {
 				return fmt.Errorf("hardware_items[%d]: line total exceeds maximum safe amount", hIdx)
 			}
+			lineTotal := item.UnitPrice * int64(item.Quantity)
+			if lineTotal > KioskQueueMaxMoney-hardwareSubtotal {
+				return fmt.Errorf("hardware_items: subtotal exceeds maximum safe amount")
+			}
+			hardwareSubtotal += lineTotal
 		}
 	} else {
 		if len(in.HardwareItems) > 0 {
@@ -453,6 +461,7 @@ func (in KioskQueueSystemInput) validateGovernment() error {
 	if len(in.GovernmentPaymentSchedule) < 1 || len(in.GovernmentPaymentSchedule) > MaxKioskQueueGovernmentPaymentRows {
 		return fmt.Errorf("government_payment_schedule: must contain between 1 and %d rows", MaxKioskQueueGovernmentPaymentRows)
 	}
+	var paymentTotal int64
 	for pIdx, p := range in.GovernmentPaymentSchedule {
 		if err := validateKioskPlainText(fmt.Sprintf("government_payment_schedule[%d].stage", pIdx), p.Stage, 1, MaxKioskQueueShortTextRunes); err != nil {
 			return err
@@ -466,6 +475,10 @@ func (in KioskQueueSystemInput) validateGovernment() error {
 		if p.Nominal > KioskQueueMaxMoney {
 			return fmt.Errorf("government_payment_schedule[%d].nominal: exceeds maximum safe amount", pIdx)
 		}
+		if p.Nominal > KioskQueueMaxMoney-paymentTotal {
+			return fmt.Errorf("government_payment_schedule: total exceeds maximum safe amount")
+		}
+		paymentTotal += p.Nominal
 	}
 
 	if in.PaymentDueDays < 1 || in.PaymentDueDays > MaxKioskQueuePaymentDueDays {
@@ -513,6 +526,7 @@ func (in KioskQueueSystemInput) validatePrivate() error {
 	if len(in.MaintenanceItems) > MaxKioskQueueMaintenanceItems {
 		return fmt.Errorf("maintenance_items: must contain at most %d items", MaxKioskQueueMaintenanceItems)
 	}
+	var maintenanceSubtotal int64
 	for mIdx, item := range in.MaintenanceItems {
 		if err := validateKioskPlainText(fmt.Sprintf("maintenance_items[%d].name", mIdx), item.Name, 1, MaxKioskQueueShortTextRunes); err != nil {
 			return err
@@ -529,14 +543,19 @@ func (in KioskQueueSystemInput) validatePrivate() error {
 		if item.PeriodQuarters < 1 || item.PeriodQuarters > MaxKioskQueuePeriodQuarters {
 			return fmt.Errorf("maintenance_items[%d].period_quarters: must be between 1 and %d", mIdx, MaxKioskQueuePeriodQuarters)
 		}
-		product := item.MonthlyRate * int64(item.Headcount) * int64(item.PeriodQuarters)
+		multiplier := int64(item.Headcount) * int64(item.PeriodQuarters)
+		if multiplier > 0 && item.MonthlyRate > (4*KioskQueueMaxMoney)/multiplier {
+			return fmt.Errorf("maintenance_items[%d]: line total exceeds maximum safe amount", mIdx)
+		}
+		product := item.MonthlyRate * multiplier
 		if product%4 != 0 {
 			return fmt.Errorf("maintenance_items[%d]: line total must be a whole integer rupiah", mIdx)
 		}
 		lineTotal := product / 4
-		if lineTotal > KioskQueueMaxMoney {
-			return fmt.Errorf("maintenance_items[%d]: line total exceeds maximum safe amount", mIdx)
+		if lineTotal > KioskQueueMaxMoney-maintenanceSubtotal {
+			return fmt.Errorf("maintenance_items: subtotal exceeds maximum safe amount")
 		}
+		maintenanceSubtotal += lineTotal
 	}
 
 	if len(in.PrivateTimelineRows) < 1 || len(in.PrivateTimelineRows) > MaxKioskQueueTimelineRows {
@@ -554,6 +573,7 @@ func (in KioskQueueSystemInput) validatePrivate() error {
 	if len(in.PrivatePaymentSchedule) < 1 || len(in.PrivatePaymentSchedule) > MaxKioskQueuePrivatePaymentRows {
 		return fmt.Errorf("private_payment_schedule: must contain between 1 and %d rows", MaxKioskQueuePrivatePaymentRows)
 	}
+	var paymentTotal int64
 	for pIdx, row := range in.PrivatePaymentSchedule {
 		if err := validateKioskPlainText(fmt.Sprintf("private_payment_schedule[%d].work_period", pIdx), row.WorkPeriod, 1, MaxKioskQueueShortTextRunes); err != nil {
 			return err
@@ -573,6 +593,10 @@ func (in KioskQueueSystemInput) validatePrivate() error {
 		if row.Nominal > KioskQueueMaxMoney {
 			return fmt.Errorf("private_payment_schedule[%d].nominal: exceeds maximum safe amount", pIdx)
 		}
+		if row.Nominal > KioskQueueMaxMoney-paymentTotal {
+			return fmt.Errorf("private_payment_schedule: total exceeds maximum safe amount")
+		}
+		paymentTotal += row.Nominal
 	}
 
 	if in.PaymentDueDays != 0 {
@@ -617,7 +641,11 @@ func validateKioskServiceGroups(groups []KioskQueueServiceGroupInput) error {
 			if item.PeriodQuarters < 1 || item.PeriodQuarters > MaxKioskQueuePeriodQuarters {
 				return fmt.Errorf("service_groups[%d].items[%d].period_quarters: must be between 1 and %d", gIdx, iIdx, MaxKioskQueuePeriodQuarters)
 			}
-			product := item.MonthlyRate * int64(item.Headcount) * int64(item.PeriodQuarters)
+			multiplier := int64(item.Headcount) * int64(item.PeriodQuarters)
+			if multiplier > 0 && item.MonthlyRate > (4*KioskQueueMaxMoney)/multiplier {
+				return fmt.Errorf("service_groups[%d].items[%d]: line total exceeds maximum safe amount", gIdx, iIdx)
+			}
+			product := item.MonthlyRate * multiplier
 			if product%4 != 0 {
 				return fmt.Errorf("service_groups[%d].items[%d]: line total must be a whole integer rupiah", gIdx, iIdx)
 			}
@@ -630,15 +658,22 @@ func validateKioskServiceGroups(groups []KioskQueueServiceGroupInput) error {
 	return nil
 }
 
-func kioskServiceSubtotal(groups []KioskQueueServiceGroupInput) int64 {
+func kioskServiceSubtotal(groups []KioskQueueServiceGroupInput) (int64, error) {
 	var total int64
-	for _, group := range groups {
-		for _, item := range group.Items {
-			lineTotal := (item.MonthlyRate * int64(item.Headcount) * int64(item.PeriodQuarters)) / 4
+	for gIdx, group := range groups {
+		for iIdx, item := range group.Items {
+			multiplier := int64(item.Headcount) * int64(item.PeriodQuarters)
+			if multiplier > 0 && item.MonthlyRate > (4*KioskQueueMaxMoney)/multiplier {
+				return 0, fmt.Errorf("service_groups[%d].items[%d]: line total exceeds maximum safe amount", gIdx, iIdx)
+			}
+			lineTotal := (item.MonthlyRate * multiplier) / 4
+			if lineTotal > KioskQueueMaxMoney-total {
+				return 0, fmt.Errorf("service_groups: subtotal exceeds maximum safe amount")
+			}
 			total += lineTotal
 		}
 	}
-	return total
+	return total, nil
 }
 
 func validateKioskLimitations(codes []KioskQueueLimitationCode, required []KioskQueueLimitationCode) error {

@@ -280,6 +280,32 @@ func TestKioskQueueSystemInputValidate(t *testing.T) {
 		{name: "unsafe integer monthly rate", base: validGovernment, mutate: func(in *domain.KioskQueueSystemInput) {
 			in.ServiceGroups[0].Items[0].MonthlyRate = domain.KioskQueueMaxMoney + 1
 		}, wantErr: "exceeds maximum safe amount"},
+		{name: "hardware line multiplication overflow near max money", base: validGovernment, mutate: func(in *domain.KioskQueueSystemInput) {
+			in.HardwareItems[0].UnitPrice = domain.KioskQueueMaxMoney
+			in.HardwareItems[0].Quantity = 10_000
+		}, wantErr: "exceeds maximum safe amount"},
+		{name: "service line multiplication overflow near max money", base: validGovernment, mutate: func(in *domain.KioskQueueSystemInput) {
+			in.ServiceGroups[0].Items[0].MonthlyRate = domain.KioskQueueMaxMoney
+			in.ServiceGroups[0].Items[0].Headcount = 100
+			in.ServiceGroups[0].Items[0].PeriodQuarters = 240
+		}, wantErr: "exceeds maximum safe amount"},
+		{name: "maintenance line multiplication overflow near max money", base: validPrivate, mutate: func(in *domain.KioskQueueSystemInput) {
+			in.MaintenanceItems[0].MonthlyRate = domain.KioskQueueMaxMoney
+			in.MaintenanceItems[0].Headcount = 100
+			in.MaintenanceItems[0].PeriodQuarters = 240
+		}, wantErr: "exceeds maximum safe amount"},
+		{name: "service subtotal accumulation exceeds max safe amount", base: validGovernment, mutate: func(in *domain.KioskQueueSystemInput) {
+			in.ServiceGroups[0].Items = []domain.KioskQueueServiceItemInput{
+				{Name: "Item 1", MonthlyRate: 5_000_000_000_000_000, Headcount: 1, PeriodQuarters: 4},
+				{Name: "Item 2", MonthlyRate: 5_000_000_000_000_000, Headcount: 1, PeriodQuarters: 4},
+			}
+		}, wantErr: "exceeds maximum safe amount"},
+		{name: "hardware subtotal accumulation exceeds max safe amount", base: validGovernment, mutate: func(in *domain.KioskQueueSystemInput) {
+			in.HardwareItems = []domain.KioskQueueHardwareItemInput{
+				{Name: "HW 1", UnitPrice: 5_000_000_000_000_000, Quantity: 1},
+				{Name: "HW 2", UnitPrice: 5_000_000_000_000_000, Quantity: 1},
+			}
+		}, wantErr: "exceeds maximum safe amount"},
 		{name: "unsafe integer discount amount", base: validGovernment, mutate: func(in *domain.KioskQueueSystemInput) {
 			in.ServiceDiscountAmount = domain.KioskQueueMaxMoney + 1
 			in.ShowServiceDiscountRow = true
