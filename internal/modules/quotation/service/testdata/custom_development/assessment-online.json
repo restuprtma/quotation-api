@@ -1,46 +1,52 @@
 {
   "schema_version": "custom-development-benchmark-v1",
   "metadata": {
-    "source_sheet": "Assessment Online - Tes Kognitif",
-    "source_gid": "assessment-online-custom-dev",
+    "source_sheet": "Assessment Online - Tes Kogniti",
+    "source_gid": "851499516",
     "verified_on": "2026-09-09",
     "source_status": "historical_sheet_reference_current_engine_expected",
     "source_variance": [
-      "Benchmark fixture matching exact figures for Assessment Online: hosting/domain kept in development group as source has no monthly section."
+      "Benchmark fixture matching exact roles, figures, rates, periods, modules, timeline, and terms from sheet 'Assessment Online - Tes Kogniti' (GID: 851499516).",
+      "Hosting & domain line item is part of the development groups in the source workbook rather than recurring monthly; source has no monthly recurring section."
     ],
     "visual_parity": "not_claimed",
-    "quotation_number": "BENCH-ASSESSMENT-ONLINE",
-    "subject": "Penawaran Sistem Assessment Online",
-    "client_name": "Bpk. Rahmat",
-    "client_company": "PT Kognitif Indonesia",
-    "issue_date": "20 Juli 2026"
+    "quotation_number": "CTH/Assessment-Online/0826/001",
+    "subject": "Aplikasi Assessment Online (Tes Kognitif/IQ & Tes Umum)",
+    "client_name": "Pimpinan",
+    "client_company": "Saikhu",
+    "issue_date": "3 Agustus 2026"
   },
-  "legal_html": "<ol><li>Ketentuan umum dan kerahasiaan data.</li></ol>",
+  "legal_html": "<ol><li>Syarat dan ketentuan penawaran resmi berlaku 30 hari kalender sejak tanggal penerbitan.</li></ol>",
   "input": {
-    "system_name": "Assessment Online - Tes Kognitif",
-    "quotation_date": "2026-07-20",
+    "system_name": "Aplikasi Assessment Online (Tes Kognitif/IQ & Tes Umum)",
+    "quotation_date": "2026-08-03",
     "development_table_mode": "monthly_period",
     "tax_treatment": "exclusive_ppn",
     "development_groups": [
       {
-        "title": "Pengembangan Sistem Assessment",
+        "title": "Phase : Development",
         "items": [
           {
-            "name": "Developer",
-            "display_rate": 6685000,
+            "name": "Intermediate Web Programmer",
+            "display_rate": 13370000,
             "headcount": 1,
-            "period_label": "1",
+            "period_label": "0,5",
             "quoted_line_total": 6685000
           },
           {
             "name": "Quality Assurance",
-            "display_rate": 2005500,
+            "display_rate": 13370000,
             "headcount": 1,
-            "period_label": "1",
+            "period_label": "0,15",
             "quoted_line_total": 2005500
-          },
+          }
+        ]
+      },
+      {
+        "title": "Hosting & domain",
+        "items": [
           {
-            "name": "Hosting & Domain",
+            "name": "Shared hosting small & domain",
             "display_rate": 200000,
             "headcount": 1,
             "period_label": "12",
@@ -54,33 +60,82 @@
     "show_discount_row": true,
     "module_groups": [
       {
-        "name": "Modul Tes Kognitif",
+        "name": "1. Bank Soal & Konfigurasi Tes",
         "features": [
-          "Modul Soal dan Jawaban",
-          "Scoring Otomatis"
+          "Master soal tes kognitif/IQ per subtes: penalaran verbal, numerik, logika, dan spasial",
+          "Master soal tes umum pilihan ganda sesuai kebutuhan posisi",
+          "Dukungan soal bergambar untuk subtes logika dan spasial",
+          "Pengaturan durasi per subtes dan jumlah soal per paket tes",
+          "Pengacakan urutan soal tiap peserta",
+          "Unggah soal massal lewat berkas Excel"
+        ]
+      },
+      {
+        "name": "2. Pelaksanaan Tes Peserta",
+        "features": [
+          "Undangan tes lewat tautan beserta kode akses peserta",
+          "Pengisian biodata peserta sebelum tes dimulai",
+          "Alur bertahap: tes kognitif/IQ dikerjakan lebih dulu, dilanjutkan tes umum",
+          "Halaman pengerjaan dengan penghitung waktu mundur per subtes dan lanjut otomatis saat waktu subtes habis",
+          "Penyimpanan jawaban otomatis dan lanjut mengerjakan bila koneksi terputus",
+          "Pengiriman jawaban otomatis saat waktu habis",
+          "Tampilan nyaman diakses dari ponsel maupun komputer"
+        ]
+      },
+      {
+        "name": "3. Penilaian & Hasil",
+        "features": [
+          "Perhitungan skor mentah otomatis tiap subtes kognitif",
+          "Konversi skor mentah menjadi skor IQ mengikuti tabel norma yang disediakan Klien",
+          "Klasifikasi hasil beserta grafik kekuatan per subtes",
+          "Skor tes umum beserta rincian benar dan salah per kategori",
+          "Unduh laporan hasil per peserta dalam bentuk PDF",
+          "Rekap hasil seluruh peserta beserta unduhan Excel"
+        ]
+      },
+      {
+        "name": "4. Admin & Manajemen Akses",
+        "features": [
+          "Login admin dan pengguna HR",
+          "Kelola data peserta dan kelompok tes",
+          "Pemantauan status pengerjaan peserta secara langsung",
+          "Hak akses per peran pengguna",
+          "Catatan aktivitas pengguna"
         ]
       }
     ],
     "timeline_rows": [
       {
-        "description": "Pengembangan & UAT",
-        "timeline": "2 Bulan"
+        "description": "Requirement, Desain & Development",
+        "timeline": "1 - 15 September 2026"
+      },
+      {
+        "description": "System Integration Testing (SIT)",
+        "timeline": "16 - 19 September 2026"
+      },
+      {
+        "description": "User Acceptance Testing (UAT) & Go-Live",
+        "timeline": "20 - 22 September 2026"
+      },
+      {
+        "description": "Cloud hosting dan domain",
+        "timeline": "23 September 2026 s/d 22 September 2027"
       }
     ],
     "payment_schedule": [
       {
-        "work_period": "Termin 1 (DP 50%)",
+        "work_period": "Hiring & Kick off",
         "terms": "Down Payment",
-        "invoice_date_label": "Saat kontrak disepakati",
-        "due_date_label": "H+7",
+        "invoice_date_label": "17 Aug 2026",
+        "due_date_label": "31 Aug 2026",
         "component": "development",
         "nominal": 5000000
       },
       {
-        "work_period": "Termin 2 (Pelunasan 50%)",
-        "terms": "Pelunasan",
-        "invoice_date_label": "Setelah UAT selesai",
-        "due_date_label": "H+7",
+        "work_period": "1 - 22 September 2026",
+        "terms": "Termin 1",
+        "invoice_date_label": "22 Sep 2026",
+        "due_date_label": "6 Oct 2026",
         "component": "development",
         "nominal": 5000000
       }
@@ -90,32 +145,41 @@
       "overtime",
       "third_party",
       "scope_change"
+    ],
+    "additional_limitations": [
+      "Lisensi, materi soal baku, dan tabel norma alat tes psikologi (tes kognitif/IQ) disediakan oleh Klien; lingkup Venturo hanya membangun perangkat lunaknya",
+      "Pendampingan psikolog untuk interpretasi hasil tes"
     ]
   },
   "expected": {
     "calculation": {
       "development_groups": [
         {
-          "title": "Pengembangan Sistem Assessment",
+          "title": "Phase : Development",
           "items": [
             {
-              "name": "Developer",
-              "display_rate": 6685000,
+              "name": "Intermediate Web Programmer",
+              "display_rate": 13370000,
               "headcount": 1,
-              "period_label": "1",
+              "period_label": "0,5",
               "quoted_line_total": 6685000,
               "line_total": 6685000
             },
             {
               "name": "Quality Assurance",
-              "display_rate": 2005500,
+              "display_rate": 13370000,
               "headcount": 1,
-              "period_label": "1",
+              "period_label": "0,15",
               "quoted_line_total": 2005500,
               "line_total": 2005500
-            },
+            }
+          ]
+        },
+        {
+          "title": "Hosting & domain",
+          "items": [
             {
-              "name": "Hosting & Domain",
+              "name": "Shared hosting small & domain",
               "display_rate": 200000,
               "headcount": 1,
               "period_label": "12",
@@ -143,10 +207,26 @@
       "show_rights": false,
       "tax_clause_text": "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
       "sections": [
-        { "code": "development", "number": 1, "title": "Biaya Development" },
-        { "code": "scope", "number": 2, "title": "Lingkup Pekerjaan & Timeline" },
-        { "code": "payment", "number": 3, "title": "Pembayaran" },
-        { "code": "limitations", "number": 4, "title": "Batasan dan Pengecualian" }
+        {
+          "code": "development",
+          "number": 1,
+          "title": "Biaya Development"
+        },
+        {
+          "code": "scope",
+          "number": 2,
+          "title": "Lingkup Pekerjaan & Timeline"
+        },
+        {
+          "code": "payment",
+          "number": 3,
+          "title": "Pembayaran"
+        },
+        {
+          "code": "limitations",
+          "number": 4,
+          "title": "Batasan dan Pengecualian"
+        }
       ]
     },
     "section_titles": [
@@ -158,15 +238,32 @@
     "dom": {
       "root_class": "quotation-document",
       "heading": "PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT",
-      "section_numbers": [1, 2, 3, 4],
+      "section_numbers": [
+        1,
+        2,
+        3,
+        4
+      ],
       "section_titles": [
         "1. Biaya Development",
         "2. Lingkup Pekerjaan & Timeline",
         "3. Pembayaran",
         "4. Batasan dan Pengecualian"
       ],
-      "commercial_headers": ["Deskripsi", "Rate (Monthly)", "SDM", "Period (Month)", "Total"],
-      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "commercial_headers": [
+        "Deskripsi",
+        "Rate (Monthly)",
+        "SDM",
+        "Period (Month)",
+        "Total"
+      ],
+      "payment_headers": [
+        "Work Period",
+        "Terms",
+        "Invoice Date",
+        "Due Date",
+        "Nominal"
+      ],
       "development_subtotal": "Rp 11.090.500",
       "discount_amount": "Rp 1.090.500",
       "total_investment": "Rp 10.000.000",

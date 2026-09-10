@@ -111,6 +111,7 @@ func CalculateWhiteLabel(input domain.WhiteLabelInput) (domain.WhiteLabelCalcula
 		return domain.WhiteLabelCalculation{}, fmt.Errorf("payment_schedule.maintenance_hosting: total %d must equal maintenance and hosting subtotal %d", calc.MaintenanceHostingPaymentTotal, calc.MaintenanceHostingSubtotal)
 	}
 
+	calc.PaymentSchedule = append([]domain.WhiteLabelPaymentRowInput(nil), input.PaymentSchedule...)
 	return calc, nil
 }
 

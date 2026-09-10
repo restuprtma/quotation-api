@@ -1,33 +1,33 @@
 {
   "schema_version": "custom-development-benchmark-v1",
   "metadata": {
-    "source_sheet": "rhGlow - Source Anomaly",
-    "source_gid": "historical-rhglow-anomaly",
+    "source_sheet": "rhGlow - Prtanyaan Customer",
+    "source_gid": "207737084",
     "verified_on": "2026-09-09",
     "source_status": "historical_source_anomaly_must_reject",
     "source_variance": [
-      "Historical source sheet contains negative discount -4,392,272 and payment discrepancy; must be rejected by validator."
+      "Historical source sheet contains negative discount -4,392,272 and payment schedule mismatch (2 x Rp 303.864 = Rp 607.728 vs total investment); must be rejected deterministically by engine without producing HTML."
     ],
     "visual_parity": "not_claimed",
-    "quotation_number": "BENCH-RHGLOW-ANOMALY",
-    "subject": "Penawaran Sistem rhGlow Anomaly",
-    "client_name": "Client rhGlow",
-    "client_company": "PT rhGlow Cantik",
-    "issue_date": "9 September 2026"
+    "quotation_number": "VEN/RHGLOW-FCR/0826/001",
+    "subject": "RHGLOW Website Form Customer Review",
+    "client_name": "Kak Lily",
+    "client_company": "Klinik Rh Glow",
+    "issue_date": "8 Agustus 2026"
   },
-  "expected_validation_error": "discount_amount: cannot be negative",
+  "expected_validation_error": "discount_amount: must be greater than or equal to zero",
   "input": {
-    "system_name": "Sistem rhGlow Anomaly",
-    "quotation_date": "2026-09-09",
-    "development_table_mode": "monthly_period",
+    "system_name": "RHGLOW Website Form Customer Review",
+    "quotation_date": "2026-08-08",
+    "development_table_mode": "daily_period",
     "tax_treatment": "exclusive_ppn",
     "development_groups": [
       {
-        "title": "Development rhGlow",
+        "title": "Development Squad",
         "items": [
           {
-            "name": "Programmer",
-            "display_rate": 607727,
+            "name": "Intermediate Web Programmer",
+            "display_rate": 13370000,
             "headcount": 1,
             "period_label": "1",
             "quoted_line_total": 607727
@@ -40,38 +40,44 @@
     "show_discount_row": true,
     "module_groups": [
       {
-        "name": "Core Features",
+        "name": "Development",
         "features": [
-          "Feature A"
+          "Integrasi Spreadsheet - Simpan hasil review ke sheet otomatis",
+          "Halaman Review - Pasien isi sendiri nama, poli/layanan, dan tanggal kunjungan",
+          "Akses - Pasien mengisi lewat link, hasil hanya bisa dilihat di spreadsheet"
         ]
       }
     ],
     "timeline_rows": [
       {
         "description": "Development",
-        "timeline": "1 Bulan"
+        "timeline": "10 Agustus 2026"
       }
     ],
     "payment_schedule": [
       {
-        "work_period": "Termin 1",
-        "terms": "DP",
-        "invoice_date_label": "Kontrak",
-        "due_date_label": "H+7",
+        "work_period": "Hiring & Kick off",
+        "terms": "Down Payment",
+        "invoice_date_label": "8 Agustus 2026",
+        "due_date_label": "9 Agustus 2026",
         "component": "development",
         "nominal": 303864
       },
       {
-        "work_period": "Termin 2",
-        "terms": "Pelunasan",
-        "invoice_date_label": "Serah terima",
-        "due_date_label": "H+7",
+        "work_period": "10 Agustus 2026",
+        "terms": "Termin 1",
+        "invoice_date_label": "11 Agustus 2026",
+        "due_date_label": "12 Agustus 2026",
         "component": "development",
         "nominal": 303864
       }
     ],
+    "rights_statements": [],
     "limitation_codes": [
-      "out_of_pocket"
+      "out_of_pocket",
+      "overtime",
+      "third_party",
+      "scope_change"
     ]
   }
 }

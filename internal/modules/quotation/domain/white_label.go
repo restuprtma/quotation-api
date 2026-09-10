@@ -416,6 +416,7 @@ type WhiteLabelCalculation struct {
 	LicensePaymentTotal            int64                                  `json:"license_payment_total"`
 	MaintenanceHostingPaymentTotal int64                                  `json:"maintenance_hosting_payment_total"`
 	PaymentTotal                   int64                                  `json:"payment_total"`
+	PaymentSchedule                []WhiteLabelPaymentRowInput            `json:"payment_schedule,omitempty"`
 }
 
 type ResolvedWhiteLabelProfile struct {

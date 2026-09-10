@@ -16,7 +16,7 @@ var DedicatedExclusionClauses = [...]string{
 
 const DefaultLegalTemplateHTML = `<h2>Ketentuan</h2>` +
 	`<h3>Pajak dan Invoice</h3>` +
-	`<p>Nilai investasi yang tercantum dalam penawaran ini belum termasuk Pajak Pertambahan Nilai (PPN). Pengenaan dan besaran pajak mengikuti ketentuan perpajakan yang berlaku dan akan ditagihkan sesuai dokumen perpajakan yang sah.</p>` +
+	`<p data-field="tax_clause">Nilai investasi yang tercantum dalam penawaran ini belum termasuk Pajak Pertambahan Nilai (PPN). Pengenaan dan besaran pajak mengikuti ketentuan perpajakan yang berlaku dan akan ditagihkan sesuai dokumen perpajakan yang sah.</p>` +
 	`<p>Setiap invoice memiliki jatuh tempo pembayaran empat belas hari kalender (H+14) sejak tanggal invoice diterbitkan, kecuali terdapat kesepakatan tertulis lain yang disetujui oleh Para Pihak.</p>` +
 	`<h3>Keterlambatan Pembayaran</h3>` +
 	`<p>Apabila pembayaran melewati tanggal jatuh tempo, Penyedia berhak menghentikan sementara aktivitas pengembangan dan layanan terkait sampai kewajiban pembayaran dipenuhi. Penghentian sementara tersebut dapat menyebabkan perubahan atau penundaan timeline pekerjaan.</p>` +

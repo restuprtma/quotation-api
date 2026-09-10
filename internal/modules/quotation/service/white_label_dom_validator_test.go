@@ -238,12 +238,84 @@ func TestCheckWhiteLabelCommercialModified_PaymentModifications(t *testing.T) {
 		assert.True(t, commMod)
 	})
 
-	t.Run("PaymentNominalModified", func(t *testing.T) {
+	t.Run("PaymentNominalModified_DifferentTotal", func(t *testing.T) {
 		modified := strings.Replace(canonicalHTML, `<td data-field="payment_nominal">Rp 8.435.000</td>`, `<td data-field="payment_nominal">Rp 10.000.000</td>`, 1)
 		require.NotEqual(t, canonicalHTML, modified)
 		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
 		require.NoError(t, err)
 		assert.True(t, commMod)
+	})
+
+	t.Run("PaymentNominalModified_SameTotalTampering", func(t *testing.T) {
+		// Compensate so total payment remains exactly Rp 60.305.000
+		// Reduce License by 5.000.000 (35jt -> 30jt) and increase Maintenance 1 by 5.000.000 (8.435jt -> 13.435jt)
+		modified := strings.Replace(canonicalHTML, `<td data-field="payment_nominal">Rp 35.000.000</td>`, `<td data-field="payment_nominal">Rp 30.000.000</td>`, 1)
+		modified = strings.Replace(modified, `<td data-field="payment_nominal">Rp 8.435.000</td>`, `<td data-field="payment_nominal">Rp 13.435.000</td>`, 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Same-total tampering across components must be detected as modified")
+	})
+
+	t.Run("PaymentNominalModified_SameTotalWithinComponent", func(t *testing.T) {
+		// Compensate within maintenance component: Maint 1 -1jt (7.435jt), Maint 2 +1jt (9.435jt)
+		// Component total is unchanged, grand total unchanged, but individual rows tampered
+		firstMaint := `<tr data-role="payment_1" data-component="maintenance_hosting" data-payment-index="1"><td>Maintenance 1</td><td>Bulanan</td><td>Bulan 1</td><td>H+14</td><td data-field="payment_nominal">Rp 8.435.000</td></tr>`
+		firstMaintMod := `<tr data-role="payment_1" data-component="maintenance_hosting" data-payment-index="1"><td>Maintenance 1</td><td>Bulanan</td><td>Bulan 1</td><td>H+14</td><td data-field="payment_nominal">Rp 7.435.000</td></tr>`
+		secondMaint := `<tr data-role="payment_2" data-component="maintenance_hosting" data-payment-index="2"><td>Maintenance 2</td><td>Bulanan</td><td>Bulan 2</td><td>H+14</td><td data-field="payment_nominal">Rp 8.435.000</td></tr>`
+		secondMaintMod := `<tr data-role="payment_2" data-component="maintenance_hosting" data-payment-index="2"><td>Maintenance 2</td><td>Bulanan</td><td>Bulan 2</td><td>H+14</td><td data-field="payment_nominal">Rp 9.435.000</td></tr>`
+		modified := strings.Replace(canonicalHTML, firstMaint, firstMaintMod, 1)
+		modified = strings.Replace(modified, secondMaint, secondMaintMod, 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Same-total tampering within component must be detected as modified")
+	})
+
+	t.Run("PaymentRows_SwappedOrder", func(t *testing.T) {
+		// Swap row 0 (license) and row 1 (maintenance)
+		row0 := `<tr data-role="payment_0" data-component="license" data-payment-index="0"><td>Pembelian White Label</td><td>Pelunasan</td><td>Saat kontrak ditandatangani</td><td>H+14</td><td data-field="payment_nominal">Rp 35.000.000</td></tr>`
+		row1 := `<tr data-role="payment_1" data-component="maintenance_hosting" data-payment-index="1"><td>Maintenance 1</td><td>Bulanan</td><td>Bulan 1</td><td>H+14</td><td data-field="payment_nominal">Rp 8.435.000</td></tr>`
+		modified := strings.Replace(canonicalHTML, row0+row1, row1+row0, 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Swapped payment row order must be detected as modified")
+	})
+
+	t.Run("PaymentRows_RowRemoved", func(t *testing.T) {
+		row3 := `<tr data-role="payment_3" data-component="maintenance_hosting" data-payment-index="3"><td>Maintenance 3</td><td>Bulanan</td><td>Bulan 3</td><td>H+14</td><td data-field="payment_nominal">Rp 8.435.000</td></tr>`
+		modified := strings.Replace(canonicalHTML, row3, "", 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Removed payment row must be detected as modified")
+	})
+
+	t.Run("PaymentRows_RowAdded", func(t *testing.T) {
+		extraRow := `<tr data-role="payment_4" data-component="maintenance_hosting" data-payment-index="4"><td>Maintenance 4</td><td>Bulanan</td><td>Bulan 4</td><td>H+14</td><td data-field="payment_nominal">Rp 8.435.000</td></tr>`
+		row3 := `<tr data-role="payment_3" data-component="maintenance_hosting" data-payment-index="3"><td>Maintenance 3</td><td>Bulanan</td><td>Bulan 3</td><td>H+14</td><td data-field="payment_nominal">Rp 8.435.000</td></tr>`
+		modified := strings.Replace(canonicalHTML, row3, row3+extraRow, 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Added payment row must be detected as modified")
+	})
+
+	t.Run("PaymentRows_IllegalComponent", func(t *testing.T) {
+		modified := strings.Replace(canonicalHTML, `data-component="license"`, `data-component="arbitrary_component"`, 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Illegal payment component must be detected as modified")
+	})
+
+	t.Run("PaymentRows_LabelOrDueDateModified", func(t *testing.T) {
+		modified := strings.Replace(canonicalHTML, `<td>Saat kontrak ditandatangani</td>`, `<td>30 Hari Setelah Kontrak</td>`, 1)
+		require.NotEqual(t, canonicalHTML, modified)
+		commMod, err := service.CheckWhiteLabelCommercialModified(modified, calc)
+		require.NoError(t, err)
+		assert.True(t, commMod, "Modified payment terms or due date label must be detected as modified")
 	})
 
 	t.Run("MissingPaymentBlock", func(t *testing.T) {

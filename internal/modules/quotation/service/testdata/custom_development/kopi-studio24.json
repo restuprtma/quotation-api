@@ -1,43 +1,44 @@
 {
   "schema_version": "custom-development-benchmark-v1",
   "metadata": {
-    "source_sheet": "Kopi Studio 24 - Custom Development",
-    "source_gid": "kopi-studio24-custom-dev",
+    "source_sheet": "Kopi Studio24",
+    "source_gid": "324593173",
     "verified_on": "2026-09-09",
     "source_status": "historical_sheet_reference_current_engine_expected",
     "source_variance": [
-      "Benchmark fixture matching exact figures for Kopi Studio 24 Custom Software Development."
+      "Benchmark fixture matching exact roles, figures, rates, periods, and terms from sheet 'Kopi Studio24' (GID: 324593173).",
+      "Workbook sheet has no explicit Hak Para Pihak / Source Code clause; rights_statements is kept empty ([]), producing 5 canonical sections matching sheet structure."
     ],
     "visual_parity": "not_claimed",
-    "quotation_number": "BENCH-KOPI-STUDIO24",
-    "subject": "Penawaran Sistem Kopi Studio24",
-    "client_name": "Bpk. Hendra",
-    "client_company": "PT Kopi Studio Nusantara",
+    "quotation_number": "CTH/KOPISTUDIO/0726/001",
+    "subject": "Pengembangan Sistem Audit Foto Kebersihan & Operasional (Beli Putus)",
+    "client_name": "Farid Indra Prasetya",
+    "client_company": "kopi studio24",
     "issue_date": "15 Juli 2026"
   },
-  "legal_html": "<ol><li>Ketentuan umum dan kerahasiaan data.</li></ol>",
+  "legal_html": "<ol><li>Syarat dan ketentuan penawaran resmi berlaku 30 hari kalender sejak tanggal penerbitan.</li></ol>",
   "input": {
-    "system_name": "Sistem Kopi Studio24",
+    "system_name": "Pengembangan Sistem Audit Foto Kebersihan & Operasional (Beli Putus)",
     "quotation_date": "2026-07-15",
     "development_table_mode": "monthly_period",
     "tax_treatment": "exclusive_ppn",
     "development_groups": [
       {
-        "title": "Fase 1: Backend & Core Engine",
+        "title": "Phase : Development",
         "items": [
           {
-            "name": "Senior Backend Developer",
-            "display_rate": 15000000,
+            "name": "Business Analyst",
+            "display_rate": 16050000,
             "headcount": 1,
-            "period_label": "1",
-            "quoted_line_total": 15000000
+            "period_label": "0,5",
+            "quoted_line_total": 8025000
           },
           {
-            "name": "Frontend Developer",
-            "display_rate": 5062500,
+            "name": "Senior Web Programmer",
+            "display_rate": 16050000,
             "headcount": 1,
-            "period_label": "1",
-            "quoted_line_total": 5062500
+            "period_label": "0,75",
+            "quoted_line_total": 12037500
           }
         ]
       }
@@ -47,102 +48,191 @@
     "show_discount_row": true,
     "monthly_items": [
       {
-        "name": "Venturo Cloud Mini",
-        "specification": "Cloud Server Standard",
+        "name": "Venturo Cloud - Mini",
+        "specification": "2 VCPU / 4 / 32 gb",
         "unit_rate": 800000,
         "quantity": 1
       },
       {
-        "name": "Support",
-        "specification": "4 Jam Maintenance Support",
+        "name": "Support & Maintenance (4 Jam / bulan)",
+        "specification": "4 Jam / bulan",
         "unit_rate": 93000,
         "quantity": 4
       },
       {
-        "name": "WhatsApp Connect",
-        "specification": "Integrasi Notifikasi WA",
+        "name": "Venturo WhatsApp Connect (unofficial)",
+        "specification": "Integrasi WhatsApp Unofficial",
         "unit_rate": 100000,
         "quantity": 1
       }
     ],
     "monthly_notes": [
-      "Biaya API Gemini ditandai out-of-pocket."
+      "Gemini Flash 2.5 Estimasi 100.000 / speciment =   (Out of Pocket)"
     ],
     "module_groups": [
       {
-        "name": "Modul Transaksi & Kasir",
+        "name": "1. Setup & Konfigurasi Awal",
         "features": [
-          "Pencatatan order dan invoice",
-          "Integrasi payment gateway"
+          "Setup environment server dan database.",
+          "Konfigurasi integrasi WhatsApp API Scanner.",
+          "Konfigurasi AI Vision (Google Gemini Flash) untuk analisis foto kebersihan.",
+          "Pengaturan hak akses peran (Admin dan Petugas Outlet)."
+        ]
+      },
+      {
+        "name": "2. Pengaturan Outlet, Jadwal & Kriteria Penilaian",
+        "features": [
+          "Pengaturan jadwal pelaksanaan checklist.",
+          "Pengaturan bobot dan standar kelulusan (Passing Score) setiap checklist.",
+          "Pengelolaan data cabang/outlet."
+        ]
+      },
+      {
+        "name": "3. Manajemen SOP & Checklist Audit",
+        "features": [
+          "Konfigurasi item audit sesuai SOP (Cleanliness, Absensi).",
+          "Pengelolaan checklist audit Store & DC.",
+          "Konfigurasi checklist berdasarkan area (Customer, Showcase & Freezer, Bar/Kasir, Toilet, Kitchen, DC Opening, DC Closing, DC C2, DC Mingguan).",
+          "Pengaturan bobot & kriteria penilaian (Scoring Rule) untuk tiap item.",
+          "Pengelolaan standar penilaian yang dapat disesuaikan oleh Admin."
+        ]
+      },
+      {
+        "name": "4. Pengambilan & Upload Bukti Audit",
+        "features": [
+          "Pengambilan bukti audit langsung dari kamera HP berupa foto.",
+          "Upload foto melalui WhatsApp.",
+          "Penandaan timestamp otomatis pada setiap bukti audit.",
+          "Riwayat bukti audit per outlet/cabang dan per periode."
+        ]
+      },
+      {
+        "name": "5. AI Analysis & Scoring",
+        "features": [
+          "Analisis otomatis foto kebersihan berdasarkan checklist SOP.",
+          "Validasi foto terhadap checklist yang dipilih.",
+          "Validasi timestamp sesuai jadwal audit yang telah ditentukan.",
+          "Konversi hasil analisis AI menjadi skor per item dan skor total audit secara otomatis.",
+          "Validasi hasil AI untuk mendukung proses audit yang konsisten."
+        ]
+      },
+      {
+        "name": "6. Modul Absensi",
+        "features": [
+          "Absensi masuk dan pulang melalui foto (selfie) dengan timestamp otomatis.",
+          "Rekap kehadiran per petugas, per outlet, dan per periode."
+        ]
+      },
+      {
+        "name": "7. WA Message Scanner",
+        "features": [
+          "Integrasi dengan WhatsApp untuk menerima pesan dan bukti audit.",
+          "Deteksi otomatis pesan WhatsApp yang masuk dari petugas.",
+          "Deteksi dan pengambilan foto yang dikirim melalui WhatsApp.",
+          "Validasi foto berdasarkan outlet, jadwal, dan jenis audit.",
+          "Ekstraksi metadata pesan (waktu pengiriman, pengirim, dan lampiran).",
+          "Sinkronisasi otomatis bukti audit dari WhatsApp ke sistem.",
+          "Pencocokan bukti audit dengan checklist yang sesuai.",
+          "Penandaan status audit berhasil atau gagal diproses."
+        ]
+      },
+      {
+        "name": "8. Dashboard & Reporting",
+        "features": [
+          "Dashboard ringkasan skor audit per outlet/cabang dan per periode.",
+          "Rekap absensi terintegrasi dalam laporan.",
+          "Export laporan dalam format PDF."
+        ]
+      },
+      {
+        "name": "9. Manajemen Pengguna & Hak Akses",
+        "features": [
+          "Multi-role: Admin dan Petugas Outlet.",
+          "Pengelolaan data pengguna.",
+          "Penugasan pengguna ke cabang/outlet.",
+          "Pengelolaan hak akses berdasarkan peran pengguna.",
+          "Aktivasi atau nonaktif akun pengguna."
+        ]
+      },
+      {
+        "name": "10. Notifikasi & Reminder",
+        "features": [
+          "Pengingat jadwal audit kepada petugas melalui WhatsApp.",
+          "Notifikasi WhatsApp apabila audit belum dilakukan sesuai jadwal.",
+          "Notifikasi WhatsApp apabila terdapat item audit dengan nilai di bawah standar.",
+          "Notifikasi WhatsApp untuk hasil absensi petugas (terlambat, belum absen, atau tidak hadir)."
         ]
       }
     ],
     "timeline_rows": [
       {
-        "description": "Fase 1: Pengembangan dan Testing",
-        "timeline": "4 Minggu"
+        "description": "Pengembangan Modul Sistem & Integrasi",
+        "timeline": "1 - 21 Agustus 2026"
+      },
+      {
+        "description": "System Integration Testing (SIT)",
+        "timeline": "22 - 23 Agustus 2026"
+      },
+      {
+        "description": "User Acceptance Testing (UAT)",
+        "timeline": "24 - 26 Agustus 2026"
       }
     ],
     "payment_schedule": [
       {
-        "work_period": "Down Payment 50%",
+        "work_period": "Hiring & Kick off",
+        "terms": "Down Payment",
+        "invoice_date_label": "17 Juli 2026",
+        "due_date_label": "31 Juli 2026",
+        "component": "development",
+        "nominal": 9000000
+      },
+      {
+        "work_period": "1 Agustus - 31 Agustus 2026",
         "terms": "Termin 1",
-        "invoice_date_label": "Saat tanda tangan kontrak",
-        "due_date_label": "H+7",
+        "invoice_date_label": "31 Agustus 2026",
+        "due_date_label": "14 September 2026",
         "component": "development",
         "nominal": 9000000
       },
       {
-        "work_period": "Pelunasan 50%",
-        "terms": "Termin 2",
-        "invoice_date_label": "Setelah serah terima",
-        "due_date_label": "H+7",
-        "component": "development",
-        "nominal": 9000000
-      },
-      {
-        "work_period": "Bulan 1",
-        "terms": "Layanan Bulanan Cloud & Support",
-        "invoice_date_label": "Awal bulan berjalan",
-        "due_date_label": "H+7",
+        "work_period": "Cloud & Whastapp",
+        "terms": "Termin 2, dst",
+        "invoice_date_label": "Setiap Tanggal 14",
+        "due_date_label": "H+14",
         "component": "monthly_recurring",
         "nominal": 1272000
       }
     ],
-    "rights_statements": [
-      "Hak cipta dan source code sistem diserahkan penuh kepada klien setelah pelunasan."
-    ],
+    "rights_statements": [],
     "limitation_codes": [
       "out_of_pocket",
       "overtime",
       "third_party",
       "scope_change"
-    ],
-    "additional_limitations": [
-      "Koneksi internet dan perangkat kasir disediakan oleh klien."
     ]
   },
   "expected": {
     "calculation": {
       "development_groups": [
         {
-          "title": "Fase 1: Backend & Core Engine",
+          "title": "Phase : Development",
           "items": [
             {
-              "name": "Senior Backend Developer",
-              "display_rate": 15000000,
+              "name": "Business Analyst",
+              "display_rate": 16050000,
               "headcount": 1,
-              "period_label": "1",
-              "quoted_line_total": 15000000,
-              "line_total": 15000000
+              "period_label": "0,5",
+              "quoted_line_total": 8025000,
+              "line_total": 8025000
             },
             {
-              "name": "Frontend Developer",
-              "display_rate": 5062500,
+              "name": "Senior Web Programmer",
+              "display_rate": 16050000,
               "headcount": 1,
-              "period_label": "1",
-              "quoted_line_total": 5062500,
-              "line_total": 5062500
+              "period_label": "0,75",
+              "quoted_line_total": 12037500,
+              "line_total": 12037500
             }
           ]
         }
@@ -152,22 +242,22 @@
       "total_investment": 18000000,
       "monthly_lines": [
         {
-          "name": "Venturo Cloud Mini",
-          "specification": "Cloud Server Standard",
+          "name": "Venturo Cloud - Mini",
+          "specification": "2 VCPU / 4 / 32 gb",
           "unit_rate": 800000,
           "quantity": 1,
           "line_total": 800000
         },
         {
-          "name": "Support",
-          "specification": "4 Jam Maintenance Support",
+          "name": "Support & Maintenance (4 Jam / bulan)",
+          "specification": "4 Jam / bulan",
           "unit_rate": 93000,
           "quantity": 4,
           "line_total": 372000
         },
         {
-          "name": "WhatsApp Connect",
-          "specification": "Integrasi Notifikasi WA",
+          "name": "Venturo WhatsApp Connect (unofficial)",
+          "specification": "Integrasi WhatsApp Unofficial",
           "unit_rate": 100000,
           "quantity": 1,
           "line_total": 100000
@@ -184,15 +274,34 @@
       "show_rate_column": true,
       "show_monthly": true,
       "show_discount_row": true,
-      "show_rights": true,
+      "show_rights": false,
       "tax_clause_text": "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.",
       "sections": [
-        { "code": "development", "number": 1, "title": "Biaya Development" },
-        { "code": "monthly", "number": 2, "title": "Biaya Monthly" },
-        { "code": "scope", "number": 3, "title": "Lingkup Pekerjaan & Timeline" },
-        { "code": "payment", "number": 4, "title": "Pembayaran" },
-        { "code": "rights", "number": 5, "title": "Hak Para Pihak" },
-        { "code": "limitations", "number": 6, "title": "Batasan dan Pengecualian" }
+        {
+          "code": "development",
+          "number": 1,
+          "title": "Biaya Development"
+        },
+        {
+          "code": "monthly",
+          "number": 2,
+          "title": "Biaya Monthly"
+        },
+        {
+          "code": "scope",
+          "number": 3,
+          "title": "Lingkup Pekerjaan & Timeline"
+        },
+        {
+          "code": "payment",
+          "number": 4,
+          "title": "Pembayaran"
+        },
+        {
+          "code": "limitations",
+          "number": 5,
+          "title": "Batasan dan Pengecualian"
+        }
       ]
     },
     "section_titles": [
@@ -200,24 +309,46 @@
       "Biaya Monthly",
       "Lingkup Pekerjaan & Timeline",
       "Pembayaran",
-      "Hak Para Pihak",
       "Batasan dan Pengecualian"
     ],
     "dom": {
       "root_class": "quotation-document",
       "heading": "PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT",
-      "section_numbers": [1, 2, 3, 4, 5, 6],
+      "section_numbers": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
       "section_titles": [
         "1. Biaya Development",
         "2. Biaya Monthly",
         "3. Lingkup Pekerjaan & Timeline",
         "4. Pembayaran",
-        "5. Hak Para Pihak",
-        "6. Batasan dan Pengecualian"
+        "5. Batasan dan Pengecualian"
       ],
-      "commercial_headers": ["Deskripsi", "Rate (Monthly)", "SDM", "Period (Month)", "Total"],
-      "monthly_headers": ["Deskripsi", "Spesifikasi", "Biaya / Unit", "Jumlah", "Total"],
-      "payment_headers": ["Work Period", "Terms", "Invoice Date", "Due Date", "Nominal"],
+      "commercial_headers": [
+        "Deskripsi",
+        "Rate (Monthly)",
+        "SDM",
+        "Period (Month)",
+        "Total"
+      ],
+      "monthly_headers": [
+        "Deskripsi",
+        "Spesifikasi",
+        "Biaya / Unit",
+        "Jumlah",
+        "Total"
+      ],
+      "payment_headers": [
+        "Work Period",
+        "Terms",
+        "Invoice Date",
+        "Due Date",
+        "Nominal"
+      ],
       "development_subtotal": "Rp 20.062.500",
       "discount_amount": "Rp 2.062.500",
       "total_investment": "Rp 18.000.000",
@@ -228,7 +359,7 @@
         "Rp 1.272.000"
       ],
       "has_monthly": true,
-      "has_rights": true,
+      "has_rights": false,
       "signature_column_count": 2
     }
   }

@@ -416,3 +416,235 @@ func TestWhiteLabelHTMLRenderer_ValidationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "legal_html")
 	})
 }
+
+func TestWhiteLabelHTMLRenderer_OpeningParagraph(t *testing.T) {
+	input := ponpesBenchmarkWhiteLabelInput()
+	input.LicenseItems[0].Name = `Injected <script>alert('hack')</script>`
+	calc, err := CalculateWhiteLabel(input)
+	require.NoError(t, err)
+
+	profile, err := ResolveWhiteLabelProfile(input)
+	require.NoError(t, err)
+
+	renderer := NewWhiteLabelHTMLRenderer()
+	docHTML, err := renderer.Render(WhiteLabelDocumentInput{
+		Metadata: QuotationMetadata{
+			QuotationNumber: "Q-TEST-001",
+			Subject:         "Test Subject",
+			ClientName:      "Test Client",
+		},
+		Input:       input,
+		Calculation: calc,
+		Profile:     profile,
+		LegalHTML:   "<p>Legal</p>",
+	})
+	require.NoError(t, err)
+
+	// 1. Appears exactly once
+	count := strings.Count(docHTML, WhiteLabelOpeningParagraph)
+	assert.Equal(t, 1, count, "Opening paragraph must appear exactly once")
+
+	// 2. Is placed inside section with data-block-type="opening"
+	assert.Contains(t, docHTML, `<section data-block-type="opening"><p>`+WhiteLabelOpeningParagraph+`</p></section>`)
+
+	// 3. User input injection cannot overwrite or inject into opening paragraph
+	assert.NotContains(t, docHTML, `<script>alert('hack')</script>`)
+	assert.Contains(t, docHTML, `&lt;script&gt;alert(&#39;hack&#39;)&lt;/script&gt;`)
+}
+
+func TestWhiteLabelHTMLRenderer_TaxTreatments_WithDefaultLegalTemplate(t *testing.T) {
+	renderer := NewWhiteLabelHTMLRenderer()
+	sanitizer := NewHTMLSanitizer()
+
+	t.Run("ExclusivePPN_ExactlyOneTaxClause", func(t *testing.T) {
+		input := ponpesBenchmarkWhiteLabelInput()
+		input.TaxTreatment = domain.WhiteLabelTaxExclusive
+
+		calc, err := CalculateWhiteLabel(input)
+		require.NoError(t, err)
+		profile, err := ResolveWhiteLabelProfile(input)
+		require.NoError(t, err)
+
+		docHTML, err := renderer.Render(WhiteLabelDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-EXC-01", Subject: "Subj", ClientName: "Client"},
+			Input:       input,
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   DefaultLegalTemplateHTML,
+		})
+		require.NoError(t, err)
+
+		sanitized, err := sanitizer.Sanitize(docHTML)
+		require.NoError(t, err)
+
+		// Exactly one tax clause in DOM
+		root, err := html.Parse(strings.NewReader(sanitized))
+		require.NoError(t, err)
+		nodes := collectNodes(root)
+		taxFields := findAllOrdered(nodes, "data-field", "tax_clause")
+		require.Len(t, taxFields, 1)
+		assert.Equal(t, "Seluruh rincian biaya belum termasuk PPN sesuai regulasi perpajakan yang berlaku di Indonesia.", nodeText(taxFields[0]))
+
+		// No contradictory inclusive text
+		fullText := nodeText(root)
+		assert.NotContains(t, fullText, "telah termasuk PPN")
+		assert.NotContains(t, fullText, "sudah termasuk PPN")
+
+		// ValidateWhiteLabelIntegrity passes
+		err = ValidateWhiteLabelIntegrity(sanitized, WhiteLabelIntegrityExpectations{
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   DefaultLegalTemplateHTML,
+			Rights:      input.RightsStatements,
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("InclusivePPN_ExactlyOneTaxClause_NoBelumTermasukPPN", func(t *testing.T) {
+		input := ponpesBenchmarkWhiteLabelInput()
+		input.TaxTreatment = domain.WhiteLabelTaxInclusive
+
+		calc, err := CalculateWhiteLabel(input)
+		require.NoError(t, err)
+		profile, err := ResolveWhiteLabelProfile(input)
+		require.NoError(t, err)
+
+		docHTML, err := renderer.Render(WhiteLabelDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-INC-01", Subject: "Subj", ClientName: "Client"},
+			Input:       input,
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   DefaultLegalTemplateHTML,
+		})
+		require.NoError(t, err)
+
+		sanitized, err := sanitizer.Sanitize(docHTML)
+		require.NoError(t, err)
+
+		// Exactly one tax clause in DOM
+		root, err := html.Parse(strings.NewReader(sanitized))
+		require.NoError(t, err)
+		nodes := collectNodes(root)
+		taxFields := findAllOrdered(nodes, "data-field", "tax_clause")
+		require.Len(t, taxFields, 1)
+		assert.Equal(t, "Total investasi telah termasuk PPN sesuai nilai yang disepakati dalam quotation ini.", nodeText(taxFields[0]))
+
+		// Absolutely NO "belum termasuk PPN" or "belum termasuk Pajak Pertambahan Nilai" in document
+		fullText := nodeText(root)
+		assert.NotContains(t, fullText, "belum termasuk PPN")
+		assert.NotContains(t, fullText, "belum termasuk Pajak Pertambahan Nilai")
+
+		// ValidateWhiteLabelIntegrity passes
+		err = ValidateWhiteLabelIntegrity(sanitized, WhiteLabelIntegrityExpectations{
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   DefaultLegalTemplateHTML,
+			Rights:      input.RightsStatements,
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("NotStated_ZeroTaxClause_NoDefaultTaxDisclaimers", func(t *testing.T) {
+		input := ponpesBenchmarkWhiteLabelInput()
+		input.TaxTreatment = domain.WhiteLabelTaxNotStated
+
+		calc, err := CalculateWhiteLabel(input)
+		require.NoError(t, err)
+		profile, err := ResolveWhiteLabelProfile(input)
+		require.NoError(t, err)
+
+		docHTML, err := renderer.Render(WhiteLabelDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-NOT-01", Subject: "Subj", ClientName: "Client"},
+			Input:       input,
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   DefaultLegalTemplateHTML,
+		})
+		require.NoError(t, err)
+
+		sanitized, err := sanitizer.Sanitize(docHTML)
+		require.NoError(t, err)
+
+		// Zero tax clause in DOM
+		root, err := html.Parse(strings.NewReader(sanitized))
+		require.NoError(t, err)
+		nodes := collectNodes(root)
+		taxFields := findAllOrdered(nodes, "data-field", "tax_clause")
+		require.Empty(t, taxFields)
+
+		// No tax text in document
+		fullText := nodeText(root)
+		assert.NotContains(t, fullText, "belum termasuk PPN")
+		assert.NotContains(t, fullText, "belum termasuk Pajak Pertambahan Nilai")
+		assert.NotContains(t, fullText, "telah termasuk PPN")
+
+		// ValidateWhiteLabelIntegrity passes
+		err = ValidateWhiteLabelIntegrity(sanitized, WhiteLabelIntegrityExpectations{
+			Calculation: calc,
+			Profile:     profile,
+			LegalHTML:   DefaultLegalTemplateHTML,
+			Rights:      input.RightsStatements,
+		})
+		require.NoError(t, err)
+	})
+}
+
+func TestWhiteLabelHTMLRenderer_CustomLegalHTML_PreservesNonTaxClauses(t *testing.T) {
+	input := ponpesBenchmarkWhiteLabelInput()
+	calc, err := CalculateWhiteLabel(input)
+	require.NoError(t, err)
+	profile, err := ResolveWhiteLabelProfile(input)
+	require.NoError(t, err)
+
+	customLegal := `<h3>Ketentuan SLA & Keamanan</h3>` +
+		`<p>Penyedia menjamin ketersediaan layanan sistem dengan SLA sebesar 99.9% setiap bulan kalender.</p>` +
+		`<p>Klien berhak melakukan audit keamanan sistem secara berkala dengan pemberitahuan tertulis H-7.</p>`
+
+	renderer := NewWhiteLabelHTMLRenderer()
+	docHTML, err := renderer.Render(WhiteLabelDocumentInput{
+		Metadata:    QuotationMetadata{QuotationNumber: "Q-CUST-01", Subject: "Subj", ClientName: "Client"},
+		Input:       input,
+		Calculation: calc,
+		Profile:     profile,
+		LegalHTML:   customLegal,
+	})
+	require.NoError(t, err)
+
+	sanitizer := NewHTMLSanitizer()
+	sanitized, err := sanitizer.Sanitize(docHTML)
+	require.NoError(t, err)
+
+	assert.Contains(t, sanitized, "Penyedia menjamin ketersediaan layanan sistem dengan SLA sebesar 99.9%")
+	assert.Contains(t, sanitized, "Klien berhak melakukan audit keamanan sistem secara berkala")
+
+	err = ValidateWhiteLabelIntegrity(sanitized, WhiteLabelIntegrityExpectations{
+		Calculation: calc,
+		Profile:     profile,
+		LegalHTML:   customLegal,
+		Rights:      input.RightsStatements,
+	})
+	require.NoError(t, err)
+}
+
+func TestWhiteLabelHTMLRenderer_PaymentDOMMarkers(t *testing.T) {
+	input := ponpesBenchmarkWhiteLabelInput()
+	calc, err := CalculateWhiteLabel(input)
+	require.NoError(t, err)
+	profile, err := ResolveWhiteLabelProfile(input)
+	require.NoError(t, err)
+
+	renderer := NewWhiteLabelHTMLRenderer()
+	docHTML, err := renderer.Render(WhiteLabelDocumentInput{
+		Metadata:    QuotationMetadata{QuotationNumber: "Q-DOM-01", Subject: "Subj", ClientName: "Client"},
+		Input:       input,
+		Calculation: calc,
+		Profile:     profile,
+		LegalHTML:   "<p>Legal</p>",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, docHTML, `<tr data-role="payment_0" data-component="license" data-payment-index="0">`)
+	assert.Contains(t, docHTML, `<tr data-role="payment_1" data-component="maintenance_hosting" data-payment-index="1">`)
+	assert.Contains(t, docHTML, `<tr data-role="payment_2" data-component="maintenance_hosting" data-payment-index="2">`)
+	assert.Contains(t, docHTML, `<tr data-role="payment_3" data-component="maintenance_hosting" data-payment-index="3">`)
+}

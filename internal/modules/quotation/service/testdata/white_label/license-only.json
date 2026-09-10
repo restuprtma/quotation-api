@@ -59,7 +59,17 @@
       "total_investment": 50000000,
       "license_payment_total": 50000000,
       "maintenance_hosting_payment_total": 0,
-      "payment_total": 50000000
+      "payment_total": 50000000,
+      "payment_schedule": [
+        {
+          "work_period": "Pembelian Lisensi",
+          "terms": "Pelunasan di awal",
+          "invoice_date_label": "Saat kontrak ditandatangani",
+          "due_date_label": "H+14",
+          "component": "license",
+          "nominal": 50000000
+        }
+      ]
     },
     "profile": {
       "tax_treatment": "exclusive_ppn",

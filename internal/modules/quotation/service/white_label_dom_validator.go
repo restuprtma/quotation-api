@@ -117,11 +117,13 @@ func ValidateWhiteLabelIntegrity(document string, expected WhiteLabelIntegrityEx
 			return fmt.Errorf("%w: legal block is missing", ErrUnsafeHTML)
 		}
 		var buf bytes.Buffer
+		isFirstH2 := true
 		for child := legalBlock.FirstChild; child != nil; child = child.NextSibling {
 			if child.Type == html.CommentNode {
 				continue
 			}
-			if child.Type == html.ElementNode && child.Data == "h2" {
+			if child.Type == html.ElementNode && child.Data == "h2" && isFirstH2 {
+				isFirstH2 = false
 				continue
 			}
 			if err := html.Render(&buf, child); err != nil {
@@ -132,12 +134,53 @@ func ValidateWhiteLabelIntegrity(document string, expected WhiteLabelIntegrityEx
 		if err != nil {
 			return err
 		}
-		expectedLegal, err := canonicalizeFragmentHTML(expected.LegalHTML)
+		resolvedExpectedLegal, err := ResolveWhiteLabelLegalHTML(expected.LegalHTML, expected.Profile.TaxTreatment)
+		if err != nil {
+			return fmt.Errorf("%w: failed to resolve expected legal html: %v", ErrUnsafeHTML, err)
+		}
+		expectedLegal, err := canonicalizeFragmentHTML(resolvedExpectedLegal)
 		if err != nil {
 			return err
 		}
 		if renderedLegal != expectedLegal {
 			return fmt.Errorf("%w: legal content was modified", ErrUnsafeHTML)
+		}
+	}
+
+	// Tax clause validation
+	taxFields := findAllOrdered(nodes, "data-field", "tax_clause")
+	switch expected.Profile.TaxTreatment {
+	case domain.WhiteLabelTaxExclusive:
+		if len(taxFields) != 1 {
+			return fmt.Errorf("%w: exclusive_ppn must have exactly one tax clause, found %d", ErrUnsafeHTML, len(taxFields))
+		}
+		taxText := nodeText(taxFields[0])
+		if !strings.Contains(taxText, "belum termasuk PPN") {
+			return fmt.Errorf("%w: exclusive_ppn tax clause must state belum termasuk PPN", ErrUnsafeHTML)
+		}
+		fullDocText := nodeText(root)
+		if strings.Contains(fullDocText, "telah termasuk PPN") || strings.Contains(fullDocText, "sudah termasuk PPN") {
+			return fmt.Errorf("%w: exclusive_ppn document contains contradictory inclusive tax statements", ErrUnsafeHTML)
+		}
+	case domain.WhiteLabelTaxInclusive:
+		if len(taxFields) != 1 {
+			return fmt.Errorf("%w: inclusive_ppn must have exactly one tax clause, found %d", ErrUnsafeHTML, len(taxFields))
+		}
+		taxText := nodeText(taxFields[0])
+		if !strings.Contains(taxText, "termasuk PPN") {
+			return fmt.Errorf("%w: inclusive_ppn tax clause must state termasuk PPN", ErrUnsafeHTML)
+		}
+		fullDocText := nodeText(root)
+		if strings.Contains(fullDocText, "belum termasuk PPN") || strings.Contains(fullDocText, "belum termasuk Pajak Pertambahan Nilai") {
+			return fmt.Errorf("%w: inclusive_ppn document contains contradictory exclusive tax statements", ErrUnsafeHTML)
+		}
+	case domain.WhiteLabelTaxNotStated:
+		if len(taxFields) != 0 {
+			return fmt.Errorf("%w: not_stated must have zero tax clauses, found %d", ErrUnsafeHTML, len(taxFields))
+		}
+		fullDocText := nodeText(root)
+		if strings.Contains(fullDocText, "belum termasuk PPN") || strings.Contains(fullDocText, "belum termasuk Pajak Pertambahan Nilai") || strings.Contains(fullDocText, "telah termasuk PPN") {
+			return fmt.Errorf("%w: not_stated document contains unexpected tax statements", ErrUnsafeHTML)
 		}
 	}
 
@@ -376,25 +419,118 @@ func CheckWhiteLabelCommercialModified(document string, calc domain.WhiteLabelCa
 		return true, nil
 	}
 
-	payNominalCells := findAllOrdered(payNodes, "data-field", "payment_nominal")
-	if len(payNominalCells) == 0 {
+	var payTbodyRows []*html.Node
+	for _, n := range payNodes {
+		if n.Type == html.ElementNode && n.Data == "tbody" {
+			payTbodyRows = directChildElements(n, "tr")
+			break
+		}
+	}
+	if len(payTbodyRows) < 2 {
 		return true, nil
 	}
-	var nominalSum int64
-	for _, cell := range payNominalCells {
-		txt := nodeText(cell)
+	paymentTrs := payTbodyRows[:len(payTbodyRows)-1]
+
+	if len(calc.PaymentSchedule) > 0 && len(paymentTrs) != len(calc.PaymentSchedule) {
+		return true, nil
+	}
+
+	payRowCount := 0
+	for _, n := range payNodes {
+		if strings.HasPrefix(attributeValue(n, "data-role"), "payment_") {
+			payRowCount++
+		}
+	}
+	if len(calc.PaymentSchedule) > 0 && payRowCount != len(calc.PaymentSchedule) {
+		return true, nil
+	}
+	if payRowCount != len(paymentTrs) {
+		return true, nil
+	}
+
+	var licenseSum int64
+	var mhSum int64
+
+	for i, tr := range paymentTrs {
+		roleAttr := attributeValue(tr, "data-role")
+		expectedRole := fmt.Sprintf("payment_%d", i)
+		if roleAttr != expectedRole {
+			return true, nil
+		}
+
+		indexAttr := attributeValue(tr, "data-payment-index")
+		expectedIndex := strconv.Itoa(i)
+		if indexAttr != expectedIndex {
+			return true, nil
+		}
+
+		compAttr := attributeValue(tr, "data-component")
+		if compAttr != string(domain.WhiteLabelPaymentLicense) && compAttr != string(domain.WhiteLabelPaymentMaintenanceHosting) {
+			return true, nil
+		}
+
+		cells := directChildElements(tr, "td")
+		if len(cells) != 5 {
+			return true, nil
+		}
+
+		workPeriod := nodeText(cells[0])
+		terms := nodeText(cells[1])
+		invoiceDate := nodeText(cells[2])
+		dueDate := nodeText(cells[3])
+		nominalCell := cells[4]
+
+		if attributeValue(nominalCell, "data-field") != "payment_nominal" {
+			return true, nil
+		}
+
+		txt := nodeText(nominalCell)
 		if !strings.HasPrefix(txt, "Rp ") {
 			return true, nil
 		}
 		numStr := strings.ReplaceAll(strings.TrimPrefix(txt, "Rp "), ".", "")
 		numStr = strings.TrimSpace(numStr)
 		val, err := strconv.ParseInt(numStr, 10, 64)
-		if err != nil {
+		if err != nil || val <= 0 {
 			return true, nil
 		}
-		nominalSum += val
+
+		if compAttr == string(domain.WhiteLabelPaymentLicense) {
+			licenseSum += val
+		} else if compAttr == string(domain.WhiteLabelPaymentMaintenanceHosting) {
+			mhSum += val
+		}
+
+		if len(calc.PaymentSchedule) > i {
+			expectedRow := calc.PaymentSchedule[i]
+			if string(expectedRow.Component) != compAttr {
+				return true, nil
+			}
+			if workPeriod != expectedRow.WorkPeriod {
+				return true, nil
+			}
+			if terms != expectedRow.Terms {
+				return true, nil
+			}
+			if invoiceDate != expectedRow.InvoiceDateLabel {
+				return true, nil
+			}
+			if dueDate != expectedRow.DueDateLabel {
+				return true, nil
+			}
+			if val != expectedRow.Nominal {
+				return true, nil
+			}
+		}
 	}
-	if nominalSum != calc.PaymentTotal {
+
+	if licenseSum != calc.LicenseSubtotal || licenseSum != calc.LicensePaymentTotal {
+		return true, nil
+	}
+	if mhSum != calc.MaintenanceHostingSubtotal || mhSum != calc.MaintenanceHostingPaymentTotal {
+		return true, nil
+	}
+	if (licenseSum + mhSum) != calc.PaymentTotal {
 		return true, nil
 	}
 

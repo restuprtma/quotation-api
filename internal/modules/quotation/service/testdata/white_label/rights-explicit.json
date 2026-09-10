@@ -120,7 +120,25 @@
       "total_investment": 85305000,
       "license_payment_total": 60000000,
       "maintenance_hosting_payment_total": 25305000,
-      "payment_total": 85305000
+      "payment_total": 85305000,
+      "payment_schedule": [
+        {
+          "work_period": "Uang Muka Lisensi",
+          "terms": "Tahap 1",
+          "invoice_date_label": "Saat kontrak ditandatangani",
+          "due_date_label": "H+14",
+          "component": "license",
+          "nominal": 60000000
+        },
+        {
+          "work_period": "Layanan Operasional 3 Bulan",
+          "terms": "Tahap 2",
+          "invoice_date_label": "1 Oktober 2026",
+          "due_date_label": "15 Oktober 2026",
+          "component": "maintenance_hosting",
+          "nominal": 25305000
+        }
+      ]
     },
     "profile": {
       "tax_treatment": "inclusive_ppn",

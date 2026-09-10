@@ -436,3 +436,77 @@ func TestCustomDevelopmentHTMLRenderer_ConditionalSections(t *testing.T) {
 		assert.Equal(t, "4", attributeValue(limSec, "data-quotation-section-number"))
 	})
 }
+
+func TestCustomDevelopment_TableModeInvariance_RenderAndDOM(t *testing.T) {
+	// 1. Buat input valid dengan monthly_period dan display_rate terisi
+	input := sampleCustomDevelopmentInput()
+	require.NotEmpty(t, input.DevelopmentGroups)
+	require.NotEmpty(t, input.DevelopmentGroups[0].Items)
+	require.NotNil(t, input.DevelopmentGroups[0].Items[0].DisplayRate)
+	initialRate := *input.DevelopmentGroups[0].Items[0].DisplayRate
+	initialTotal := *input.DevelopmentGroups[0].Items[0].QuotedLineTotal
+
+	// Hitung kalkulasi awal dengan monthly_period
+	calcInitial, err := CalculateCustomDevelopment(input)
+	require.NoError(t, err)
+
+	// 2. Ubah hanya development_table_mode menjadi fixed_days
+	input.DevelopmentTableMode = domain.CustomDevelopmentFixedDays
+
+	// 3. Pastikan rate dan total tetap sama
+	require.NotNil(t, input.DevelopmentGroups[0].Items[0].DisplayRate)
+	assert.Equal(t, initialRate, *input.DevelopmentGroups[0].Items[0].DisplayRate)
+	require.NotNil(t, input.DevelopmentGroups[0].Items[0].QuotedLineTotal)
+	assert.Equal(t, initialTotal, *input.DevelopmentGroups[0].Items[0].QuotedLineTotal)
+
+	// 4. Pastikan validasi dan kalkulasi berhasil dengan nominal identik
+	require.NoError(t, input.Validate())
+	calcFixedDays, err := CalculateCustomDevelopment(input)
+	require.NoError(t, err)
+	assert.Equal(t, calcInitial.DevelopmentSubtotal, calcFixedDays.DevelopmentSubtotal)
+	assert.Equal(t, calcInitial.TotalInvestment, calcFixedDays.TotalInvestment)
+
+	profile, err := ResolveCustomDevelopmentProfile(input)
+	require.NoError(t, err)
+	assert.False(t, profile.ShowRateColumn)
+	assert.Equal(t, "Period (Days)", profile.PeriodHeader)
+	assert.Empty(t, profile.RateHeader)
+
+	// 5. Pastikan render HTML berhasil dan header hasil HTML mengikuti fixed_days
+	docIn := CustomDevelopmentDocumentInput{
+		Metadata: QuotationMetadata{
+			QuotationNumber: "QTN/2026/FIXED-DAYS",
+			Subject:         "Test Fixed Days Table Mode Invariance",
+			ClientName:      "Klien Invariance",
+			IssueDate:       "15 Juli 2026",
+		},
+		Input:       input,
+		Calculation: calcFixedDays,
+		Profile:     profile,
+		LegalHTML:   `<p>Syarat penawaran resmi.</p>`,
+	}
+
+	renderer := NewCustomDevelopmentRenderer()
+	htmlOut, err := renderer.Render(docIn)
+	require.NoError(t, err)
+
+	sanitizer := NewHTMLSanitizer()
+	sanitizedHTML, err := sanitizer.Sanitize(htmlOut)
+	require.NoError(t, err)
+
+	// Integrity validation passes
+	err = ValidateCustomDevelopmentIntegrity(sanitizedHTML, CustomDevelopmentIntegrityExpectations{
+		Input:       input,
+		Calculation: calcFixedDays,
+		Profile:     profile,
+		LegalHTML:   `<p>Syarat penawaran resmi.</p>`,
+	})
+	require.NoError(t, err)
+
+	// Check table headers in commercial-development section
+	root, err := html.Parse(strings.NewReader(sanitizedHTML))
+	require.NoError(t, err)
+	nodes := collectNodes(root)
+	headers := tableHeadersForQuotationSection(nodes, "commercial-development")
+	assert.Equal(t, []string{"Deskripsi", "SDM", "Period (Days)", "Total"}, headers, "header must not include Rate column for fixed_days")
+}

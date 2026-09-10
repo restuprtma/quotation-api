@@ -247,9 +247,6 @@ func validateCustomDevelopmentGroups(groups []CustomDevelopmentCostGroupInput, m
 				return 0, fmt.Errorf("development_groups[%d].items[%d].period_label: must be at most %d characters", gIdx, iIdx, MaxCustomDevelopmentPeriodRunes)
 			}
 
-			if mode == CustomDevelopmentFixedDays && item.DisplayRate != nil {
-				return 0, fmt.Errorf("development_groups[%d].items[%d].display_rate: must be nil for fixed_days table mode", gIdx, iIdx)
-			}
 			if item.DisplayRate != nil {
 				if *item.DisplayRate <= 0 {
 					return 0, fmt.Errorf("development_groups[%d].items[%d].display_rate: must be greater than zero", gIdx, iIdx)

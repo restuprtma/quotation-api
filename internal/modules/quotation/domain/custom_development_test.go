@@ -206,11 +206,11 @@ func TestCustomDevelopmentInput_Validate_DetailedFieldErrors(t *testing.T) {
 		require.ErrorContains(t, v.Validate(), "tax_treatment")
 	})
 
-	t.Run("development_table_mode fixed_days rejects display_rate", func(t *testing.T) {
+	t.Run("development_table_mode fixed_days permits display_rate", func(t *testing.T) {
 		v := validCustomDevelopmentInput()
 		v.DevelopmentTableMode = CustomDevelopmentFixedDays
 		v.DevelopmentGroups[0].Items[0].DisplayRate = ptrInt64(1_000_000)
-		require.ErrorContains(t, v.Validate(), "display_rate")
+		require.NoError(t, v.Validate(), "fixed_days mode must permit display_rate")
 	})
 
 	t.Run("development_groups boundary validation", func(t *testing.T) {
@@ -658,4 +658,27 @@ func TestCustomDevelopmentInput_UnmarshalJSON(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown field")
 	})
+}
+
+func TestCustomDevelopment_TableModeInvariance(t *testing.T) {
+	// 1. Buat input valid dengan monthly_period dan display_rate terisi
+	input := validCustomDevelopmentInput()
+	require.NotEmpty(t, input.DevelopmentGroups)
+	require.NotEmpty(t, input.DevelopmentGroups[0].Items)
+	require.NotNil(t, input.DevelopmentGroups[0].Items[0].DisplayRate)
+	initialRate := *input.DevelopmentGroups[0].Items[0].DisplayRate
+	initialTotal := *input.DevelopmentGroups[0].Items[0].QuotedLineTotal
+	require.NoError(t, input.Validate())
+
+	// 2. Ubah hanya development_table_mode menjadi fixed_days
+	input.DevelopmentTableMode = CustomDevelopmentFixedDays
+
+	// 3. Pastikan rate dan total tetap sama
+	require.NotNil(t, input.DevelopmentGroups[0].Items[0].DisplayRate)
+	assert.Equal(t, initialRate, *input.DevelopmentGroups[0].Items[0].DisplayRate)
+	require.NotNil(t, input.DevelopmentGroups[0].Items[0].QuotedLineTotal)
+	assert.Equal(t, initialTotal, *input.DevelopmentGroups[0].Items[0].QuotedLineTotal)
+
+	// 4. Pastikan validasi berhasil (backend tidak lagi menolak display_rate pada fixed_days)
+	assert.NoError(t, input.Validate())
 }

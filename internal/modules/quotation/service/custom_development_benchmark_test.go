@@ -74,12 +74,35 @@ func TestCustomDevelopmentBenchmark(t *testing.T) {
 			require.Equal(t, "not_claimed", fixture.Metadata.VisualParity)
 			require.NotEmpty(t, fixture.Metadata.SourceVariance)
 
-			// Handle anomaly fixtures that MUST be rejected during validation
+			// Handle anomaly fixtures that MUST be rejected during validation and calculation
 			if fixture.ExpectedValidationError != "" || strings.Contains(entry.Name(), "anomaly") {
 				require.Equal(t, "historical_source_anomaly_must_reject", fixture.Metadata.SourceStatus)
-				err := fixture.Input.Validate()
-				require.Error(t, err, "anomaly fixture must fail validation")
-				assert.Contains(t, err.Error(), "discount_amount", "validation error must target discount_amount")
+
+				t.Run("NegativeDiscount", func(t *testing.T) {
+					err := fixture.Input.Validate()
+					require.Error(t, err, "anomaly fixture must fail validation due to negative discount")
+					assert.Contains(t, err.Error(), "discount_amount", "validation error must target discount_amount")
+
+					_, calcErr := CalculateCustomDevelopment(fixture.Input)
+					require.Error(t, calcErr, "calculator must reject invalid input with negative discount")
+					assert.Contains(t, calcErr.Error(), "discount_amount")
+				})
+
+				t.Run("PaymentScheduleMismatch", func(t *testing.T) {
+					// When negative discount is repaired to a valid non-negative amount (0),
+					// CalculateCustomDevelopment must still deterministically reject because
+					// payment schedule total (Rp 303.864 x 2 = Rp 607.728) does not equal total investment (Rp 607.727).
+					repairedInput := fixture.Input
+					repairedInput.DiscountAmount = 0
+					repairedInput.ShowDiscountRow = false
+
+					valErr := repairedInput.Validate()
+					require.NoError(t, valErr, "repaired input must pass structural validation")
+
+					_, calcErr := CalculateCustomDevelopment(repairedInput)
+					require.Error(t, calcErr, "calculation must fail due to payment schedule mismatch")
+					assert.Contains(t, calcErr.Error(), "payment_schedule: development payment total 607728 must equal total investment 607727")
+				})
 				return
 			}
 
