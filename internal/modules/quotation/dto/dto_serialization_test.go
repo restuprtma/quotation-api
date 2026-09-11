@@ -47,6 +47,19 @@ func TestTalentOutsourcingRequestJSONSerialization(t *testing.T) {
 	require.NotNil(t, req.TalentOutsourcing)
 }
 
+func TestCloudInfrastructureRequestJSONSerialization(t *testing.T) {
+	raw := `{"commercial_scheme":"cloud_infrastructure","cloud_infrastructure":{"document_number":"CTH/Authen-Cloud/0626/001","service_name":"Venturo Cloud","quotation_date":"2026-06-24","tax_treatment":"exclusive_ppn","package_items":[{"category":"vps_cloud","name":"VM Small","vcpu":4,"ram_gb":4,"storage_gb":32,"unit_rate":900000}],"payment_schedule":[{"work_period":"Bulan 1","terms":"Bulanan","invoice_date_label":"30 Jun 2026","due_date_label":"14 Jul 2026","component":"monthly_service","nominal":900000}],"payment_due_days":14,"limitation_codes":["out_of_pocket"]}}`
+	var req GenerateQuotationRequest
+	require.NoError(t, json.Unmarshal([]byte(raw), &req))
+	require.NotNil(t, req.CloudInfrastructure)
+	require.NoError(t, req.CloudInfrastructure.Validate())
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "cloud_infrastructure")
+	bad := `{"commercial_scheme":"cloud_infrastructure","cloud_infrastructure":{"quotation_date":"2026-06-24","unknown_nested":true}}`
+	require.ErrorContains(t, json.Unmarshal([]byte(bad), &req), "unknown field")
+}
+
 func TestGenerateQuotationRequest_DedicatedSquadJSONSerialization(t *testing.T) {
 	anchor := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
 	discount := int32(2500)

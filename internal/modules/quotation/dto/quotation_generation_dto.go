@@ -53,6 +53,7 @@ type GenerateQuotationRequest struct {
 	CustomDevelopment         *domain.CustomDevelopmentInput     `json:"custom_development,omitempty"`
 	KioskQueueSystem          *domain.KioskQueueSystemInput      `json:"kiosk_queue_system,omitempty"`
 	TalentOutsourcing         *domain.TalentOutsourcingInput     `json:"talent_outsourcing,omitempty"`
+	CloudInfrastructure       *domain.CloudInfrastructureInput   `json:"cloud_infrastructure,omitempty"`
 	IdempotencyKey            *string                            `json:"idempotency_key,omitempty"`
 	SkillID                   uuid.UUID                          `json:"skill_id"`
 	ClientID                  *uuid.UUID                         `json:"client_id,omitempty"`
@@ -110,6 +111,11 @@ type KioskQueuePreviewResponse struct {
 type TalentOutsourcingPreviewResponse struct {
 	Calculation     domain.TalentOutsourcingCalculation     `json:"calculation"`
 	ResolvedProfile domain.ResolvedTalentOutsourcingProfile `json:"resolved_profile"`
+}
+
+type CloudInfrastructurePreviewResponse struct {
+	Calculation     domain.CloudInfrastructureCalculation     `json:"calculation"`
+	ResolvedProfile domain.ResolvedCloudInfrastructureProfile `json:"resolved_profile"`
 }
 
 type AllocationResource struct {
