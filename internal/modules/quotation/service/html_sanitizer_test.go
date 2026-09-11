@@ -531,3 +531,11 @@ func TestHTMLSanitizerPreservesTalentOutsourcingMarkers(t *testing.T) {
 	assert.Contains(t, out, `data-value="40000000"`)
 	assert.NotContains(t, out, `<script`)
 }
+
+func TestHTMLSanitizerPreservesCloudInfrastructureMarkersAndStripsScript(t *testing.T) {
+	out, err := newSanitizerUnderTest().Sanitize(`<tr data-cloud-package-row="0"><td data-cloud-package-field="name">VPS</td></tr><script>alert(1)</script>`)
+	require.NoError(t, err)
+	assert.Contains(t, out, `data-cloud-package-row="0"`)
+	assert.Contains(t, out, `data-cloud-package-field="name"`)
+	assert.NotContains(t, out, `<script`)
+}

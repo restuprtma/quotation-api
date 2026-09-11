@@ -44,7 +44,7 @@ func buildStrictQuotationPolicy() *bluemonday.Policy {
 	p.SkipElementsContent("script", "style", "iframe", "object", "embed", "noscript")
 
 	markerPattern := regexp.MustCompile(`^[a-zA-Z0-9_\-]{1,64}$`)
-	p.AllowAttrs("class").Matching(regexp.MustCompile(`^(quotation-document|kiosk-queue-document|signature-table|qtr-block|qtr-legal)( (quotation-document|kiosk-queue-document|signature-table|qtr-block|qtr-legal))*$`)).Globally()
+	p.AllowAttrs("class").Matching(regexp.MustCompile(`^(quotation-document|quotation-document--cloud-infrastructure|kiosk-queue-document|signature-table|qtr-block|qtr-legal)( (quotation-document|quotation-document--cloud-infrastructure|kiosk-queue-document|signature-table|qtr-block|qtr-legal))*$`)).Globally()
 	p.AllowAttrs("data-block", "data-role", "data-block-type", "data-template-code", "data-modified", "data-component", "data-payment-index", "data-quotation-section", "data-quotation-field", "data-quotation-component").Matching(markerPattern).Globally()
 	p.AllowAttrs("data-field").Matching(regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,96}$`)).Globally()
 	p.AllowAttrs("data-section-number", "data-quotation-section-number").Matching(regexp.MustCompile(`^[1-9][0-9]{0,2}$`)).Globally()
@@ -54,6 +54,12 @@ func buildStrictQuotationPolicy() *bluemonday.Policy {
 	p.AllowAttrs("data-row-index", "data-group-index").Matching(regexp.MustCompile(`^[0-9]{1,3}$`)).OnElements("tr", "td", "th", "div", "li")
 	p.AllowAttrs("data-limitation-code").Matching(markerPattern).OnElements("tr", "td", "th", "div", "li")
 	p.AllowAttrs("data-value").Matching(regexp.MustCompile(`^[0-9]{1,16}$`)).OnElements("tr", "td", "th", "div", "li")
+	// Cloud infrastructure documents use explicit markers so their commercial
+	// snapshot can be audited after sanitization without trusting text search.
+	p.AllowAttrs("data-cloud-package-row", "data-cloud-setup-row", "data-cloud-total-row", "data-cloud-scope-row", "data-cloud-payment-row").Matching(regexp.MustCompile(`^[0-9]{1,3}$|^(monthly|setup)$`)).OnElements("tr")
+	p.AllowAttrs("data-cloud-package-field", "data-cloud-field", "data-cloud-scope-field").Matching(markerPattern).OnElements("td", "th", "p", "span")
+	p.AllowAttrs("data-cloud-payment-component").Matching(regexp.MustCompile(`^(setup|monthly_service)$`)).OnElements("tr")
+	p.AllowAttrs("data-signature-block").Matching(regexp.MustCompile(`^true$`)).OnElements("section")
 
 	return p
 }
