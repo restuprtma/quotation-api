@@ -15,6 +15,7 @@ const (
 	CommercialSchemeCustomDevelopment     = "custom_development"
 	CommercialSchemeKioskQueueSystem      = "kiosk_queue_system"
 	CommercialSchemeTalentOutsourcing     = "talent_outsourcing"
+	CommercialSchemeCloudInfrastructure   = "cloud_infrastructure"
 )
 
 // Quotation merepresentasikan data master quotation.

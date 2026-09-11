@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"venturo-skeleton-go/internal/modules/quotation/domain"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -212,6 +214,7 @@ func TestQuotationFoundationSchema(t *testing.T) {
 			assert.Contains(t, definition, "custom_development")
 			assert.Contains(t, definition, "kiosk_queue_system")
 			assert.Contains(t, definition, "talent_outsourcing")
+			assert.Contains(t, definition, domain.CommercialSchemeCloudInfrastructure)
 		})
 
 		t.Run("fk_quotations_active_published_revision", func(t *testing.T) {
@@ -1311,6 +1314,24 @@ func TestCommercialSchemeConstraint(t *testing.T) {
 		err = tx.QueryRow(ctx, `
 			INSERT INTO quotations (company_id, client_id, quotation_number, solution_type, commercial_scheme, subject)
 			VALUES (gen_random_uuid(), gen_random_uuid(), 'CTH/TALENT-TEST/0926/001', 'talent_outsourcing', 'talent_outsourcing', 'Talent test')
+			RETURNING id
+		`).Scan(&id)
+		require.NoError(t, err)
+		assert.NotEmpty(t, id)
+	})
+
+	t.Run("AcceptsCloudInfrastructure", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		require.NoError(t, err)
+		defer tx.Rollback(ctx)
+
+		var id string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO quotations (
+				id, company_id, client_id, quotation_number, solution_type,
+				commercial_scheme, status, current_revision
+			) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'QUO-TEST-CLOUD',
+				'cloud_infrastructure', 'cloud_infrastructure', 'draft', 1)
 			RETURNING id
 		`).Scan(&id)
 		require.NoError(t, err)
