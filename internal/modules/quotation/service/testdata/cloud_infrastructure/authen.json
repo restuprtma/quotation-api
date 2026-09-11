@@ -1,0 +1,41 @@
+{
+  "schema_version": "cloud-infrastructure-benchmark-v1",
+  "metadata": {
+    "source_sheet": "Authen",
+    "source_gid": "local-workbook:Authen",
+    "verified_on": "2026-09-11",
+    "source_status": "historical_sheet_reference_repaired_payment",
+    "source_variance": [
+      "F30:F37 contains #REF! in the source workbook; the benchmark uses an explicitly approved replacement monthly row of Rp 1.800.000 for one month.",
+      "Replacement invoice and due-date labels are test data and are not claimed as workbook evidence."
+    ],
+    "visual_parity": "not_claimed",
+    "quotation_number": "CTH/Authen-Cloud/0626/001",
+    "subject": "Authen Cloud",
+    "client_name": "-",
+    "client_company": "Authen",
+    "issue_date": "24 Juni 2026"
+  },
+  "input": {
+    "document_number": "CTH/Authen-Cloud/0626/001",
+    "service_name": "Venturo Cloud",
+    "quotation_date": "2026-06-24",
+    "tax_treatment": "exclusive_ppn",
+    "package_items": [
+      {"category":"vps_cloud","name":"Virtual Machine Small - Kube Master","vcpu":4,"ram_gb":4,"storage_gb":32,"unit_rate":900000},
+      {"category":"vps_cloud","name":"Virtual Machine Small - Kube Master","vcpu":4,"ram_gb":4,"storage_gb":32,"unit_rate":900000}
+    ],
+    "setup_items": [],
+    "scope_rows": [{
+      "sections": [
+        {"title":"Performance / Load Test","activities":["Menyiapkan staging environment yang mereplikasi kondisi produksi","Membuat script testing menggunakan tools K6","Melakukan uji beban dengan jumlah pengguna bertahap: baseline, stress, dan endurance","Mencatat metrik response time P95/P99, throughput, CPU, RAM, DB latency, dan error rate","Menganalisis hasil performa dan mengidentifikasi bottleneck","Melakukan tuning dan optimasi sistem yang disepakati"]},
+        {"title":"Penetration Test","activities":["Menentukan Scope of Work dan Rules of Engagement","Melakukan Reconnaissance dan Information Gathering","Melakukan Vulnerability Assessment terhadap OWASP Top 10, CVE, dan dependency","Melakukan manual penetration test untuk eksploitasi terkontrol","Menguji autentikasi, otorisasi, logika bisnis, privilege escalation, dan validasi input","Melakukan post-exploitation analysis","Menyusun laporan severity dan rekomendasi perbaikan"]}
+      ],
+      "timeline": "2 Minggu"
+    }],
+    "payment_schedule": [{"work_period":"Bulan 1","terms":"Pelunasan Bulanan","invoice_date_label":"30 Jun 2026","due_date_label":"14 Jul 2026","component":"monthly_service","nominal":1800000}],
+    "payment_due_days": 14,
+    "limitation_codes": ["out_of_pocket","overtime","third_party","scope_change"],
+    "additional_limitations": []
+  }
+}
