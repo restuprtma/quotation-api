@@ -528,6 +528,7 @@ type DraftRevision struct {
 	CalculationSnapshot     json.RawMessage
 	ModuleSnapshot          json.RawMessage
 	TimelineSnapshot        json.RawMessage
+	RateCardSnapshot        json.RawMessage
 	LegalTemplateSnapshot   json.RawMessage
 }
 
@@ -542,8 +543,9 @@ func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Cont
 		SELECT r.id, r.quotation_id, q.quotation_number, q.commercial_scheme, r.publication_status, r.generation_status, r.generation_input,
 		       COALESCE(r.resolved_profile_snapshot, 'null'::jsonb),
 		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
-		       COALESCE(r.module_snapshot, '[]'::jsonb), COALESCE(r.timeline_snapshot, '[]'::jsonb),
-		       COALESCE(r.legal_template_snapshot, '{}'::jsonb)
+		               COALESCE(r.module_snapshot, '[]'::jsonb), COALESCE(r.timeline_snapshot, '[]'::jsonb),
+		               COALESCE(r.rate_card_snapshot, 'null'::jsonb),
+		               COALESCE(r.legal_template_snapshot, '{}'::jsonb)
 		FROM quotation_revisions r
 		JOIN quotations q ON q.id = r.quotation_id
 		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
@@ -551,7 +553,7 @@ func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Cont
 	`, quotationID, companyID).Scan(
 		&d.RevisionID, &d.QuotationID, &d.QuotationNumber, &d.CommercialScheme,
 		&d.PublicationStatus, &d.GenerationStatus, &d.GenerationInput,
-		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot, &d.TimelineSnapshot,
+		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot, &d.TimelineSnapshot, &d.RateCardSnapshot,
 		&d.LegalTemplateSnapshot,
 	)
 	if err != nil {

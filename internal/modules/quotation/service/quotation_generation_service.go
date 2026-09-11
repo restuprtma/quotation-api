@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -181,6 +183,7 @@ type QuotationGenerationService struct {
 	customDevelopmentRenderer     CustomDevelopmentRenderer
 	kioskQueueRenderer            KioskQueueHTMLRenderer
 	talentOutsourcingRenderer     TalentOutsourcingRenderer
+	cloudInfrastructureRenderer   CloudInfrastructureRenderer
 }
 
 type GenerationOption func(*QuotationGenerationService)
@@ -216,6 +219,11 @@ func WithTalentOutsourcingRenderer(r TalentOutsourcingRenderer) GenerationOption
 	return func(s *QuotationGenerationService) { s.talentOutsourcingRenderer = r }
 }
 
+// WithCloudInfrastructureRenderer overrides the deterministic cloud renderer.
+func WithCloudInfrastructureRenderer(r CloudInfrastructureRenderer) GenerationOption {
+	return func(s *QuotationGenerationService) { s.cloudInfrastructureRenderer = r }
+}
+
 // WithHTMLSanitizer overrides the HTMLSanitizer (useful for tests).
 func WithHTMLSanitizer(sanitizer HTMLSanitizer) GenerationOption {
 	return func(s *QuotationGenerationService) { s.sanitizer = sanitizer }
@@ -241,6 +249,7 @@ func NewQuotationGenerationService(
 		customDevelopmentRenderer:     NewCustomDevelopmentRenderer(),
 		kioskQueueRenderer:            NewKioskQueueHTMLRenderer(),
 		talentOutsourcingRenderer:     NewTalentOutsourcingRenderer(),
+		cloudInfrastructureRenderer:   NewCloudInfrastructureRenderer(),
 		attemptTimeout:                DefaultAttemptTimeout,
 	}
 	for _, opt := range opts {
@@ -276,7 +285,8 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 		req.CommercialScheme == domain.CommercialSchemeStandaloneMaintenance ||
 		req.CommercialScheme == domain.CommercialSchemeCustomDevelopment ||
 		req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem ||
-		req.CommercialScheme == domain.CommercialSchemeTalentOutsourcing {
+		req.CommercialScheme == domain.CommercialSchemeTalentOutsourcing ||
+		req.CommercialScheme == domain.CommercialSchemeCloudInfrastructure {
 		cfg, gerr = s.loadStructuredConfiguration(ctx, companyID, req)
 	} else {
 		cfg, gerr = s.loadConfiguration(ctx, companyID, req)
@@ -317,6 +327,18 @@ func (s *QuotationGenerationService) Generate(ctx context.Context, companyID uui
 	}
 
 	switch req.CommercialScheme {
+	case domain.CommercialSchemeCloudInfrastructure:
+		gerr := s.generateCloudInfrastructure(ctx, companyID, req, cfg, draft.RevisionID)
+		if gerr != nil {
+			reason := "cloud infrastructure generation failed"
+			var ge *GenerationError
+			if errors.As(gerr, &ge) {
+				reason = ge.message
+			}
+			_ = s.genRepo.UpdateGenerationFailure(ctx, s.genRepo.Pool(), companyID, draft.RevisionID, reason)
+			return draft.QuotationID, gerr
+		}
+		return draft.QuotationID, nil
 	case domain.CommercialSchemeTalentOutsourcing:
 		gerr := s.generateTalentOutsourcing(ctx, companyID, req, cfg, draft.RevisionID)
 		if gerr != nil {
@@ -1287,6 +1309,162 @@ func (s *QuotationGenerationService) regenerateTalentOutsourcing(ctx context.Con
 	return s.renderAndPersistTalentOutsourcing(ctx, companyID, draft.RevisionID, true, document, modules, timeline)
 }
 
+type cloudTimelineSnapshotItem struct {
+	RowIndex int    `json:"row_index"`
+	Timeline string `json:"timeline"`
+}
+
+func buildCloudTimelineSnapshot(rows []domain.CloudScopeRowInput) []cloudTimelineSnapshotItem {
+	out := make([]cloudTimelineSnapshotItem, len(rows))
+	for i, row := range rows {
+		out[i] = cloudTimelineSnapshotItem{RowIndex: i, Timeline: row.Timeline}
+	}
+	return out
+}
+
+func validateCloudTimelineSnapshot(rows []domain.CloudScopeRowInput, timeline []cloudTimelineSnapshotItem) error {
+	if len(rows) != len(timeline) {
+		return errors.New("stored cloud timeline snapshot is inconsistent")
+	}
+	for i, item := range timeline {
+		if item.RowIndex != i || item.Timeline != rows[i].Timeline {
+			return errors.New("stored cloud timeline snapshot is inconsistent")
+		}
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) generateCloudInfrastructure(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, cfg *generationConfig, revisionID uuid.UUID) error {
+	if req.CloudInfrastructure == nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "cloud infrastructure input is required")
+	}
+	input := req.CloudInfrastructure.Normalize()
+	calculation, err := CalculateCloudInfrastructure(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "cloud infrastructure calculation is invalid")
+	}
+	profile, err := ResolveCloudInfrastructureProfile(input)
+	if err != nil {
+		return newGenerationError(ErrCodeAllocationInvalid, "cloud infrastructure profile is invalid")
+	}
+	document := CloudInfrastructureDocumentInput{Metadata: QuotationMetadata{QuotationNumber: cfg.quotationNumber, Subject: strings.TrimSpace(req.Subject), ClientName: cfg.clientName, ClientCompanyName: cfg.clientCompanyName, IssueDate: indonesianDate(input.QuotationDate)}, Input: input, Calculation: calculation, Profile: profile, LegalHTML: cfg.legal.ContentHTML}
+	return s.renderAndPersistCloudInfrastructure(ctx, companyID, revisionID, false, document)
+}
+
+func (s *QuotationGenerationService) renderAndPersistCloudInfrastructure(ctx context.Context, companyID, revisionID uuid.UUID, regenerated bool, document CloudInfrastructureDocumentInput) error {
+	rawHTML, err := s.cloudInfrastructureRenderer.Render(document)
+	if err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure document failed to render")
+	}
+	sanitized, err := s.sanitizer.Sanitize(rawHTML)
+	if err != nil || strings.TrimSpace(sanitized) == "" {
+		return newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure document sanitization failed")
+	}
+	if err := ValidateCloudInfrastructureIntegrity(sanitized, CloudInfrastructureIntegrityExpectations{Input: document.Input, Calculation: document.Calculation, Profile: document.Profile, LegalHTML: document.LegalHTML}); err != nil {
+		return newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure document integrity validation failed")
+	}
+	hash := sha256.Sum256([]byte(sanitized))
+	hashString := hex.EncodeToString(hash[:])
+	params := repository.CompleteDeterministicGenerationParams{CompanyID: companyID, RevisionID: revisionID, ContentHTML: sanitized, ResolvedProfileSnapshot: mustJSON(document.Profile), CalculationSnapshot: mustJSON(document.Calculation), ModuleSnapshot: mustJSON(document.Input.ScopeRows), TimelineSnapshot: mustJSON(buildCloudTimelineSnapshot(document.Input.ScopeRows)), AiProvider: "", AiModel: "", ContentHash: &hashString, Regenerated: regenerated}
+	tx, err := s.genRepo.Pool().Begin(ctx)
+	if err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to begin cloud infrastructure completion")
+	}
+	defer tx.Rollback(ctx)
+	if err := s.genRepo.CompleteDeterministicGeneration(ctx, tx, params); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to persist cloud infrastructure result")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "failed to commit cloud infrastructure result")
+	}
+	return nil
+}
+
+func (s *QuotationGenerationService) regenerateCloudInfrastructure(ctx context.Context, companyID uuid.UUID, req dto.GenerateQuotationRequest, draft *repository.DraftRevision) error {
+	strictReq, err := decodeCloudInfrastructureGenerationInput(draft.GenerationInput)
+	if err != nil {
+		return err
+	}
+	req = strictReq
+	var calculation domain.CloudInfrastructureCalculation
+	var profile domain.ResolvedCloudInfrastructureProfile
+	var scope []domain.CloudScopeRowInput
+	var timeline []cloudTimelineSnapshotItem
+	var packages []domain.CloudPackageItemInput
+	var legal legalSnapshotView
+	if err := unmarshalRequiredCloudSnapshot(draft.CalculationSnapshot, "calculation", &calculation); err != nil {
+		return err
+	}
+	if err := unmarshalRequiredCloudSnapshot(draft.ResolvedProfileSnapshot, "profile", &profile); err != nil {
+		return err
+	}
+	if err := unmarshalRequiredCloudSnapshot(draft.ModuleSnapshot, "scope", &scope); err != nil {
+		return err
+	}
+	if err := unmarshalRequiredCloudSnapshot(draft.TimelineSnapshot, "timeline", &timeline); err != nil {
+		return err
+	}
+	if err := unmarshalRequiredCloudSnapshot(draft.RateCardSnapshot, "package", &packages); err != nil {
+		return err
+	}
+	if err := unmarshalRequiredCloudSnapshot(draft.LegalTemplateSnapshot, "legal", &legal); err != nil || strings.TrimSpace(legal.ContentHTML) == "" {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud legal snapshot is unreadable")
+	}
+	if req.CloudInfrastructure == nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored generation input missing cloud infrastructure")
+	}
+	input := req.CloudInfrastructure.Normalize()
+	if !reflect.DeepEqual(input.PackageItems, packages) || !reflect.DeepEqual(input.ScopeRows, scope) {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud snapshot is inconsistent")
+	}
+	recalculated, err := CalculateCloudInfrastructure(input)
+	if err != nil || !reflect.DeepEqual(recalculated, calculation) {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud calculation snapshot is inconsistent")
+	}
+	resolved, err := ResolveCloudInfrastructureProfile(input)
+	if err != nil || !reflect.DeepEqual(resolved, profile) {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud profile snapshot is inconsistent")
+	}
+	if err := validateCloudTimelineSnapshot(input.ScopeRows, timeline); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, err.Error())
+	}
+	document := CloudInfrastructureDocumentInput{Metadata: QuotationMetadata{QuotationNumber: draft.QuotationNumber, Subject: strings.TrimSpace(req.Subject), ClientName: strings.TrimSpace(req.ClientName), ClientCompanyName: strings.TrimSpace(req.ClientCompanyName), IssueDate: indonesianDate(input.QuotationDate)}, Input: input, Calculation: calculation, Profile: profile, LegalHTML: legal.ContentHTML}
+	return s.renderAndPersistCloudInfrastructure(ctx, companyID, draft.RevisionID, true, document)
+}
+
+func unmarshalRequiredCloudSnapshot(raw json.RawMessage, label string, dest any) error {
+	trimmed := bytes.TrimSpace(raw)
+	allowEmptyList := label == "scope" || label == "timeline"
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte("{}")) || (!allowEmptyList && bytes.Equal(trimmed, []byte("[]"))) {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud "+label+" snapshot is unreadable")
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dest); err != nil {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud "+label+" snapshot is unreadable")
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return newGenerationError(ErrCodeGenerationFailed, "stored cloud "+label+" snapshot has trailing data")
+	}
+	return nil
+}
+
+func decodeCloudInfrastructureGenerationInput(raw json.RawMessage) (dto.GenerateQuotationRequest, error) {
+	var req dto.GenerateQuotationRequest
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		return dto.GenerateQuotationRequest{}, newGenerationError(ErrCodeGenerationFailed, "stored cloud generation input is unreadable")
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return dto.GenerateQuotationRequest{}, newGenerationError(ErrCodeGenerationFailed, "stored cloud generation input has trailing data")
+	}
+	if req.CommercialScheme != domain.CommercialSchemeCloudInfrastructure || req.SolutionType != "cloud_infrastructure" || req.CloudInfrastructure == nil {
+		return dto.GenerateQuotationRequest{}, newGenerationError(ErrCodeGenerationFailed, "stored cloud generation input is inconsistent")
+	}
+	return req, nil
+}
+
 func decodeTalentSnapshot(raw json.RawMessage, target any) error {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "[]" {
@@ -1560,6 +1738,8 @@ func (s *QuotationGenerationService) Regenerate(ctx context.Context, companyID, 
 	}
 
 	switch draft.CommercialScheme {
+	case domain.CommercialSchemeCloudInfrastructure:
+		return s.regenerateCloudInfrastructure(ctx, companyID, req, draft)
 	case domain.CommercialSchemeTalentOutsourcing:
 		return s.regenerateTalentOutsourcing(ctx, companyID, req, draft)
 	case domain.CommercialSchemeKioskQueueSystem:
@@ -2606,7 +2786,13 @@ func (s *QuotationGenerationService) loadStructuredConfiguration(ctx context.Con
 	cfg.clientName = clientName
 	cfg.clientCompanyName = clientCompanyName
 
-	if req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem {
+	if req.CommercialScheme == domain.CommercialSchemeCloudInfrastructure {
+		if req.CloudInfrastructure != nil {
+			input := req.CloudInfrastructure.Normalize()
+			cfg.quotationNumber = input.DocumentNumber
+			cfg.rateCardSnapshot = mustJSON(input.PackageItems)
+		}
+	} else if req.CommercialScheme == domain.CommercialSchemeKioskQueueSystem {
 		if req.KioskQueueSystem != nil {
 			cfg.quotationNumber = req.KioskQueueSystem.Normalize().DocumentNumber
 		}
@@ -2628,7 +2814,9 @@ func (s *QuotationGenerationService) loadStructuredConfiguration(ctx context.Con
 		Version:     legal.Version,
 		ContentHTML: legal.ContentHTML,
 	})
-	cfg.rateCardSnapshot = []byte("{}")
+	if cfg.rateCardSnapshot == nil {
+		cfg.rateCardSnapshot = []byte("{}")
+	}
 	cfg.skillSnapshot = []byte("{}")
 
 	return cfg, nil
@@ -3178,6 +3366,21 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 		}
 		if err := domain.NormalizeTalentOutsourcingInput(*req.TalentOutsourcing).Validate(); err != nil {
 			return newGenerationError(ErrCodeAllocationInvalid, "talent outsourcing input is invalid")
+		}
+		return nil
+
+	case domain.CommercialSchemeCloudInfrastructure:
+		if req.CloudInfrastructure == nil || req.DedicatedSquad != nil || req.SubscriptionSaaS != nil || req.WhiteLabel != nil || req.StandaloneMaintenance != nil || req.CustomDevelopment != nil || req.KioskQueueSystem != nil || req.TalentOutsourcing != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "cloud_infrastructure requires exactly cloud_infrastructure input")
+		}
+		if req.RateCardID != uuid.Nil {
+			return newGenerationError(ErrCodeInvalidRateCard, "rate_card_id is not accepted for cloud_infrastructure")
+		}
+		if req.ProjectDurationMonths != 0 || req.BudgetMaximum != 0 || len(req.MandatoryScope) != 0 || len(req.OptionalScope) != 0 || len(req.AllowedStandardActivities) != 0 || req.PaymentTerms.Mode != "" || len(req.PaymentTerms.Items) != 0 {
+			return newGenerationError(ErrCodeGenerationFailed, "legacy quotation fields are not accepted for cloud_infrastructure")
+		}
+		if err := req.CloudInfrastructure.Normalize().Validate(); err != nil {
+			return newGenerationError(ErrCodeAllocationInvalid, "cloud infrastructure input is invalid")
 		}
 		return nil
 
