@@ -327,6 +327,64 @@ func (h *QuotationGenerationHandler) PreviewTalentOutsourcing(c *gin.Context) {
 	})
 }
 
+// PreviewCloudInfrastructure computes authoritative Cloud Infrastructure
+// figures without AI, rate-card access, or persistence.
+func (h *QuotationGenerationHandler) PreviewCloudInfrastructure(c *gin.Context) {
+	var req dto.GenerateQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", "")
+		return
+	}
+	if _, ok := companyUUID(c); !ok {
+		return
+	}
+	if req.CommercialScheme != domain.CommercialSchemeCloudInfrastructure ||
+		req.CloudInfrastructure == nil ||
+		req.DedicatedSquad != nil ||
+		req.SubscriptionSaaS != nil ||
+		req.WhiteLabel != nil ||
+		req.StandaloneMaintenance != nil ||
+		req.CustomDevelopment != nil ||
+		req.KioskQueueSystem != nil ||
+		req.TalentOutsourcing != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid cloud infrastructure payload", "")
+		return
+	}
+	if req.RateCardID != uuid.Nil ||
+		req.ProjectDurationMonths != 0 ||
+		req.BudgetMaximum != 0 ||
+		strings.TrimSpace(req.Summary) != "" ||
+		len(req.MandatoryScope) != 0 ||
+		len(req.OptionalScope) != 0 ||
+		len(req.AllowedStandardActivities) != 0 ||
+		req.PaymentTerms.Mode != "" ||
+		len(req.PaymentTerms.Items) != 0 ||
+		strings.TrimSpace(req.AdditionalNotes) != "" {
+		response.Error(c, http.StatusUnprocessableEntity, "Rate card and legacy pricing fields are not accepted", service.ErrCodeAllocationInvalid)
+		return
+	}
+
+	input := req.CloudInfrastructure.Normalize()
+	if err := input.Validate(); err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Cloud infrastructure validation failed", service.ErrCodeAllocationInvalid)
+		return
+	}
+	calculation, err := service.CalculateCloudInfrastructure(input)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Cloud infrastructure calculation failed", service.ErrCodeAllocationInvalid)
+		return
+	}
+	profile, err := service.ResolveCloudInfrastructureProfile(input)
+	if err != nil {
+		response.Error(c, http.StatusUnprocessableEntity, "Cloud infrastructure profile failed", service.ErrCodeAllocationInvalid)
+		return
+	}
+	response.Success(c, http.StatusOK, "Cloud infrastructure preview calculated successfully", dto.CloudInfrastructurePreviewResponse{
+		Calculation:     calculation,
+		ResolvedProfile: profile,
+	})
+}
+
 func hasNonKioskStructuredInput(req dto.GenerateQuotationRequest) bool {
 	return req.DedicatedSquad != nil ||
 		req.SubscriptionSaaS != nil ||

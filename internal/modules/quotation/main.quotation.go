@@ -71,6 +71,7 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.POST("/preview/custom-development", m.GenHandler.PreviewCustomDevelopment)
 		quotations.POST("/preview/kiosk-queue-system", m.GenHandler.PreviewKioskQueueSystem)
 		quotations.POST("/preview/talent-outsourcing", m.GenHandler.PreviewTalentOutsourcing)
+		quotations.POST("/preview/cloud-infrastructure", m.GenHandler.PreviewCloudInfrastructure)
 		// AI-first detail (Fase 6 Session 5): menggantikan target stub yang
 		// sebelumnya selalu "not implemented"; kontrak response bertambah,
 		// tidak ada perilaku lama yang hilang.
