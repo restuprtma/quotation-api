@@ -95,6 +95,121 @@ func CheckCloudInfrastructureCommercialModified(documentHTML string, input domai
 	}
 	return cloudCheckCommercial(root, input.Normalize(), calc, p) != nil, nil
 }
+
+// ValidateCloudInfrastructureStructureForDraft protects the immutable document
+// skeleton while deliberately leaving scope narrative text editable.
+func ValidateCloudInfrastructureStructureForDraft(documentHTML string, expected CloudInfrastructureIntegrityExpectations) error {
+	in := expected.Input.Normalize()
+	if err := in.Validate(); err != nil {
+		return fmt.Errorf("cloud input: %w", err)
+	}
+	profile := expected.Profile
+	if len(profile.Sections) == 0 {
+		var err error
+		profile, err = ResolveCloudInfrastructureProfile(in)
+		if err != nil {
+			return err
+		}
+	}
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return fmt.Errorf("document parse: %w", err)
+	}
+	nodes := cloudNodes(root)
+	if cloudExactly(nodes, "class", "quotation-document quotation-document--cloud-infrastructure") == nil {
+		return fmt.Errorf("cloud document root is missing")
+	}
+	for _, sec := range profile.Sections {
+		n := cloudExactly(nodes, "data-section-code", sec.Code)
+		if n == nil || cloudAttr(n, "data-section-number") != fmt.Sprint(sec.Number) {
+			return fmt.Errorf("section %s is missing or invalid", sec.Code)
+		}
+	}
+	if cloudExactly(nodes, "data-block-type", "signature") == nil {
+		return fmt.Errorf("signature block is missing")
+	}
+	cost := cloudExactly(nodes, "data-section-code", "cloud_cost")
+	if cost == nil || len(cloudAll(cloudNodes(cost), "data-cloud-package-row")) != len(in.PackageItems) || cloudExactly(cloudNodes(cost), "data-cloud-field", "monthly_subtotal") == nil {
+		return fmt.Errorf("cloud cost table is missing or invalid")
+	}
+	payment := cloudExactly(nodes, "data-section-code", "payment")
+	if payment == nil || len(cloudAll(cloudNodes(payment), "data-cloud-payment-row")) != len(in.PaymentSchedule) {
+		return fmt.Errorf("payment table is missing or invalid")
+	}
+	if profile.ShowScope {
+		scope := cloudExactly(nodes, "data-section-code", "scope_timeline")
+		rows := cloudAll(cloudNodes(scope), "data-cloud-scope-row")
+		if scope == nil || len(rows) != len(in.ScopeRows) {
+			return fmt.Errorf("scope table is missing or invalid")
+		}
+		for _, row := range rows {
+			if cloudExactly(cloudNodes(row), "data-cloud-scope-field", "timeline") == nil {
+				return fmt.Errorf("scope timeline is missing")
+			}
+		}
+	}
+	limitations := cloudExactly(nodes, "data-section-code", "limitations")
+	if limitations == nil {
+		return fmt.Errorf("limitations section is missing")
+	}
+	if strings.TrimSpace(expected.LegalHTML) != "" && cloudCountValue(nodes, "data-block-type", "legal") < 2 {
+		return fmt.Errorf("legal block is missing")
+	}
+	return nil
+}
+
+// CheckCloudInfrastructureLegalModified treats the tax clause, ordered
+// limitation text, and committed legal template as legal content. Scope text
+// is intentionally not inspected here.
+func CheckCloudInfrastructureLegalModified(documentHTML string, input domain.CloudInfrastructureInput, profile domain.ResolvedCloudInfrastructureProfile, expectedLegalHTML string) (bool, error) {
+	root, err := html.Parse(strings.NewReader(documentHTML))
+	if err != nil {
+		return true, err
+	}
+	nodes := cloudNodes(root)
+	if modified, err := CheckCloudInfrastructureLimitationsModified(documentHTML, input.LimitationCodes, input.AdditionalLimitations); err != nil || modified {
+		return true, err
+	}
+	tax := cloudExactly(nodes, "data-cloud-field", "tax_clause")
+	if profile.TaxClauseText == "" {
+		if tax != nil {
+			return true, nil
+		}
+	} else if tax == nil || strings.TrimSpace(cloudText(tax)) != profile.TaxClauseText {
+		return true, nil
+	}
+	if strings.TrimSpace(expectedLegalHTML) == "" {
+		return false, nil
+	}
+	var legal *html.Node
+	for _, n := range nodes {
+		if cloudAttr(n, "data-block-type") == "legal" && n.Parent != nil && cloudAttr(n.Parent, "data-section-code") == "limitations" {
+			if legal != nil {
+				return true, fmt.Errorf("duplicate cloud legal template block")
+			}
+			legal = n
+		}
+	}
+	if legal == nil {
+		return true, nil
+	}
+	var got strings.Builder
+	for child := legal.FirstChild; child != nil; child = child.NextSibling {
+		if err := html.Render(&got, child); err != nil {
+			return true, err
+		}
+	}
+	actual, err := canonicalizeFragmentHTML(got.String())
+	if err != nil {
+		return true, err
+	}
+	want, err := canonicalizeFragmentHTML(expectedLegalHTML)
+	if err != nil {
+		return true, err
+	}
+	return actual != want, nil
+}
+
 func cloudCheckCommercial(root *html.Node, in domain.CloudInfrastructureInput, calc domain.CloudInfrastructureCalculation, p domain.ResolvedCloudInfrastructureProfile) error {
 	nodes := cloudNodes(root)
 	cost := cloudExactly(nodes, "data-section-code", "cloud_cost")
@@ -130,6 +245,16 @@ func cloudCheckCommercial(root *html.Node, in domain.CloudInfrastructureInput, c
 	if p.ShowSetup {
 		if len(setup) != len(calc.Setup) {
 			return fmt.Errorf("setup row count mismatch")
+		}
+		for i, x := range calc.Setup {
+			cells := cloudDirect(setup[i], "td")
+			if len(cells) != 2 || strings.TrimSpace(cloudText(cells[0])) != x.Name || strings.TrimSpace(cloudText(cells[1])) != cloudMoney(x.LineTotal) {
+				return fmt.Errorf("setup row %d mismatch", i)
+			}
+		}
+		setupTotal := cloudExactly(cn, "data-cloud-field", "setup_subtotal")
+		if setupTotal == nil || strings.TrimSpace(cloudText(setupTotal)) != cloudMoney(calc.SetupSubtotal) {
+			return fmt.Errorf("setup_subtotal mismatch")
 		}
 	} else if len(setup) > 0 || cloudExactly(cn, "data-cloud-field", "setup_subtotal") != nil {
 		return fmt.Errorf("unexpected setup block")

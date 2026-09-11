@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +18,84 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/service"
 )
+
+// ---------------------------------------------------------------------------
+// Cloud Infrastructure Save Draft Integration Tests
+// ---------------------------------------------------------------------------
+
+func cloudDraftInput() domain.CloudInfrastructureInput {
+	return domain.CloudInfrastructureInput{
+		DocumentNumber: "CLOUD-DRAFT-" + uuid.NewString(), ServiceName: "Venturo Cloud",
+		QuotationDate: time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC), TaxTreatment: domain.CloudTaxExclusive,
+		PackageItems:    []domain.CloudPackageItemInput{{Category: domain.CloudPackageVPS, Name: "Cloud VPS Small", VCPU: 4, RAMGB: 4, StorageGB: 32, UnitRate: 900000}},
+		SetupItems:      []domain.CloudSetupItemInput{{Name: "Provisioning", Amount: 150000}},
+		ScopeRows:       []domain.CloudScopeRowInput{{Sections: []domain.CloudScopeSectionInput{{Title: "Performance Test", Activities: []string{"Run load test"}}}, Timeline: "2 Minggu"}},
+		PaymentSchedule: []domain.CloudPaymentRowInput{{WorkPeriod: "Setup", Terms: "Di muka", InvoiceDateLabel: "24 Jun 2026", DueDateLabel: "8 Jul 2026", Component: domain.CloudPaymentSetup, Nominal: 150000}, {WorkPeriod: "Bulan 1", Terms: "Bulanan", InvoiceDateLabel: "30 Jun 2026", DueDateLabel: "14 Jul 2026", Component: domain.CloudPaymentMonthly, Nominal: 900000}},
+		PaymentDueDays:  14, LimitationCodes: []domain.CloudLimitationCode{domain.CloudLimitOutOfPocket},
+	}
+}
+
+func generateCloudInfrastructureDraft(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	fx := seedPipelineFixtures(t, pool)
+	input := cloudDraftInput()
+	req := fx.request()
+	req.CommercialScheme = domain.CommercialSchemeCloudInfrastructure
+	req.SolutionType = "cloud_infrastructure"
+	req.RateCardID = uuid.Nil
+	req.DedicatedSquad, req.SubscriptionSaaS, req.WhiteLabel, req.StandaloneMaintenance, req.CustomDevelopment, req.KioskQueueSystem, req.TalentOutsourcing = nil, nil, nil, nil, nil, nil, nil
+	req.BudgetMaximum, req.ProjectDurationMonths = 0, 0
+	req.MandatoryScope, req.OptionalScope, req.AllowedStandardActivities = nil, nil, nil
+	req.PaymentTerms = dto.PaymentTermsInput{}
+	req.CloudInfrastructure = &input
+	svc, _ := newSvc(pool, &panicAIProvider{})
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, req)
+	require.NoError(t, err)
+	return qid, fx.companyID
+}
+
+func TestSaveDraftCloudInfrastructureClassifiesNarrativeCommercialAndLegalEdits(t *testing.T) {
+	tests := []struct {
+		name              string
+		old               string
+		new               string
+		legal, commercial bool
+	}{
+		{"narrative", "Run load test", "Run endurance test", false, false},
+		{"package", "Cloud VPS Small", "Cloud VPS Medium", false, true},
+		{"monthly subtotal", "Rp 900.000", "Rp 950.000", false, true},
+		{"setup fee", "Rp 150.000", "Rp 175.000", false, true},
+		{"payment terms", "Bulanan", "Termin bulanan", false, true},
+		{"limitations", "Biaya di luar penawaran", "Biaya tambahan dinegosiasikan", true, false},
+		{"tax clause", "belum termasuk PPN", "sudah termasuk PPN", true, false},
+		{"legal template", "Syarat dan ketentuan penawaran resmi berlaku 30 hari.", "Syarat berlaku 60 hari.", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := getTestPool(t)
+			qid, companyID := generateCloudInfrastructureDraft(t, pool)
+			snap := captureSnapshot(t, pool, qid)
+			modified := strings.Replace(snap.html, tt.old, tt.new, 1)
+			require.NotEqual(t, snap.html, modified)
+			svc, _ := newSvc(pool, &scriptedAIProvider{})
+			res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{ContentHTML: modified, ContentVersion: snap.version})
+			require.NoError(t, err)
+			assert.Equal(t, tt.legal, res.LegalContentModified)
+			assert.Equal(t, tt.commercial, res.CommercialContentModified)
+		})
+	}
+}
+
+func TestSaveDraftCloudInfrastructureRejectsRemovedRequiredSection(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateCloudInfrastructureDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	modified := strings.Replace(snap.html, `<section data-block-type="commercial" data-section-code="payment"`, `<section data-block-type="commercial" data-section-code="removed"`, 1)
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{ContentHTML: modified, ContentVersion: snap.version})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+}
 
 func TestSaveDraft_Success_Unmodified(t *testing.T) {
 	pool := getTestPool(t)

@@ -1923,9 +1923,62 @@ func (s *QuotationGenerationService) inspectDraftChanges(ctx context.Context, co
 		return s.inspectKioskQueueDraft(ctx, companyID, draft, html)
 	case domain.CommercialSchemeTalentOutsourcing:
 		return s.inspectTalentOutsourcingDraft(ctx, companyID, draft, html)
+	case domain.CommercialSchemeCloudInfrastructure:
+		return s.inspectCloudInfrastructureDraft(ctx, companyID, draft, html)
 	default:
 		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "commercial scheme snapshot is unsupported")
 	}
+}
+
+func (s *QuotationGenerationService) inspectCloudInfrastructureDraft(
+	ctx context.Context,
+	companyID uuid.UUID,
+	draft *repository.DraftRevisionForSave,
+	htmlStr string,
+) (legalModified, commercialModified bool, total int64, err error) {
+	_ = ctx
+	_ = companyID
+	req, err := decodeCloudInfrastructureGenerationInput(draft.GenerationInput)
+	if err != nil || req.CloudInfrastructure == nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure generation input snapshot is invalid")
+	}
+	input := req.CloudInfrastructure.Normalize()
+	if err := input.Validate(); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure input snapshot is invalid")
+	}
+	var calc domain.CloudInfrastructureCalculation
+	if err := unmarshalRequiredCloudSnapshot(draft.CalculationSnapshot, "calculation", &calc); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure calculation snapshot is invalid")
+	}
+	calculated, calcErr := CalculateCloudInfrastructure(input)
+	if calcErr != nil || !reflect.DeepEqual(calculated, calc) {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure calculation snapshot is inconsistent")
+	}
+	var profile domain.ResolvedCloudInfrastructureProfile
+	if err := unmarshalRequiredCloudSnapshot(draft.ResolvedProfileSnapshot, "profile", &profile); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure profile snapshot is invalid")
+	}
+	resolved, profileErr := ResolveCloudInfrastructureProfile(input)
+	if profileErr != nil || !reflect.DeepEqual(resolved, profile) {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure profile snapshot is inconsistent")
+	}
+	var legal legalSnapshotView
+	if err := unmarshalRequiredCloudSnapshot(draft.LegalTemplateSnapshot, "legal", &legal); err != nil || strings.TrimSpace(legal.ContentHTML) == "" {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure legal snapshot is invalid")
+	}
+	expected := CloudInfrastructureIntegrityExpectations{Input: input, Calculation: calc, Profile: profile, LegalHTML: legal.ContentHTML}
+	if err := ValidateCloudInfrastructureStructureForDraft(htmlStr, expected); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure document structure is invalid")
+	}
+	commercialModified, err = CheckCloudInfrastructureCommercialModified(htmlStr, input, calc)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure commercial content is invalid")
+	}
+	legalModified, err = CheckCloudInfrastructureLegalModified(htmlStr, input, profile, legal.ContentHTML)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "cloud infrastructure legal content is invalid")
+	}
+	return legalModified, commercialModified, calc.MonthlySubtotal, nil
 }
 
 func (s *QuotationGenerationService) inspectTalentOutsourcingDraft(
