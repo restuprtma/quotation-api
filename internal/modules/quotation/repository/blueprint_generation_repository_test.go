@@ -192,14 +192,78 @@ func TestCreateBlueprintGenerationRejectsForeignSource(t *testing.T) {
 	params1.QuotationID = fB.QuotationID
 	_, err := repo.CreateBlueprintGeneration(ctx, params1)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, repository.ErrBlueprintNotFound))
+	assert.True(t, errors.Is(err, repository.ErrBlueprintSourceNotFound))
 
 	// Company A attempts to use Company B's SourceRevisionID
 	params2 := validBlueprintCreateParams(fA)
 	params2.SourceRevisionID = fB.RevisionID
 	_, err = repo.CreateBlueprintGeneration(ctx, params2)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, repository.ErrBlueprintNotFound))
+	assert.True(t, errors.Is(err, repository.ErrBlueprintSourceNotFound))
+}
+
+func TestCreateBlueprintGenerationRejectsSourceThatBecameIneligible(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(ctx context.Context, pool *pgxpool.Pool, f blueprintFixture)
+	}{
+		{
+			name: "generation_status != completed",
+			mutate: func(ctx context.Context, pool *pgxpool.Pool, f blueprintFixture) {
+				_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET generation_status = 'pending' WHERE id = $1 AND company_id = $2`, f.RevisionID, f.CompanyID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "blank content_html",
+			mutate: func(ctx context.Context, pool *pgxpool.Pool, f blueprintFixture) {
+				_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET content_html = '   ' WHERE id = $1 AND company_id = $2`, f.RevisionID, f.CompanyID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "publication_status outside draft/published/superseded",
+			mutate: func(ctx context.Context, pool *pgxpool.Pool, f blueprintFixture) {
+				_, err := pool.Exec(ctx, `UPDATE quotation_revisions SET publication_status = 'archived' WHERE id = $1 AND company_id = $2`, f.RevisionID, f.CompanyID)
+				require.NoError(t, err)
+			},
+		},
+	}
+
+	pool := getTestPool(t)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := seedBlueprintSource(t, pool)
+			defer cleanupBlueprintFixture(t, pool, f.CompanyID)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			tc.mutate(ctx, pool, f)
+
+			repo := repository.NewBlueprintGenerationRepository(pool)
+			params := validBlueprintCreateParams(f)
+
+			res, err := repo.CreateBlueprintGeneration(ctx, params)
+			require.Error(t, err)
+			assert.Nil(t, res)
+			assert.True(t, errors.Is(err, repository.ErrBlueprintSourceIneligible))
+
+			var bpCount, revCount, runCount int
+			err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM blueprints WHERE company_id = $1 AND quotation_id = $2`, f.CompanyID, f.QuotationID).Scan(&bpCount)
+			require.NoError(t, err)
+			assert.Equal(t, 0, bpCount)
+
+			err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM blueprint_revisions WHERE company_id = $1`, f.CompanyID).Scan(&revCount)
+			require.NoError(t, err)
+			assert.Equal(t, 0, revCount)
+
+			err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM blueprint_section_runs WHERE company_id = $1`, f.CompanyID).Scan(&runCount)
+			require.NoError(t, err)
+			assert.Equal(t, 0, runCount)
+		})
+	}
 }
 
 func TestCreateBlueprintGenerationSequentialReplay(t *testing.T) {

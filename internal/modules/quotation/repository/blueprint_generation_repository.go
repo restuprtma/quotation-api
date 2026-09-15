@@ -110,22 +110,41 @@ func (r *BlueprintGenerationRepository) CreateBlueprintGeneration(ctx context.Co
 	}
 	defer tx.Rollback(ctx)
 
-	// 3. Verify source via quotation_revisions JOIN quotations, filtering source revision ID, quotation ID, and both company_id aliases
-	var sourceRevID uuid.UUID
+	// 3. Verify source via quotation_revisions JOIN quotations with locked read (FOR SHARE OF qr, q)
+	var pubStatus string
+	var genStatus string
+	var rawContentHTML *string
 	err = tx.QueryRow(ctx, `
-		SELECT qr.id
+		SELECT qr.publication_status, qr.generation_status, qr.content_html
 		FROM quotation_revisions qr
-		JOIN quotations q ON q.id = qr.quotation_id
+		JOIN quotations q ON q.id = qr.quotation_id AND q.company_id = qr.company_id
 		WHERE qr.id = $1
 		  AND qr.quotation_id = $2
 		  AND qr.company_id = $3
 		  AND q.company_id = $3
-	`, params.SourceRevisionID, params.QuotationID, params.CompanyID).Scan(&sourceRevID)
+		  AND q.deleted_at IS NULL
+		FOR SHARE OF qr, q
+	`, params.SourceRevisionID, params.QuotationID, params.CompanyID).Scan(&pubStatus, &genStatus, &rawContentHTML)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrBlueprintNotFound
+			return nil, ErrBlueprintSourceNotFound
 		}
 		return nil, err
+	}
+
+	// Canonical source eligibility guards
+	switch pubStatus {
+	case "draft", "published", "superseded":
+	default:
+		return nil, ErrBlueprintSourceIneligible
+	}
+
+	if genStatus != "completed" {
+		return nil, ErrBlueprintSourceIneligible
+	}
+
+	if rawContentHTML == nil || strings.TrimSpace(*rawContentHTML) == "" {
+		return nil, ErrBlueprintSourceIneligible
 	}
 
 	// 4. Insert Blueprint using INSERT ... SELECT from tenant-owned quotation and ON CONFLICT (quotation_id) DO NOTHING
