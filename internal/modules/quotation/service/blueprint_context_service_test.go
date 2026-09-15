@@ -63,7 +63,7 @@ func sampleValidSource(companyID, quotationID, revisionID uuid.UUID) BlueprintSo
 }
 
 func TestBuildBlueprintSourceContextProducesDeterministicRedactedJSON(t *testing.T) {
-	builder := NewBlueprintContextBuilder()
+	builder := NewBlueprintSourceContextBuilder()
 	require.NotNil(t, builder)
 
 	companyID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
@@ -100,7 +100,7 @@ func TestBuildBlueprintSourceContextProducesDeterministicRedactedJSON(t *testing
 }
 
 func TestBuildBlueprintSourceContextRejectsInvalidInput(t *testing.T) {
-	builder := NewBlueprintContextBuilder()
+	builder := NewBlueprintSourceContextBuilder()
 	require.NotNil(t, builder)
 
 	companyID := uuid.New()
@@ -202,7 +202,7 @@ func TestBuildBlueprintSourceContextRejectsInvalidInput(t *testing.T) {
 }
 
 func TestBuildBlueprintSourceContextRemovesPromptInjectionAndForbiddenFields(t *testing.T) {
-	builder := NewBlueprintContextBuilder()
+	builder := NewBlueprintSourceContextBuilder()
 	require.NotNil(t, builder)
 
 	companyID := uuid.New()

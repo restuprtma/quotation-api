@@ -81,20 +81,20 @@ type canonicalPayloadHashSource struct {
 	ContextContent        json.RawMessage `json:"context_content"`
 }
 
-// BlueprintContextBuilder extracts and normalizes source context into immutable snapshots.
-type BlueprintContextBuilder struct {
+// BlueprintSourceContextBuilder extracts and normalizes source context into immutable snapshots.
+type BlueprintSourceContextBuilder struct {
 	sanitizer HTMLSanitizer
 }
 
-// NewBlueprintContextBuilder instantiates a context builder with strict HTML sanitization.
-func NewBlueprintContextBuilder() *BlueprintContextBuilder {
-	return &BlueprintContextBuilder{
+// NewBlueprintSourceContextBuilder instantiates a context builder with strict HTML sanitization.
+func NewBlueprintSourceContextBuilder() *BlueprintSourceContextBuilder {
+	return &BlueprintSourceContextBuilder{
 		sanitizer: NewHTMLSanitizer(),
 	}
 }
 
 // Build normalizes source projection and request into canonical snapshot, content, and payload hash.
-func (b *BlueprintContextBuilder) Build(
+func (b *BlueprintSourceContextBuilder) Build(
 	source BlueprintSourceProjection,
 	request dto.CreateBlueprintGenerationRequest,
 ) (NormalizedBlueprintContext, error) {
