@@ -26,14 +26,15 @@ type BlueprintRevision struct {
 	CompanyID                 uuid.UUID       `json:"company_id" db:"company_id"`
 	BlueprintID               uuid.UUID       `json:"blueprint_id" db:"blueprint_id"`
 	RevisionNumber            int             `json:"revision_number" db:"revision_number"`
-	IdempotencyKey            *string         `json:"idempotency_key" db:"idempotency_key"`
+	IdempotencyKey            *uuid.UUID      `json:"idempotency_key" db:"idempotency_key"`
+	IdempotencyPayloadHash    *string         `json:"-" db:"idempotency_payload_hash"`
 	SourceQuotationRevisionID *uuid.UUID      `json:"source_quotation_revision_id" db:"source_quotation_revision_id"`
 	SourceContextSnapshot     json.RawMessage `json:"source_context_snapshot" db:"source_context_snapshot"`
 	PublicationStatus         string          `json:"publication_status" db:"publication_status"`
 	CompletenessStatus        string          `json:"completeness_status" db:"completeness_status"`
 	GenerationStatus          string          `json:"generation_status" db:"generation_status"`
 	ContentJSON               json.RawMessage `json:"content_json" db:"content_json"`
-	ContentVersion            *string         `json:"content_version" db:"content_version"`
+	ContentVersion            int             `json:"content_version" db:"content_version"`
 	ValidationResult          json.RawMessage `json:"validation_result" db:"validation_result"`
 	CrossValidationResult     json.RawMessage `json:"cross_validation_result" db:"cross_validation_result"`
 	SkillSnapshot             json.RawMessage `json:"skill_snapshot" db:"skill_snapshot"`
@@ -60,4 +61,41 @@ type BlueprintSectionRun struct {
 	StartedAt           *time.Time      `json:"started_at" db:"started_at"`
 	CompletedAt         *time.Time      `json:"completed_at" db:"completed_at"`
 	UpdatedAt           time.Time       `json:"updated_at" db:"updated_at"`
+}
+
+type BlueprintSectionType string
+type BlueprintSectionStatus string
+type BlueprintGenerationStatus string
+
+const (
+	BlueprintSectionContext         BlueprintSectionType = "context"
+	BlueprintSectionJourney         BlueprintSectionType = "journey"
+	BlueprintSectionArchitecture    BlueprintSectionType = "architecture"
+	BlueprintSectionStateMachine    BlueprintSectionType = "state_machine"
+	BlueprintSectionWorkflow        BlueprintSectionType = "workflow"
+	BlueprintSectionWBS             BlueprintSectionType = "wbs"
+	BlueprintSectionCrossValidation BlueprintSectionType = "cross_validation"
+
+	BlueprintSectionPending    BlueprintSectionStatus = "pending"
+	BlueprintSectionGenerating BlueprintSectionStatus = "generating"
+	BlueprintSectionCompleted  BlueprintSectionStatus = "completed"
+	BlueprintSectionFailed     BlueprintSectionStatus = "failed"
+	BlueprintSectionManualEdit BlueprintSectionStatus = "manual_edit"
+	BlueprintSectionValidated  BlueprintSectionStatus = "validated"
+
+	BlueprintGenerationPending       BlueprintGenerationStatus = "pending"
+	BlueprintGenerationInProgress    BlueprintGenerationStatus = "in_progress"
+	BlueprintGenerationPartialFailed BlueprintGenerationStatus = "partial_failed"
+	BlueprintGenerationCompleted     BlueprintGenerationStatus = "completed"
+	BlueprintGenerationFailed        BlueprintGenerationStatus = "failed"
+)
+
+var BlueprintSectionOrder = []BlueprintSectionType{
+	BlueprintSectionContext,
+	BlueprintSectionJourney,
+	BlueprintSectionArchitecture,
+	BlueprintSectionStateMachine,
+	BlueprintSectionWorkflow,
+	BlueprintSectionWBS,
+	BlueprintSectionCrossValidation,
 }

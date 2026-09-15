@@ -1393,3 +1393,39 @@ func TestQuotationsSolutionTypeSchema(t *testing.T) {
 	assert.Equal(t, 100, *maxLen)
 	assert.Equal(t, "NO", isNullable)
 }
+
+func TestBlueprintSession01Schema(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+
+	dataType, maxLen, isNullable, err := columnDetails(ctx, pool, "blueprint_revisions", "idempotency_payload_hash")
+	require.NoError(t, err)
+	assert.Equal(t, "character", dataType)
+	require.NotNil(t, maxLen)
+	assert.Equal(t, 64, *maxLen)
+	assert.Equal(t, "YES", isNullable)
+
+	bpRevConstraints := []string{
+		"chk_bp_idempotency_payload_hash",
+		"chk_bp_publication_status",
+		"chk_bp_generation_status",
+	}
+	for _, c := range bpRevConstraints {
+		exists, err := constraintExists(ctx, pool, "blueprint_revisions", c)
+		require.NoError(t, err)
+		assert.True(t, exists, "expected constraint %s on blueprint_revisions to exist", c)
+	}
+
+	secRunExists, err := constraintExists(ctx, pool, "blueprint_section_runs", "chk_bp_section_status")
+	require.NoError(t, err)
+	assert.True(t, secRunExists, "expected constraint chk_bp_section_status on blueprint_section_runs to exist")
+
+	idxRevExists, err := indexExists(ctx, pool, "blueprint_revisions", "idx_blueprint_revisions_company_blueprint")
+	require.NoError(t, err)
+	assert.True(t, idxRevExists, "expected index idx_blueprint_revisions_company_blueprint on blueprint_revisions to exist")
+
+	idxSecExists, err := indexExists(ctx, pool, "blueprint_section_runs", "idx_blueprint_section_runs_company_revision")
+	require.NoError(t, err)
+	assert.True(t, idxSecExists, "expected index idx_blueprint_section_runs_company_revision on blueprint_section_runs to exist")
+}
+
