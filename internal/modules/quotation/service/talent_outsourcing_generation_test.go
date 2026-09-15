@@ -16,7 +16,7 @@ import (
 func validTalentOutsourcingGenerateRequest() dto.GenerateQuotationRequest {
 	in := talentBPJSInput()
 	in.DocumentNumber = "LANDA/BPJS/0626/001"
-	return dto.GenerateQuotationRequest{Subject: "Penawaran Talent", CommercialScheme: domain.CommercialSchemeTalentOutsourcing, TalentOutsourcing: &in}
+	return dto.GenerateQuotationRequest{Subject: "Penawaran Talent", SolutionType: "talent_outsourcing", CommercialScheme: domain.CommercialSchemeTalentOutsourcing, TalentOutsourcing: &in}
 }
 
 func TestInspectTalentOutsourcingDraftClassification(t *testing.T) {

@@ -1902,3 +1902,177 @@ func TestSaveDraftKioskQueueRejectsRemovedCivilClause(t *testing.T) {
 	after := captureSnapshot(t, pool, qid)
 	assert.Equal(t, 1, after.version)
 }
+
+// ---------------------------------------------------------------------------
+// Dedicated Squad Modern Save Draft Integration Tests
+// ---------------------------------------------------------------------------
+
+func generateDedicatedSquadModernDraft(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	fx := seedPipelineFixtures(t, pool)
+
+	ctx := context.Background()
+	rateCardID := uuid.New()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO rate_cards (id, company_id, code, name, market, currency, effective_from, is_active)
+		VALUES ($1, $2, 'VENTURO-STD-2026', 'Venturo Standard 2026', 'national', 'IDR', NOW(), true)
+	`, rateCardID, fx.companyID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO rate_card_items (company_id, rate_card_id, role, seniority, term_type, amount_per_month, kickoff_fee)
+		VALUES
+			($1, $2, 'backend_programmer', 'middle', 'short_term', 18000000, 3300000),
+			($1, $2, 'backend_programmer', 'middle', 'long_term', 18000000, 3300000)
+	`, fx.companyID, rateCardID)
+	require.NoError(t, err)
+
+	anchor := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	input := domain.DedicatedSquadInput{
+		Model:       domain.ModelSOWSmall,
+		Requirement: "Build backend platform API and quotation service",
+		DevelopmentSquad: []domain.SquadLineInput{
+			{
+				Role:              "backend_programmer",
+				Seniority:         "middle",
+				HeadcountQuarters: 4,
+				PeriodQuarters:    12,
+			},
+		},
+		PaymentCount:      3,
+		PaymentAnchorDate: &anchor,
+		Timeline: domain.TimelineInput{
+			Mode: domain.TimelineRelative,
+		},
+	}
+
+	req := fx.request()
+	req.CommercialScheme = domain.CommercialSchemeDedicatedSquad
+	req.SolutionType = "dedicated_squad"
+	req.RateCardID = rateCardID
+	req.RateCardCode = "VENTURO-STD-2026"
+	req.DedicatedSquad = &input
+	req.SubscriptionSaaS, req.WhiteLabel, req.StandaloneMaintenance, req.CustomDevelopment, req.KioskQueueSystem, req.TalentOutsourcing, req.CloudInfrastructure = nil, nil, nil, nil, nil, nil, nil
+	req.BudgetMaximum, req.ProjectDurationMonths = 0, 0
+	req.MandatoryScope, req.OptionalScope, req.AllowedStandardActivities = nil, nil, nil
+	req.PaymentTerms = dto.PaymentTermsInput{}
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{text: `{"modules":[{"name":"Platform API","sub_features":["Authentication","Quotation Service"]}]}`},
+	}}
+	svc, _ := newSvc(pool, mock)
+	qid, err := svc.Generate(ctx, fx.companyID, nil, req)
+	require.NoError(t, err)
+	return qid, fx.companyID
+}
+
+func TestSaveDraftDedicatedModern_Success_Unmodified(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+
+	// Verify AllocationSnapshot is strictly NULL in database
+	var allocSnap *string
+	err := pool.QueryRow(context.Background(), `SELECT allocation_snapshot FROM quotation_revisions WHERE quotation_id = $1`, qid).Scan(&allocSnap)
+	require.NoError(t, err)
+	assert.Nil(t, allocSnap, "modern dedicated squad must have NULL allocation_snapshot")
+
+	snap := captureSnapshot(t, pool, qid)
+	require.Equal(t, 1, snap.version)
+	require.NotEmpty(t, snap.html)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    snap.html,
+		ContentVersion: snap.version,
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft failed: %v (detail: %#v)", err, err)
+	}
+	require.NoError(t, err)
+	assert.Equal(t, qid, res.QuotationID)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+	assert.False(t, res.UpdatedAt.IsZero())
+
+	// Verify DB state and verify allocation_snapshot remains NULL
+	snapAfter := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 2, snapAfter.version)
+	err = pool.QueryRow(context.Background(), `SELECT allocation_snapshot FROM quotation_revisions WHERE quotation_id = $1`, qid).Scan(&allocSnap)
+	require.NoError(t, err)
+	assert.Nil(t, allocSnap, "allocation_snapshot must remain NULL after save draft")
+}
+
+func TestSaveDraftDedicatedModern_CommercialModified(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modified := strings.Replace(snap.html, "54.000.000", "58.000.000", 1)
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified)
+	assert.True(t, res.CommercialContentModified)
+}
+
+func TestSaveDraftDedicatedModern_LegalModified(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modified := strings.Replace(snap.html, "Biaya akomodasi, transportasi luar kota", "Biaya akomodasi khusus dinegosiasikan", 1)
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.True(t, res.LegalContentModified)
+	assert.False(t, res.CommercialContentModified)
+}
+
+func TestSaveDraftDedicatedModern_RejectsMissingRequiredSection(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modified := strings.Replace(snap.html, `<section data-block-type="payment"`, `<section data-block-type="removed"`, 1)
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+}
+
+func TestSaveDraftDedicatedModern_RejectsDuplicateMarker(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	modified := strings.Replace(snap.html, `<td data-field="total_investment">`, `<td data-field="total_investment"><td data-field="total_investment">`, 1)
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+}

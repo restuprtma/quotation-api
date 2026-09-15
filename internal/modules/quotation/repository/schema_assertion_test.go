@@ -41,7 +41,7 @@ func getTestPool(t *testing.T) *pgxpool.Pool {
 		}
 		name := os.Getenv("DB_NAME")
 		if name == "" {
-			name = "quotation_db"
+			name = "tuai"
 		}
 		ssl := os.Getenv("DB_SSLMODE")
 		if ssl == "" {
@@ -95,6 +95,16 @@ func columnExists(ctx context.Context, pool *pgxpool.Pool, table, column string)
 		return false, "", nil
 	}
 	return true, dataType, nil
+}
+
+func columnDetails(ctx context.Context, pool *pgxpool.Pool, table, column string) (dataType string, maxLen *int, isNullable string, err error) {
+	query := `
+		SELECT data_type, character_maximum_length, is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+	`
+	err = pool.QueryRow(ctx, query, table, column).Scan(&dataType, &maxLen, &isNullable)
+	return
 }
 
 func constraintExists(ctx context.Context, pool *pgxpool.Pool, table, constraintName string) (bool, error) {
@@ -1370,4 +1380,16 @@ func TestQuotationCommercialSchemeConstraintAllowsWhiteLabel(t *testing.T) {
 	assert.Contains(t, definition, "dedicated_squad")
 	assert.Contains(t, definition, "subscription_saas")
 	assert.Contains(t, definition, "white_label")
+}
+
+func TestQuotationsSolutionTypeSchema(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+
+	dataType, maxLen, isNullable, err := columnDetails(ctx, pool, "quotations", "solution_type")
+	require.NoError(t, err)
+	assert.Equal(t, "character varying", dataType)
+	require.NotNil(t, maxLen)
+	assert.Equal(t, 100, *maxLen)
+	assert.Equal(t, "NO", isNullable)
 }

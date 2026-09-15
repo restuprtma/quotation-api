@@ -576,7 +576,11 @@ func (s *QuotationGenerationService) renderAndPersistDedicated(ctx context.Conte
 	if err != nil || strings.TrimSpace(sanitized) == "" {
 		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document sanitization failed")
 	}
-	if !strings.Contains(sanitized, `class="quotation-document"`) || !strings.Contains(sanitized, `data-block-type="commercial"`) {
+	if err := ValidateDedicatedSquadIntegrity(sanitized, DedicatedSquadIntegrityExpectations{
+		Calculation: document.Calculation,
+		Profile:     document.Profile,
+		Rules:       document.Rules,
+	}); err != nil {
 		return newGenerationError(ErrCodeUnsafeHTML, "dedicated document integrity validation failed")
 	}
 	hash := sha256.Sum256([]byte(sanitized))
@@ -2023,6 +2027,188 @@ func (s *QuotationGenerationService) inspectTalentOutsourcingDraft(
 }
 
 func (s *QuotationGenerationService) inspectDedicatedDraft(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {
+	var genReq dto.GenerateQuotationRequest
+	if len(draft.GenerationInput) > 0 && string(draft.GenerationInput) != "null" {
+		if err := json.Unmarshal(draft.GenerationInput, &genReq); err != nil {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "generation input snapshot is invalid")
+		}
+	}
+	if genReq.DedicatedSquad != nil {
+		return s.inspectDedicatedModernDraft(ctx, companyID, draft, html, genReq)
+	}
+	return s.inspectDedicatedLegacyDraft(ctx, companyID, draft, html)
+}
+
+func (s *QuotationGenerationService) inspectDedicatedModernDraft(
+	ctx context.Context,
+	companyID uuid.UUID,
+	draft *repository.DraftRevisionForSave,
+	htmlStr string,
+	req dto.GenerateQuotationRequest,
+) (legalModified, commercialModified bool, total int64, err error) {
+	_ = ctx
+	_ = companyID
+	if req.DedicatedSquad == nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad input snapshot is missing")
+	}
+	input := *req.DedicatedSquad
+	if err := input.Validate(); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad input snapshot is invalid")
+	}
+
+	// 1. Unmarshal calculation snapshot
+	var calc domain.DedicatedSquadCalculation
+	if len(draft.CalculationSnapshot) == 0 || string(draft.CalculationSnapshot) == "null" || json.Unmarshal(draft.CalculationSnapshot, &calc) != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation snapshot is invalid")
+	}
+
+	// 2. Unmarshal resolved profile snapshot
+	var profile ResolvedQuotationProfile
+	if len(draft.ResolvedProfileSnapshot) == 0 || string(draft.ResolvedProfileSnapshot) == "null" || json.Unmarshal(draft.ResolvedProfileSnapshot, &profile) != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad profile snapshot is invalid")
+	}
+
+	// 3. Verify calculation invariants
+	if calc.Model != input.Model {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation model mismatch")
+	}
+	if len(calc.Development) == 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation development lines are empty")
+	}
+	if calc.DevelopmentSubtotal < 0 || calc.MaintenanceSubtotal < 0 ||
+		calc.Preparation.Gross < 0 || calc.Preparation.Discount < 0 || calc.Preparation.Net < 0 ||
+		calc.Total < 0 || calc.Discount < 0 || calc.TotalInvestment < 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation contains negative values")
+	}
+	var devSum int64
+	for _, l := range calc.Development {
+		if l.AmountPerUnit < 0 || l.LineTotal < 0 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad development line contains negative values")
+		}
+		devSum += l.LineTotal
+	}
+	if calc.DevelopmentSubtotal != devSum {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation development subtotal is inconsistent")
+	}
+	var maintSum int64
+	for _, l := range calc.Maintenance {
+		if l.AmountPerUnit < 0 || l.LineTotal < 0 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad maintenance line contains negative values")
+		}
+		maintSum += l.LineTotal
+	}
+	if calc.MaintenanceSubtotal != maintSum {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation maintenance subtotal is inconsistent")
+	}
+	if calc.Preparation.Net != calc.Preparation.Gross-calc.Preparation.Discount {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation preparation net is inconsistent")
+	}
+	if calc.Total != calc.DevelopmentSubtotal+calc.MaintenanceSubtotal+calc.Preparation.Gross {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation total is inconsistent")
+	}
+	if calc.TotalInvestment != calc.Total-calc.Discount {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation total investment is inconsistent")
+	}
+	if len(calc.Payments) == 0 {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation payments are empty")
+	}
+	var paySum int64
+	for _, p := range calc.Payments {
+		if p.Nominal <= 0 {
+			return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation payment nominal must be positive")
+		}
+		paySum += p.Nominal
+	}
+	if paySum != calc.TotalInvestment {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad calculation payment sum does not equal total investment")
+	}
+
+	// 4. Verify profile consistency with input on serialized fields
+	expectedProfile, err := ResolveDedicatedSquadProfile(input)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to resolve dedicated squad profile")
+	}
+	if !dedicatedSquadProfilesMatch(profile, expectedProfile) {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad profile snapshot is inconsistent")
+	}
+
+	// 5. Evaluate rules
+	rules, err := EvaluateDedicatedSquadRulesWithProfile(input, profile, calc.DevelopmentSubtotal)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "failed to evaluate dedicated squad rules")
+	}
+
+	// 6. ValidateDocumentSafety
+	var budgetMax *int64
+	if draft.BudgetMaximum != nil && *draft.BudgetMaximum > 0 {
+		budgetMax = draft.BudgetMaximum
+	}
+	if verr := s.domValidator.ValidateDocumentSafety(htmlStr, budgetMax, calc.TotalInvestment); verr != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "document safety validation failed")
+	}
+
+	// 7. Structure validation
+	expected := DedicatedSquadIntegrityExpectations{
+		Input:       input,
+		Calculation: calc,
+		Profile:     profile,
+		Rules:       rules,
+	}
+	if err := ValidateDedicatedSquadStructureForDraft(htmlStr, expected); err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad document structure is invalid")
+	}
+
+	// 8. Commercial and Legal modified checks
+	commercialModified, err = CheckDedicatedSquadCommercialModified(htmlStr, expected)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad commercial content is invalid")
+	}
+	legalModified, err = CheckDedicatedSquadLegalModified(htmlStr, expected)
+	if err != nil {
+		return false, false, 0, newGenerationError(ErrCodeUnsafeHTML, "dedicated squad legal content is invalid")
+	}
+
+	return legalModified, commercialModified, calc.TotalInvestment, nil
+}
+
+func dedicatedSquadProfilesMatch(a, b ResolvedQuotationProfile) bool {
+	if a.PreparationKind != b.PreparationKind ||
+		a.PreparationDiscountBPS != b.PreparationDiscountBPS ||
+		a.MaintenanceMode != b.MaintenanceMode ||
+		a.TimelineMode != b.TimelineMode ||
+		a.PaymentMode != b.PaymentMode ||
+		a.DocumentOptions.LetterPrefix != b.DocumentOptions.LetterPrefix ||
+		a.DocumentOptions.TaxTreatment != b.DocumentOptions.TaxTreatment {
+		return false
+	}
+	if len(a.IncludedPhases) != len(b.IncludedPhases) {
+		return false
+	}
+	for i := range a.IncludedPhases {
+		if a.IncludedPhases[i] != b.IncludedPhases[i] {
+			return false
+		}
+	}
+	if len(a.PaymentRows) != len(b.PaymentRows) {
+		return false
+	}
+	for i := range a.PaymentRows {
+		if a.PaymentRows[i] != b.PaymentRows[i] {
+			return false
+		}
+	}
+	if len(a.DocumentOptions.ClauseCodes) != len(b.DocumentOptions.ClauseCodes) {
+		return false
+	}
+	for i := range a.DocumentOptions.ClauseCodes {
+		if a.DocumentOptions.ClauseCodes[i] != b.DocumentOptions.ClauseCodes[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *QuotationGenerationService) inspectDedicatedLegacyDraft(ctx context.Context, companyID uuid.UUID, draft *repository.DraftRevisionForSave, html string) (legalModified, commercialModified bool, total int64, err error) {
 	var enriched dto.EnrichedAllocation
 	if err := json.Unmarshal(draft.AllocationSnapshot, &enriched); err != nil ||
 		enriched.TotalInvestment <= 0 || strings.TrimSpace(enriched.Currency) == "" || len(enriched.Resources) == 0 {
@@ -3307,6 +3493,14 @@ func validateGenerateInput(req dto.GenerateQuotationRequest) error {
 	subject := strings.TrimSpace(req.Subject)
 	if subject == "" || utf8.RuneCountInString(subject) > 200 {
 		return newGenerationError(ErrCodeGenerationFailed, "subject must be between 1 and 200 characters")
+	}
+
+	solutionType := strings.TrimSpace(req.SolutionType)
+	if solutionType == "" || utf8.RuneCountInString(solutionType) > 100 {
+		return newGenerationError(
+			ErrCodeGenerationFailed,
+			"solution_type must be between 1 and 100 characters",
+		)
 	}
 
 	switch req.CommercialScheme {

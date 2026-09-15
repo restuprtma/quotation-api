@@ -521,3 +521,88 @@ func TestCheckSubscriptionSaaS_SaveDraftAuditFlags(t *testing.T) {
 		assert.True(t, legalMod)
 	})
 }
+
+func TestValidateSubscriptionSaaSIntegrity_LegalTemplateBeginningWithH2Passes(t *testing.T) {
+	input := validPercetakanTestInput()
+	calc, err := CalculateSubscriptionSaaS(input)
+	require.NoError(t, err)
+	profile, err := ResolveSubscriptionSaaSProfile(input)
+	require.NoError(t, err)
+
+	legalHTML := "<h2>Ketentuan</h2><h3>Pernyataan Pembuka</h3><p>Isi ketentuan penawaran...</p>"
+	metadata := QuotationMetadata{
+		QuotationNumber:   "QTN/2026/08/0002",
+		Subject:           "Pengembangan Subscription AI Percetakan",
+		ClientName:        "Bpk. Hendra",
+		ClientCompanyName: "PT Percetakan Jaya",
+		IssueDate:         "1 Agustus 2026",
+	}
+
+	renderer := NewSubscriptionSaaSHTMLRenderer()
+	docHTML, err := renderer.Render(SubscriptionSaaSDocumentInput{
+		Metadata:      metadata,
+		Input:         input,
+		Calculation:   calc,
+		Profile:       profile,
+		FeatureGroups: input.FeatureGroups,
+		LegalHTML:     legalHTML,
+	})
+	require.NoError(t, err)
+
+	exp := SubscriptionSaaSIntegrityExpectations{
+		Calculation: calc,
+		Profile:     profile,
+		LegalHTML:   legalHTML,
+	}
+
+	legalMod, err := CheckSubscriptionSaaSLegalModified(docHTML, exp)
+	require.NoError(t, err)
+	assert.False(t, legalMod, "legal template starting with h2 must not be treated as modified")
+
+	err = ValidateSubscriptionSaaSIntegrity(docHTML, exp)
+	require.NoError(t, err, "validation must pass when legal template begins with h2")
+}
+
+func TestValidateSubscriptionSaaSIntegrity_ModifiedNestedLegalH2Fails(t *testing.T) {
+	input := validPercetakanTestInput()
+	calc, err := CalculateSubscriptionSaaS(input)
+	require.NoError(t, err)
+	profile, err := ResolveSubscriptionSaaSProfile(input)
+	require.NoError(t, err)
+
+	legalHTML := "<h2>Ketentuan</h2><h3>Pernyataan Pembuka</h3><p>Isi ketentuan penawaran...</p>"
+	metadata := QuotationMetadata{
+		QuotationNumber:   "QTN/2026/08/0002",
+		Subject:           "Pengembangan Subscription AI Percetakan",
+		ClientName:        "Bpk. Hendra",
+		ClientCompanyName: "PT Percetakan Jaya",
+		IssueDate:         "1 Agustus 2026",
+	}
+
+	renderer := NewSubscriptionSaaSHTMLRenderer()
+	docHTML, err := renderer.Render(SubscriptionSaaSDocumentInput{
+		Metadata:      metadata,
+		Input:         input,
+		Calculation:   calc,
+		Profile:       profile,
+		FeatureGroups: input.FeatureGroups,
+		LegalHTML:     legalHTML,
+	})
+	require.NoError(t, err)
+
+	exp := SubscriptionSaaSIntegrityExpectations{
+		Calculation: calc,
+		Profile:     profile,
+		LegalHTML:   legalHTML,
+	}
+
+	tampered := strings.Replace(docHTML, "<h2>Ketentuan</h2>", "<h2>Ketentuan Baru</h2>", 1)
+
+	legalMod, err := CheckSubscriptionSaaSLegalModified(tampered, exp)
+	require.NoError(t, err)
+	assert.True(t, legalMod, "tampering nested h2 inside legal block must be detected")
+
+	err = ValidateSubscriptionSaaSIntegrity(tampered, exp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsafeHTML)
+}

@@ -230,11 +230,13 @@ func CheckSubscriptionSaaSLegalModified(document string, expected SubscriptionSa
 	}
 	if strings.TrimSpace(expected.LegalHTML) != "" {
 		var buf bytes.Buffer
+		isFirstH2 := true
 		for child := legalBlock.FirstChild; child != nil; child = child.NextSibling {
 			if child.Type == html.CommentNode {
 				continue
 			}
-			if child.Type == html.ElementNode && child.Data == "h2" {
+			if child.Type == html.ElementNode && child.Data == "h2" && isFirstH2 {
+				isFirstH2 = false
 				continue
 			}
 			if err := html.Render(&buf, child); err != nil {

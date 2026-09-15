@@ -1,0 +1,2 @@
+ALTER TABLE quotations
+ALTER COLUMN solution_type TYPE VARCHAR(100);
