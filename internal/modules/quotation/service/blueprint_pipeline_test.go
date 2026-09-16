@@ -1,0 +1,694 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"venturo-skeleton-go/internal/modules/quotation/domain"
+	"venturo-skeleton-go/internal/modules/quotation/repository"
+)
+
+type fakePipelineRepo struct {
+	claimNextCalls int
+	claimNextFn    func(ctx context.Context, companyID, blueprintID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error)
+
+	claimFailedCalls int
+	claimFailedFn    func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error)
+
+	completeCalls  int
+	completeParams []repository.CompleteBlueprintSectionParams
+	completeFn     func(ctx context.Context, params repository.CompleteBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error)
+
+	failCalls  int
+	failParams []repository.FailBlueprintSectionParams
+	failFn     func(ctx context.Context, params repository.FailBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error)
+
+	loadManualCalls int
+	loadManualFn    func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*repository.BlueprintManualSnapshot, error)
+
+	completeManualCalls  int
+	completeManualParams []repository.CompleteBlueprintManualParams
+	completeManualFn     func(ctx context.Context, params repository.CompleteBlueprintManualParams) (*repository.BlueprintSectionPersistenceResult, error)
+}
+
+func (f *fakePipelineRepo) ClaimNextBlueprintSection(ctx context.Context, companyID, blueprintID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+	f.claimNextCalls++
+	if f.claimNextFn != nil {
+		return f.claimNextFn(ctx, companyID, blueprintID, now, staleAfter)
+	}
+	return nil, repository.ErrBlueprintNoEligibleSection
+}
+
+func (f *fakePipelineRepo) ClaimFailedBlueprintSection(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+	f.claimFailedCalls++
+	if f.claimFailedFn != nil {
+		return f.claimFailedFn(ctx, companyID, blueprintID, sectionType, now, staleAfter)
+	}
+	return nil, repository.ErrBlueprintSectionNotRetryable
+}
+
+func (f *fakePipelineRepo) CompleteBlueprintSection(ctx context.Context, params repository.CompleteBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error) {
+	f.completeCalls++
+	f.completeParams = append(f.completeParams, params)
+	if f.completeFn != nil {
+		return f.completeFn(ctx, params)
+	}
+	return &repository.BlueprintSectionPersistenceResult{
+		RevisionID:       params.Claim.RevisionID,
+		SectionType:      params.Claim.SectionType,
+		SectionStatus:    domain.BlueprintSectionCompleted,
+		GenerationStatus: domain.BlueprintGenerationInProgress,
+		ContentVersion:   params.Claim.ExpectedContentVersion + 1,
+		Attempt:          params.Claim.Attempt,
+	}, nil
+}
+
+func (f *fakePipelineRepo) FailBlueprintSection(ctx context.Context, params repository.FailBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error) {
+	f.failCalls++
+	f.failParams = append(f.failParams, params)
+	if f.failFn != nil {
+		return f.failFn(ctx, params)
+	}
+	genStatus := domain.BlueprintGenerationPartialFailed
+	if params.Terminal {
+		genStatus = domain.BlueprintGenerationFailed
+	}
+	return &repository.BlueprintSectionPersistenceResult{
+		RevisionID:       params.Claim.RevisionID,
+		SectionType:      params.Claim.SectionType,
+		SectionStatus:    domain.BlueprintSectionFailed,
+		GenerationStatus: genStatus,
+		ContentVersion:   params.Claim.ExpectedContentVersion,
+		Attempt:          params.Claim.Attempt,
+	}, nil
+}
+
+func (f *fakePipelineRepo) LoadBlueprintManualSnapshot(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*repository.BlueprintManualSnapshot, error) {
+	f.loadManualCalls++
+	if f.loadManualFn != nil {
+		return f.loadManualFn(ctx, companyID, blueprintID, sectionType)
+	}
+	return nil, repository.ErrBlueprintNotFound
+}
+
+func (f *fakePipelineRepo) CompleteBlueprintSectionManually(ctx context.Context, params repository.CompleteBlueprintManualParams) (*repository.BlueprintSectionPersistenceResult, error) {
+	f.completeManualCalls++
+	f.completeManualParams = append(f.completeManualParams, params)
+	if f.completeManualFn != nil {
+		return f.completeManualFn(ctx, params)
+	}
+	return &repository.BlueprintSectionPersistenceResult{
+		RevisionID:       params.Snapshot.RevisionID,
+		SectionType:      params.Snapshot.SectionType,
+		SectionStatus:    domain.BlueprintSectionValidated,
+		GenerationStatus: domain.BlueprintGenerationInProgress,
+		ContentVersion:   params.Snapshot.ExpectedContentVersion + 1,
+		Attempt:          1,
+	}, nil
+}
+
+type fakeProviderSource struct {
+	calls      int
+	companyIDs []uuid.UUID
+	providerFn func(ctx context.Context, companyID uuid.UUID) (AIProvider, string, string, error)
+}
+
+func (f *fakeProviderSource) ProviderForCompany(ctx context.Context, companyID uuid.UUID) (AIProvider, string, string, error) {
+	f.calls++
+	f.companyIDs = append(f.companyIDs, companyID)
+	if f.providerFn != nil {
+		return f.providerFn(ctx, companyID)
+	}
+	return &fakeAIProvider{}, "fake-provider", "fake-model", nil
+}
+
+type fakeAIProvider struct {
+	calls      int
+	requests   []GenerateRequest
+	generateFn func(ctx context.Context, req GenerateRequest) (GenerateResult, error)
+}
+
+func (f *fakeAIProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+	f.calls++
+	f.requests = append(f.requests, req)
+	if f.generateFn != nil {
+		return f.generateFn(ctx, req)
+	}
+	return GenerateResult{Text: validJourneyPayload()}, nil
+}
+
+type fakePromptBuilder struct {
+	calls   int
+	inputs  []BlueprintPromptInput
+	buildFn func(input BlueprintPromptInput) (string, error)
+}
+
+func (f *fakePromptBuilder) Build(input BlueprintPromptInput) (string, error) {
+	f.calls++
+	f.inputs = append(f.inputs, input)
+	if f.buildFn != nil {
+		return f.buildFn(input)
+	}
+	return "prompt instructions for " + string(input.Stage), nil
+}
+
+type fixedClock struct {
+	t time.Time
+}
+
+func (c fixedClock) Now() time.Time {
+	return c.t
+}
+
+func validJourneyPayload() string {
+	return `{
+		"journey": {
+			"phases": [{"id": "phase-1", "label": "Discovery", "order": 1}],
+			"actors": [{"id": "actor-1", "label": "Client", "order": 1}],
+			"activities": [{"id": "act-1", "phase_id": "phase-1", "actor_id": "actor-1", "label": "Initial Meeting", "description": "Discuss project scope"}]
+		}
+	}`
+}
+
+func makeBaseClaim(companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) *repository.BlueprintSectionClaim {
+	return &repository.BlueprintSectionClaim{
+		BlueprintID:            blueprintID,
+		RevisionID:             uuid.New(),
+		SectionRunID:           uuid.New(),
+		CompanyID:              companyID,
+		SectionType:            sectionType,
+		Attempt:                1,
+		ExpectedContentVersion: 1,
+		BlueprintTitle:         "Test Blueprint",
+		SourceContextSnapshot:  json.RawMessage(`{"quotation_id":"q-123","summary":"Banking Application"}`),
+		SkillSnapshot:          json.RawMessage(`{"preset":"enterprise","tone":"formal"}`),
+		RevisionContent:        json.RawMessage(`{}`),
+		ContextContent:         json.RawMessage(`{"title":"Banking Application","summary":"Enterprise Core"}`),
+		Dependencies: map[domain.BlueprintSectionType]json.RawMessage{
+			domain.BlueprintSectionContext: json.RawMessage(`{"title":"Banking Application"}`),
+		},
+	}
+}
+
+func TestBlueprintPipelineContinueExecutesExactlyOneProviderStage(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+		},
+	}
+	prov := &fakeAIProvider{
+		generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+			return GenerateResult{Text: validJourneyPayload()}, nil
+		},
+	}
+	provSource := &fakeProviderSource{
+		providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+			return prov, "openai", "gpt-4o", nil
+		},
+	}
+	prompts := &fakePromptBuilder{}
+	validator := NewBlueprintSectionValidator()
+	crossValidator := NewProductionBlueprintCrossValidator()
+
+	pipeline := NewBlueprintPipeline(repo, provSource, prompts, validator, crossValidator)
+
+	res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	assert.Equal(t, domain.BlueprintSectionJourney, res.Section)
+	assert.Equal(t, domain.BlueprintSectionCompleted, res.SectionStatus)
+	assert.Equal(t, 1, res.Attempt)
+	assert.Equal(t, 2, res.ContentVersion)
+
+	assert.Equal(t, 1, repo.claimNextCalls, "exactly one claim must be made")
+	assert.Equal(t, 1, provSource.calls, "provider source must be resolved once")
+	assert.Equal(t, 1, prov.calls, "exactly one generate call must be made")
+	assert.Equal(t, 1, repo.completeCalls, "exactly one complete call must be made")
+	assert.Equal(t, 0, repo.failCalls, "zero fail calls expected")
+}
+
+func TestBlueprintPipelineContinueResolvesProviderPerAction(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+		},
+	}
+
+	p1 := &fakeAIProvider{
+		generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+			return GenerateResult{Text: validJourneyPayload()}, nil
+		},
+	}
+	p2 := &fakeAIProvider{
+		generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+			return GenerateResult{Text: validJourneyPayload()}, nil
+		},
+	}
+
+	var instances []AIProvider
+	provSource := &fakeProviderSource{
+		providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+			if len(instances) == 0 {
+				instances = append(instances, p1)
+				return p1, "provider-1", "model-1", nil
+			}
+			instances = append(instances, p2)
+			return p2, "provider-2", "model-2", nil
+		},
+	}
+
+	pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+	_, err1 := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.NoError(t, err1)
+
+	_, err2 := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.NoError(t, err2)
+
+	assert.Equal(t, 2, provSource.calls, "ProviderForCompany must be called once per Continue action")
+	require.Len(t, instances, 2)
+	assert.NotSame(t, instances[0], instances[1], "provider instances must be distinct and not reused/cached")
+	assert.Equal(t, 1, p1.calls)
+	assert.Equal(t, 1, p2.calls)
+}
+
+func TestBlueprintPipelineContinueNeverTrustsExternalCompanyOrStatus(t *testing.T) {
+	repo := &fakePipelineRepo{}
+	provSource := &fakeProviderSource{}
+	pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+	// Nil company ID
+	_, err := pipeline.Continue(context.Background(), uuid.Nil, uuid.New())
+	assert.ErrorIs(t, err, ErrBlueprintPipelineInvalidInput)
+	assert.Equal(t, 0, repo.claimNextCalls)
+
+	// Nil blueprint ID
+	_, err = pipeline.Continue(context.Background(), uuid.New(), uuid.Nil)
+	assert.ErrorIs(t, err, ErrBlueprintPipelineInvalidInput)
+	assert.Equal(t, 0, repo.claimNextCalls)
+
+	// Both nil
+	_, err = pipeline.Continue(context.Background(), uuid.Nil, uuid.Nil)
+	assert.ErrorIs(t, err, ErrBlueprintPipelineInvalidInput)
+	assert.Equal(t, 0, repo.claimNextCalls)
+
+	// Nil pipeline instance
+	var nilPipeline *BlueprintPipeline
+	_, err = nilPipeline.Continue(context.Background(), uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrBlueprintPipelineInvalidInput)
+
+	// Pipeline with missing dependencies
+	incompletePipeline := &BlueprintPipeline{}
+	_, err = incompletePipeline.Continue(context.Background(), uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrBlueprintPipelineInvalidInput)
+}
+
+func TestBlueprintPipelineContinueMapsUnknownAndForeignToNotFound(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	// Case 1: Unknown blueprint ID
+	repo1 := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return nil, repository.ErrBlueprintNotFound
+		},
+	}
+	pipeline1 := NewBlueprintPipeline(repo1, &fakeProviderSource{}, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+	_, err1 := pipeline1.Continue(context.Background(), companyID, blueprintID)
+	assert.True(t, errors.Is(err1, ErrBlueprintPipelineNotFound))
+
+	// Case 2: Foreign company ID
+	foreignCompanyID := uuid.New()
+	repo2 := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return nil, repository.ErrBlueprintNotFound
+		},
+	}
+	pipeline2 := NewBlueprintPipeline(repo2, &fakeProviderSource{}, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+	_, err2 := pipeline2.Continue(context.Background(), foreignCompanyID, blueprintID)
+	assert.True(t, errors.Is(err2, ErrBlueprintPipelineNotFound))
+}
+
+func TestBlueprintPipelineContinueUsesPersistedSnapshotsAndDependencies(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	expectedSkill := json.RawMessage(`{"preset":"fintech","rules":["strict_id"]}`)
+	expectedContext := json.RawMessage(`{"quotation_id":"q-custom","summary":"Custom Fintech Spec"}`)
+	expectedDeps := map[domain.BlueprintSectionType]json.RawMessage{
+		domain.BlueprintSectionContext: json.RawMessage(`{"title":"Fintech Spec"}`),
+	}
+
+	claim := makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney)
+	claim.SkillSnapshot = expectedSkill
+	claim.SourceContextSnapshot = expectedContext
+	claim.Dependencies = expectedDeps
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return claim, nil
+		},
+	}
+	prompts := &fakePromptBuilder{}
+	pipeline := NewBlueprintPipeline(repo, &fakeProviderSource{}, prompts, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+	_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.NoError(t, err)
+
+	require.Len(t, prompts.inputs, 1)
+	input := prompts.inputs[0]
+
+	assert.Equal(t, domain.BlueprintSectionJourney, input.Stage)
+	assert.JSONEq(t, string(expectedSkill), string(input.SkillSnapshot))
+	assert.JSONEq(t, string(expectedContext), string(input.Context))
+	require.Contains(t, input.Dependencies, domain.BlueprintSectionContext)
+	assert.JSONEq(t, string(expectedDeps[domain.BlueprintSectionContext]), string(input.Dependencies[domain.BlueprintSectionContext]))
+}
+
+func TestBlueprintPipelineContinueTimesOutOneProviderAttempt(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	t.Run("provider timeout", func(t *testing.T) {
+		repo := &fakePipelineRepo{
+			claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+				return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+			},
+		}
+		prov := &fakeAIProvider{
+			generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+				select {
+				case <-ctx.Done():
+					return GenerateResult{}, ctx.Err()
+				case <-time.After(1 * time.Second):
+					return GenerateResult{Text: validJourneyPayload()}, nil
+				}
+			},
+		}
+		provSource := &fakeProviderSource{
+			providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+				return prov, "openai", "gpt-4o", nil
+			},
+		}
+
+		pipeline := NewBlueprintPipeline(
+			repo,
+			provSource,
+			&fakePromptBuilder{},
+			NewBlueprintSectionValidator(),
+			NewProductionBlueprintCrossValidator(),
+			WithBlueprintProviderTimeout(20*time.Millisecond),
+		)
+
+		_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+		assert.ErrorIs(t, err, ErrBlueprintProviderTimeout)
+
+		assert.Equal(t, 1, repo.failCalls, "failure must be persisted")
+		require.Len(t, repo.failParams, 1)
+		assert.Equal(t, "provider_timeout", repo.failParams[0].SafeErrorCode)
+		assert.False(t, repo.failParams[0].Terminal, "timeout on attempt 1 is retryable, not terminal")
+		assert.Nil(t, repo.failParams[0].SectionContent, "failed section content must be nil")
+		assert.Equal(t, 0, repo.completeCalls, "complete must not be called on timeout")
+	})
+
+	t.Run("parent cancellation preserves terminal write context without leaking raw cancel error", func(t *testing.T) {
+		repoCancel := &fakePipelineRepo{
+			claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+				return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+			},
+			failFn: func(ctx context.Context, params repository.FailBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error) {
+				assert.NoError(t, ctx.Err(), "terminal write context must remain live despite parent cancellation")
+				return &repository.BlueprintSectionPersistenceResult{
+					RevisionID:       params.Claim.RevisionID,
+					SectionType:      params.Claim.SectionType,
+					SectionStatus:    domain.BlueprintSectionFailed,
+					GenerationStatus: domain.BlueprintGenerationPartialFailed,
+					ContentVersion:   params.Claim.ExpectedContentVersion,
+					Attempt:          params.Claim.Attempt,
+				}, nil
+			},
+		}
+		prov := &fakeAIProvider{
+			generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+				return GenerateResult{}, ctx.Err()
+			},
+		}
+		provSource := &fakeProviderSource{
+			providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+				return prov, "openai", "gpt-4o", nil
+			},
+		}
+
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		cancel() // cancel parent context immediately
+
+		pipelineCancel := NewBlueprintPipeline(
+			repoCancel,
+			provSource,
+			&fakePromptBuilder{},
+			NewBlueprintSectionValidator(),
+			NewProductionBlueprintCrossValidator(),
+		)
+
+		_, cancelErr := pipelineCancel.Continue(canceledCtx, companyID, blueprintID)
+		assert.ErrorIs(t, cancelErr, ErrBlueprintProviderUnavailable)
+		assert.False(t, strings.Contains(cancelErr.Error(), "context canceled"), "raw cancellation error text must not leak")
+		assert.Equal(t, 1, repoCancel.failCalls, "failure persistence must have completed")
+	})
+}
+
+func TestBlueprintPipelineContinueRejectsNonPureJSONWithoutRepair(t *testing.T) {
+	testCases := []struct {
+		name        string
+		rawResponse string
+	}{
+		{
+			name:        "markdown code fence",
+			rawResponse: "```json\n" + validJourneyPayload() + "\n```",
+		},
+		{
+			name:        "prose before json",
+			rawResponse: "Here is the valid journey JSON you requested:\n" + validJourneyPayload(),
+		},
+		{
+			name:        "trailing json object",
+			rawResponse: validJourneyPayload() + "\n{\"extra\":\"unwanted_second_object\"}",
+		},
+		{
+			name:        "malformed syntax",
+			rawResponse: "{\"schema_version\": \"1.0\", \"phases\": [",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			companyID := uuid.New()
+			blueprintID := uuid.New()
+
+			repo := &fakePipelineRepo{
+				claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+					return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+				},
+			}
+			prov := &fakeAIProvider{
+				generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+					return GenerateResult{Text: tc.rawResponse}, nil
+				},
+			}
+			provSource := &fakeProviderSource{
+				providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+					return prov, "openai", "gpt-4o", nil
+				},
+			}
+
+			pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+			_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+			assert.ErrorIs(t, err, ErrBlueprintInvalidSchema, "must fail strictly with invalid_schema without repairing")
+
+			assert.Equal(t, 1, repo.failCalls)
+			require.Len(t, repo.failParams, 1)
+			assert.Equal(t, "invalid_schema", repo.failParams[0].SafeErrorCode)
+			assert.False(t, repo.failParams[0].Terminal)
+			assert.Equal(t, 0, repo.completeCalls)
+		})
+	}
+}
+
+func TestBlueprintPipelineContinuePersistsSafeFailureWithoutRawOutput(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	sensitiveMarker := "SECRET_KEY_abc123_DO_NOT_EXPOSE"
+	sensitiveResponse := `{"schema_version":"1.0","invalid_token":"` + sensitiveMarker + `"}`
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+		},
+	}
+	prov := &fakeAIProvider{
+		generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+			return GenerateResult{Text: sensitiveResponse}, nil
+		},
+	}
+	provSource := &fakeProviderSource{
+		providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+			return prov, "openai", "gpt-4o", nil
+		},
+	}
+
+	pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+	_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.Error(t, err)
+
+	// Check returned error
+	assert.False(t, strings.Contains(err.Error(), sensitiveMarker), "error must not leak raw output or secret marker")
+
+	// Check persisted failure parameters
+	require.Len(t, repo.failParams, 1)
+	param := repo.failParams[0]
+	assert.False(t, strings.Contains(param.SafeErrorCode, sensitiveMarker))
+	assert.Nil(t, param.SectionContent, "section content must be nil on failure")
+
+	if len(param.SectionValidation) > 0 {
+		assert.False(t, strings.Contains(string(param.SectionValidation), sensitiveMarker), "section validation must not contain raw response text")
+	}
+}
+
+func TestBlueprintPipelineContinueDoesNotRetrySecurityFailure(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	// Content with forbidden keys triggering security_failure in BlueprintSectionValidator
+	forbiddenPayload := `{
+		"schema_version": "1.0",
+		"apiKey": "sk-secret-leak",
+		"phases": [{"id": "phase-1", "label": "Discovery", "order": 1}],
+		"actors": [{"id": "actor-1", "label": "Client", "order": 1}],
+		"activities": [{"id": "act-1", "phase_id": "phase-1", "actor_id": "actor-1", "label": "Meeting", "description": "Scope"}]
+	}`
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+		},
+	}
+	prov := &fakeAIProvider{
+		generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+			return GenerateResult{Text: forbiddenPayload}, nil
+		},
+	}
+	provSource := &fakeProviderSource{
+		providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+			return prov, "openai", "gpt-4o", nil
+		},
+	}
+
+	pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+	_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	assert.ErrorIs(t, err, ErrBlueprintSecurityFailure)
+
+	assert.Equal(t, 1, prov.calls, "security failure must not be retried internally")
+	assert.Equal(t, 1, repo.failCalls)
+	require.Len(t, repo.failParams, 1)
+	assert.Equal(t, "security_failure", repo.failParams[0].SafeErrorCode)
+	assert.True(t, repo.failParams[0].Terminal, "security failure must be marked terminal")
+}
+
+func TestBlueprintPipelineContinueRejectsStaleTerminalWrite(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	t.Run("complete claim conflict", func(t *testing.T) {
+		repo := &fakePipelineRepo{
+			claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+				return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+			},
+			completeFn: func(ctx context.Context, params repository.CompleteBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error) {
+				return nil, repository.ErrBlueprintClaimConflict
+			},
+		}
+		prov := &fakeAIProvider{
+			generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+				return GenerateResult{Text: validJourneyPayload()}, nil
+			},
+		}
+		provSource := &fakeProviderSource{
+			providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+				return prov, "openai", "gpt-4o", nil
+			},
+		}
+
+		pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+		_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+		assert.ErrorIs(t, err, ErrBlueprintExecutionConflict)
+	})
+
+	t.Run("complete version conflict", func(t *testing.T) {
+		repo := &fakePipelineRepo{
+			claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+				return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+			},
+			completeFn: func(ctx context.Context, params repository.CompleteBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error) {
+				return nil, repository.ErrBlueprintContentConflict
+			},
+		}
+		prov := &fakeAIProvider{
+			generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+				return GenerateResult{Text: validJourneyPayload()}, nil
+			},
+		}
+		provSource := &fakeProviderSource{
+			providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+				return prov, "openai", "gpt-4o", nil
+			},
+		}
+
+		pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+		_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+		assert.ErrorIs(t, err, ErrBlueprintExecutionConflict)
+	})
+
+	t.Run("fail claim conflict", func(t *testing.T) {
+		repo := &fakePipelineRepo{
+			claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+				return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+			},
+			failFn: func(ctx context.Context, params repository.FailBlueprintSectionParams) (*repository.BlueprintSectionPersistenceResult, error) {
+				return nil, repository.ErrBlueprintClaimConflict
+			},
+		}
+		prov := &fakeAIProvider{
+			generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+				return GenerateResult{Text: "invalid json"}, nil
+			},
+		}
+		provSource := &fakeProviderSource{
+			providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+				return prov, "openai", "gpt-4o", nil
+			},
+		}
+
+		pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+		_, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+		assert.ErrorIs(t, err, ErrBlueprintExecutionConflict)
+	})
+}
