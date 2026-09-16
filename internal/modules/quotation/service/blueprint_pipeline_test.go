@@ -62,12 +62,18 @@ func (f *fakePipelineRepo) CompleteBlueprintSection(ctx context.Context, params 
 	if f.completeFn != nil {
 		return f.completeFn(ctx, params)
 	}
+	genStatus := domain.BlueprintGenerationInProgress
+	version := params.Claim.ExpectedContentVersion + 1
+	if params.Final {
+		genStatus = domain.BlueprintGenerationCompleted
+		version = params.Claim.ExpectedContentVersion
+	}
 	return &repository.BlueprintSectionPersistenceResult{
 		RevisionID:       params.Claim.RevisionID,
 		SectionType:      params.Claim.SectionType,
 		SectionStatus:    domain.BlueprintSectionCompleted,
-		GenerationStatus: domain.BlueprintGenerationInProgress,
-		ContentVersion:   params.Claim.ExpectedContentVersion + 1,
+		GenerationStatus: genStatus,
+		ContentVersion:   version,
 		Attempt:          params.Claim.Attempt,
 	}, nil
 }
@@ -1084,4 +1090,212 @@ func TestBlueprintPipelineConcurrentManualContinueRetryHasSingleWinner(t *testin
 
 	assert.Equal(t, 1, successes, "exactly one caller must win")
 	assert.Equal(t, callers-1, failures, "all losing callers must fail")
+}
+
+func TestBlueprintPipelineContinueRunsCrossValidationWithoutProvider(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	claim := makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionCrossValidation)
+	claim.RevisionContent = testCompleteValidBundle()
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return claim, nil
+		},
+	}
+	prov := &fakeAIProvider{}
+	provSource := &fakeProviderSource{
+		providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+			return prov, "openai", "gpt-4o", nil
+		},
+	}
+	prompts := &fakePromptBuilder{}
+	validator := NewBlueprintSectionValidator()
+	crossValidator := NewProductionBlueprintCrossValidator()
+
+	pipeline := NewBlueprintPipeline(repo, provSource, prompts, validator, crossValidator)
+
+	res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	assert.Equal(t, domain.BlueprintSectionCrossValidation, res.Section)
+	assert.Equal(t, domain.BlueprintSectionCompleted, res.SectionStatus)
+	assert.Equal(t, domain.BlueprintGenerationCompleted, res.GenerationStatus)
+	assert.Equal(t, claim.ExpectedContentVersion, res.ContentVersion, "cross validation must not increment content version")
+
+	assert.Equal(t, 1, repo.claimNextCalls)
+	assert.Equal(t, 0, provSource.calls, "ProviderSource must not be resolved for cross validation")
+	assert.Equal(t, 0, prov.calls, "provider Generate must not be called for cross validation")
+	assert.Equal(t, 0, prompts.calls, "prompt builder must not be called for cross validation")
+	assert.Equal(t, 1, repo.completeCalls)
+	assert.Equal(t, 0, repo.failCalls)
+
+	require.Len(t, repo.completeParams, 1)
+	cp := repo.completeParams[0]
+	assert.True(t, cp.Final)
+	assert.Empty(t, cp.ProviderName)
+	assert.Empty(t, cp.Model)
+	assert.Equal(t, claim.RevisionContent, cp.RevisionContent)
+
+	var crossResult BlueprintCrossValidationResult
+	err = json.Unmarshal(cp.CrossValidationResult, &crossResult)
+	require.NoError(t, err)
+	assert.True(t, crossResult.Valid)
+}
+
+func TestBlueprintPipelineContinuePersistsCrossValidationWarningsAndCoverage(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	claim := makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionCrossValidation)
+	claim.RevisionContent = testCompleteValidBundle()
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return claim, nil
+		},
+	}
+	provSource := &fakeProviderSource{}
+	prompts := &fakePromptBuilder{}
+	validator := NewBlueprintSectionValidator()
+	crossValidator := NewProductionBlueprintCrossValidator()
+
+	pipeline := NewBlueprintPipeline(repo, provSource, prompts, validator, crossValidator)
+
+	res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	require.Len(t, repo.completeParams, 1)
+	cp := repo.completeParams[0]
+	assert.True(t, cp.Final)
+
+	// SectionContent, SectionValidation, and CrossValidationResult must be identical
+	assert.JSONEq(t, string(cp.CrossValidationResult), string(cp.SectionContent))
+	assert.JSONEq(t, string(cp.CrossValidationResult), string(cp.SectionValidation))
+
+	var crossResult BlueprintCrossValidationResult
+	err = json.Unmarshal(cp.CrossValidationResult, &crossResult)
+	require.NoError(t, err)
+	assert.True(t, crossResult.Valid)
+	assert.NotEmpty(t, crossResult.Issues, "expected non-blocking warnings in sample bundle")
+	for _, issue := range crossResult.Issues {
+		assert.False(t, issue.Blocking, "all issues in valid bundle must be non-blocking warnings")
+	}
+	assert.Greater(t, crossResult.Coverage.ArchitectureToWBS, 0.0)
+}
+
+func TestBlueprintPipelineContinueBlocksOnCrossValidationErrors(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	// Create bundle with dangling architecture reference in WBS module
+	invalidBundle := strings.Replace(
+		string(testCompleteValidBundle()),
+		`"references": ["architecture.node.node-1"]`,
+		`"references": ["architecture.node.nonexistent-node"]`,
+		1,
+	)
+
+	claim := makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionCrossValidation)
+	claim.RevisionContent = json.RawMessage(invalidBundle)
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return claim, nil
+		},
+	}
+	provSource := &fakeProviderSource{}
+	prompts := &fakePromptBuilder{}
+	validator := NewBlueprintSectionValidator()
+	crossValidator := NewProductionBlueprintCrossValidator()
+
+	pipeline := NewBlueprintPipeline(repo, provSource, prompts, validator, crossValidator)
+
+	res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	assert.Nil(t, res)
+	assert.True(t, errors.Is(err, ErrBlueprintCrossValidationFailure))
+
+	assert.Equal(t, 0, provSource.calls)
+	assert.Equal(t, 0, repo.completeCalls)
+	assert.Equal(t, 1, repo.failCalls)
+
+	require.Len(t, repo.failParams, 1)
+	fp := repo.failParams[0]
+	assert.Equal(t, "cross_validation_error", fp.SafeErrorCode)
+	assert.False(t, fp.Terminal)
+
+	// SectionContent and CrossValidationResult must be identical safe cross validation result
+	require.NotEmpty(t, fp.SectionContent)
+	require.NotEmpty(t, fp.CrossValidationResult)
+	assert.JSONEq(t, string(fp.SectionContent), string(fp.CrossValidationResult))
+
+	var crossResult BlueprintCrossValidationResult
+	err = json.Unmarshal(fp.CrossValidationResult, &crossResult)
+	require.NoError(t, err)
+	assert.False(t, crossResult.Valid)
+	assert.Equal(t, "cross_validation_error", crossResult.SafeOutcome)
+
+	hasDangling := false
+	for _, issue := range crossResult.Issues {
+		if issue.Code == BlueprintIssueDanglingReference && issue.Blocking {
+			hasDangling = true
+			break
+		}
+	}
+	assert.True(t, hasDangling, "expected blocking dangling reference issue")
+}
+
+func TestBlueprintPipelineContinueCompletedIsIdempotentNoOp(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return nil, ErrBlueprintPipelineCompleted
+		},
+	}
+	provSource := &fakeProviderSource{}
+	prompts := &fakePromptBuilder{}
+	validator := NewBlueprintSectionValidator()
+	crossValidator := NewProductionBlueprintCrossValidator()
+
+	pipeline := NewBlueprintPipeline(repo, provSource, prompts, validator, crossValidator)
+
+	res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	assert.Nil(t, res)
+	assert.True(t, errors.Is(err, ErrBlueprintPipelineCompleted))
+
+	assert.Equal(t, 1, repo.claimNextCalls)
+	assert.Equal(t, 0, provSource.calls)
+	assert.Equal(t, 0, repo.completeCalls)
+	assert.Equal(t, 0, repo.failCalls)
+}
+
+func TestBlueprintPipelineContinueBlocksWhenDependencyIsNotStable(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+
+	repo := &fakePipelineRepo{
+		claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+			return nil, repository.ErrBlueprintNoEligibleSection
+		},
+	}
+	provSource := &fakeProviderSource{}
+	prompts := &fakePromptBuilder{}
+	validator := NewBlueprintSectionValidator()
+	crossValidator := NewProductionBlueprintCrossValidator()
+
+	pipeline := NewBlueprintPipeline(repo, provSource, prompts, validator, crossValidator)
+
+	res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+	assert.Nil(t, res)
+	assert.True(t, errors.Is(err, ErrBlueprintPipelineBlocked))
+
+	assert.Equal(t, 1, repo.claimNextCalls)
+	assert.Equal(t, 0, provSource.calls)
+	assert.Equal(t, 0, repo.completeCalls)
+	assert.Equal(t, 0, repo.failCalls)
 }

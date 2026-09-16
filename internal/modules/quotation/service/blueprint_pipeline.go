@@ -157,6 +157,10 @@ func (p *BlueprintPipeline) Continue(ctx context.Context, companyID, blueprintID
 		return nil, p.mapClaimError(err)
 	}
 
+	if claim.SectionType == domain.BlueprintSectionCrossValidation {
+		return p.executeCrossValidationStage(ctx, claim)
+	}
+
 	return p.executeClaimedProviderStage(ctx, companyID, claim)
 }
 
@@ -360,6 +364,94 @@ func (p *BlueprintPipeline) executeClaimedProviderStage(
 	}, nil
 }
 
+func (p *BlueprintPipeline) executeCrossValidationStage(ctx context.Context, claim *repository.BlueprintSectionClaim) (*BlueprintPipelineResult, error) {
+	bundle, err := DecodeBlueprintBundle(claim.RevisionContent)
+	if err != nil {
+		crossResult := BlueprintCrossValidationResult{
+			Valid:       false,
+			SafeOutcome: BlueprintValidationCrossValidationError,
+			Issues: []BlueprintValidationIssue{
+				{
+					Code:     BlueprintIssueUnsupportedVersion,
+					Severity: "CRITICAL",
+					Section:  "cross_validation",
+					Message:  "failed to decode blueprint bundle",
+					Blocking: true,
+				},
+			},
+		}
+		crossJSON, _ := json.Marshal(crossResult)
+		return nil, p.persistCrossValidationFailure(ctx, claim, crossJSON, ErrBlueprintCrossValidationFailure)
+	}
+
+	cross := p.crossValidator.Validate(bundle)
+	crossJSON, err := json.Marshal(cross)
+	if err != nil {
+		return nil, ErrBlueprintPersistenceFailure
+	}
+
+	if !cross.Valid {
+		return nil, p.persistCrossValidationFailure(ctx, claim, crossJSON, ErrBlueprintCrossValidationFailure)
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), BlueprintTerminalWriteTimeout)
+	defer cancel()
+
+	result, err := p.repo.CompleteBlueprintSection(writeCtx, repository.CompleteBlueprintSectionParams{
+		Claim:                 *claim,
+		SectionContent:        crossJSON,
+		SectionValidation:     crossJSON,
+		RevisionContent:       claim.RevisionContent,
+		CrossValidationResult: crossJSON,
+		CompletedAt:           p.clock.Now(),
+		Final:                 true,
+	})
+	if err != nil {
+		if errors.Is(err, repository.ErrBlueprintClaimConflict) || errors.Is(err, repository.ErrBlueprintContentConflict) {
+			return nil, ErrBlueprintExecutionConflict
+		}
+		return nil, ErrBlueprintPersistenceFailure
+	}
+
+	return &BlueprintPipelineResult{
+		BlueprintID:      claim.BlueprintID,
+		RevisionID:       result.RevisionID,
+		Section:          result.SectionType,
+		SectionStatus:    result.SectionStatus,
+		GenerationStatus: result.GenerationStatus,
+		ContentVersion:   result.ContentVersion,
+		Attempt:          result.Attempt,
+	}, nil
+}
+
+func (p *BlueprintPipeline) persistCrossValidationFailure(
+	ctx context.Context,
+	claim *repository.BlueprintSectionClaim,
+	crossJSON json.RawMessage,
+	sentinel error,
+) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), BlueprintTerminalWriteTimeout)
+	defer cancel()
+
+	_, err := p.repo.FailBlueprintSection(writeCtx, repository.FailBlueprintSectionParams{
+		Claim:                 *claim,
+		SafeErrorCode:         "cross_validation_error",
+		SectionContent:        crossJSON,
+		SectionValidation:     crossJSON,
+		CrossValidationResult: crossJSON,
+		FailedAt:              p.clock.Now(),
+		Terminal:              false,
+	})
+	if err != nil {
+		if errors.Is(err, repository.ErrBlueprintClaimConflict) || errors.Is(err, repository.ErrBlueprintContentConflict) {
+			return ErrBlueprintExecutionConflict
+		}
+		return ErrBlueprintPersistenceFailure
+	}
+
+	return sentinel
+}
+
 func isProviderSection(s domain.BlueprintSectionType) bool {
 	switch s {
 	case domain.BlueprintSectionJourney,
@@ -374,6 +466,15 @@ func isProviderSection(s domain.BlueprintSectionType) bool {
 }
 
 func (p *BlueprintPipeline) mapClaimError(err error) error {
+	if errors.Is(err, ErrBlueprintPipelineCompleted) {
+		return ErrBlueprintPipelineCompleted
+	}
+	if errors.Is(err, ErrBlueprintSectionRecoveryRequired) {
+		return ErrBlueprintSectionRecoveryRequired
+	}
+	if errors.Is(err, ErrBlueprintPipelineBlocked) {
+		return ErrBlueprintPipelineBlocked
+	}
 	if errors.Is(err, repository.ErrBlueprintNotFound) {
 		return ErrBlueprintPipelineNotFound
 	}
