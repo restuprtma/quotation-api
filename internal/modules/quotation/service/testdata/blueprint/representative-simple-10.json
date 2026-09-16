@@ -1,0 +1,785 @@
+{
+  "schema_version": "1.0",
+  "title": "Sistem Registrasi Tamu dan Buku Tamu Digital Resepsionis",
+  "summary": "Arsitektur aplikasi web mandiri berbasis tablet kiosk untuk pencatatan kunjungan tamu lobi kantor secara digital, mencakup pengambilan foto swafoto real-time via kamera, pencetakan stiker lencana otomatis melalui thermal printer lokal, serta panel dashboard pemantauan bagi petugas resepsionis.",
+  "journey": {
+    "phases": [
+      {
+        "id": "phase-registrasi-mandiri",
+        "label": "Registrasi Mandiri & Pengambilan Foto",
+        "order": 1
+      },
+      {
+        "id": "phase-pencetakan-lencana",
+        "label": "Pencetakan Lencana & Kunjungan Aktif",
+        "order": 2
+      },
+      {
+        "id": "phase-penyelesaian-kunjungan",
+        "label": "Check-out & Penyelesaian Kunjungan",
+        "order": 3
+      }
+    ],
+    "actors": [
+      {
+        "id": "actor-pengunjung",
+        "label": "Pengunjung (Visitor / Guest)",
+        "order": 1
+      },
+      {
+        "id": "actor-petugas-resepsionis",
+        "label": "Petugas Resepsionis (Receptionist)",
+        "order": 2
+      }
+    ],
+    "activities": [
+      {
+        "id": "act-isi-form-kiosk",
+        "phase_id": "phase-registrasi-mandiri",
+        "actor_id": "actor-pengunjung",
+        "label": "Mengisi Formulir Pendaftaran Tamu",
+        "description": "Pengunjung memasukkan data diri seperti nama, nomor telepon, instansi asal, dan nama PIC yang dikunjungi melalui antarmuka tablet kiosk.",
+        "touchpoints": [
+          "Tablet Kiosk Pendaftaran Mandiri di Lobi"
+        ],
+        "references": []
+      },
+      {
+        "id": "act-ambil-foto-wajah",
+        "phase_id": "phase-registrasi-mandiri",
+        "actor_id": "actor-pengunjung",
+        "label": "Pengambilan Foto Swafoto",
+        "description": "Pengunjung mengambil foto wajah menggunakan kamera depan tablet kiosk sebagai bagian dari prosedur keamanan gedung.",
+        "touchpoints": [
+          "Tablet Kiosk Pendaftaran Mandiri di Lobi"
+        ],
+        "references": []
+      },
+      {
+        "id": "act-cetak-lencana-otomatis",
+        "phase_id": "phase-pencetakan-lencana",
+        "actor_id": "actor-pengunjung",
+        "label": "Pencetakan Stiker Lencana Tamu",
+        "description": "Sistem secara otomatis memicu printer termal lokal untuk mencetak stiker lencana identitas tamu setelah data dan foto berhasil disimpan.",
+        "touchpoints": [
+          "Thermal Label Printer ESC/POS USB Driver",
+          "Tablet Kiosk Pendaftaran Mandiri di Lobi"
+        ],
+        "references": []
+      },
+      {
+        "id": "act-pemantauan-dashboard",
+        "phase_id": "phase-pencetakan-lencana",
+        "actor_id": "actor-petugas-resepsionis",
+        "label": "Pemantauan Daftar Tamu Aktif",
+        "description": "Petugas resepsionis memantau daftar tamu yang sedang berada di dalam gedung melalui panel web dashboard.",
+        "touchpoints": [
+          "Web Dashboard Admin Resepsionis"
+        ],
+        "references": []
+      },
+      {
+        "id": "act-check-out-tamu",
+        "phase_id": "phase-penyelesaian-kunjungan",
+        "actor_id": "actor-petugas-resepsionis",
+        "label": "Proses Check-out Kunjungan",
+        "description": "Petugas resepsionis melakukan check-out manual pada sistem dashboard ketika pengunjung meninggalkan gedung atau jika pengunjung lupa melakukan check-out.",
+        "touchpoints": [
+          "Web Dashboard Admin Resepsionis"
+        ],
+        "references": []
+      }
+    ]
+  },
+  "architecture": {
+    "groups": [
+      {
+        "id": "grp-client-tier",
+        "label": "Presentation & Channel Tier",
+        "order": 1
+      },
+      {
+        "id": "grp-service-tier",
+        "label": "Application & Service Tier",
+        "order": 2
+      },
+      {
+        "id": "grp-data-tier",
+        "label": "Persistence Tier",
+        "order": 3
+      },
+      {
+        "id": "grp-integration-tier",
+        "label": "External Integration & Device Tier",
+        "order": 4
+      }
+    ],
+    "nodes": [
+      {
+        "id": "node-kiosk-app",
+        "group_id": "grp-client-tier",
+        "type": "application",
+        "label": "Tablet Kiosk Pendaftaran Mandiri",
+        "description": "Antarmuka React SPA pada tablet kiosk untuk pengisian formulir kunjungan dan pengambilan swafoto wajah pengunjung.",
+        "layout": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "node-admin-dashboard",
+        "group_id": "grp-client-tier",
+        "type": "application",
+        "label": "Web Dashboard Admin Resepsionis",
+        "description": "Antarmuka web bagi petugas resepsionis untuk memantau tamu aktif dan melakukan proses check-out.",
+        "layout": {
+          "x": 300,
+          "y": 0
+        }
+      },
+      {
+        "id": "node-backend-api",
+        "group_id": "grp-service-tier",
+        "type": "service",
+        "label": "Node.js / Express Backend Service",
+        "description": "Layanan API ringan pengelola proses registrasi, manajemen status kunjungan, dan pengendali perangkat lobi.",
+        "layout": {
+          "x": 150,
+          "y": 200
+        }
+      },
+      {
+        "id": "node-database",
+        "group_id": "grp-data-tier",
+        "type": "database",
+        "label": "Relational Database (PostgreSQL / SQLite)",
+        "description": "Penyimpanan data persisten untuk pencatatan profil tamu, riwayat kunjungan, dan status check-out.",
+        "layout": {
+          "x": 150,
+          "y": 400
+        }
+      },
+      {
+        "id": "node-thermal-printer",
+        "group_id": "grp-integration-tier",
+        "type": "integration",
+        "label": "Thermal Label Printer ESC/POS",
+        "description": "Perangkat pencetakan stiker lencana identitas tamu terhubung via USB driver lokal.",
+        "layout": {
+          "x": 150,
+          "y": 600
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-kiosk-to-api",
+        "source": "node-kiosk-app",
+        "target": "node-backend-api",
+        "label": "HTTPS POST /api/v1/visits",
+        "type": "sync"
+      },
+      {
+        "id": "edge-dashboard-to-api",
+        "source": "node-admin-dashboard",
+        "target": "node-backend-api",
+        "label": "HTTPS REST /api/v1/visits/checkout",
+        "type": "sync"
+      },
+      {
+        "id": "edge-api-to-db",
+        "source": "node-backend-api",
+        "target": "node-database",
+        "label": "SQL Queries & Transactions",
+        "type": "data_flow"
+      },
+      {
+        "id": "edge-api-to-printer",
+        "source": "node-backend-api",
+        "target": "node-thermal-printer",
+        "label": "USB ESC/POS Print Commands",
+        "type": "async"
+      }
+    ]
+  },
+  "state_machine": {
+    "entity": "Kunjungan Tamu (Visitor Visit)",
+    "initial_state": "state-registered",
+    "states": [
+      {
+        "id": "state-registered",
+        "label": "Terdaftar (Registered)",
+        "type": "normal",
+        "layout": {
+          "x": 0,
+          "y": 100
+        }
+      },
+      {
+        "id": "state-checked-in",
+        "label": "Kunjungan Aktif (Checked-In)",
+        "type": "normal",
+        "layout": {
+          "x": 300,
+          "y": 100
+        }
+      },
+      {
+        "id": "state-checked-out",
+        "label": "Selesai Kunjungan (Checked-Out)",
+        "type": "terminal",
+        "layout": {
+          "x": 600,
+          "y": 100
+        }
+      }
+    ],
+    "transitions": [
+      {
+        "id": "trans-complete-registration",
+        "source": "state-registered",
+        "target": "state-checked-in",
+        "event": "Kirim Formulir & Ambil Foto",
+        "actor": "Pengunjung (Visitor / Guest)",
+        "guard": "Pengunjung wajib mengisi nama, nomor telepon, instansi, PIC, dan berhasil mengambil foto swafoto pada kiosk",
+        "actions": [
+          "Simpan data profil dan foto kunjungan ke dalam database",
+          "Kirim perintah cetak stiker lencana ke thermal printer lokal",
+          "Perbarui status kunjungan menjadi aktif"
+        ]
+      },
+      {
+        "id": "trans-checkout-visitor",
+        "source": "state-checked-in",
+        "target": "state-checked-out",
+        "event": "Proses Check-out Kunjungan",
+        "actor": "Petugas Resepsionis (Receptionist)",
+        "guard": "Pengunjung meninggalkan gedung atau resepsionis memicu check-out manual",
+        "actions": [
+          "Catat timestamp waktu keluar pada riwayat kunjungan database",
+          "Perbarui status kunjungan menjadi selesai"
+        ]
+      }
+    ]
+  },
+  "workflows": [
+    {
+      "id": "wf-registrasi-tamu-mandiri",
+      "name": "Alur Registrasi Mandiri & Cetak Lencana Tamu",
+      "description": "Proses operasional mandiri pengunjung mengisi formulir pada tablet kiosk, mengambil swafoto, validasi data, hingga pencetakan stiker lencana kunjungan.",
+      "lanes": [
+        {
+          "id": "lane-pengunjung",
+          "label": "Pengunjung (Visitor / Guest)",
+          "order": 1
+        },
+        {
+          "id": "lane-kiosk-tablet",
+          "label": "Tablet Kiosk Pendaftaran",
+          "order": 2
+        },
+        {
+          "id": "lane-backend-api",
+          "label": "Backend & Database Service",
+          "order": 3
+        },
+        {
+          "id": "lane-thermal-printer",
+          "label": "Thermal Printer Lobi",
+          "order": 4
+        }
+      ],
+      "nodes": [
+        {
+          "id": "wnode-start-kiosk",
+          "lane_id": "lane-pengunjung",
+          "type": "start",
+          "label": "Mulai Kunjungan Kiosk",
+          "description": "Pengunjung tiba di lobi dan memulai interaksi pada layar tablet kiosk.",
+          "layout": {
+            "x": 50,
+            "y": 50
+          }
+        },
+        {
+          "id": "wnode-isi-formulir",
+          "lane_id": "lane-pengunjung",
+          "type": "action",
+          "label": "Isi Data Diri Tamu",
+          "description": "Pengunjung memasukkan nama, nomor telepon, instansi asal, dan nama PIC yang dituju.",
+          "layout": {
+            "x": 220,
+            "y": 50
+          }
+        },
+        {
+          "id": "wnode-ambil-foto",
+          "lane_id": "lane-pengunjung",
+          "type": "action",
+          "label": "Ambil Swafoto Wajah",
+          "description": "Pengunjung mengambil foto wajah menggunakan kamera depan tablet kiosk.",
+          "layout": {
+            "x": 400,
+            "y": 50
+          }
+        },
+        {
+          "id": "wnode-validasi-data",
+          "lane_id": "lane-backend-api",
+          "type": "decision",
+          "label": "Validasi Kelengkapan Data?",
+          "description": "Sistem backend memeriksa kelengkapan kolom wajib dan keberhasilan foto swafoto.",
+          "layout": {
+            "x": 580,
+            "y": 350
+          }
+        },
+        {
+          "id": "wnode-simpan-db",
+          "lane_id": "lane-backend-api",
+          "type": "system_action",
+          "label": "Simpan Record Kunjungan",
+          "description": "Backend menyimpan profil tamu dan status terdaftar ke dalam database relasional.",
+          "layout": {
+            "x": 760,
+            "y": 350
+          }
+        },
+        {
+          "id": "wnode-print-badge",
+          "lane_id": "lane-thermal-printer",
+          "type": "system_action",
+          "label": "Cetak Stiker Lencana",
+          "description": "Printer termal mencetak stiker lencana identitas tamu secara otomatis.",
+          "layout": {
+            "x": 940,
+            "y": 550
+          }
+        },
+        {
+          "id": "wnode-notif-error",
+          "lane_id": "lane-kiosk-tablet",
+          "type": "system_action",
+          "label": "Tampilkan Pesan Kesalahan",
+          "description": "Kiosk menampilkan peringatan bahwa data atau foto belum lengkap.",
+          "layout": {
+            "x": 580,
+            "y": 150
+          }
+        },
+        {
+          "id": "wnode-end-success",
+          "lane_id": "lane-pengunjung",
+          "type": "end",
+          "label": "Ambil Lencana & Masuk",
+          "description": "Pengunjung mengambil stiker lencana dan menuju area dalam gedung.",
+          "layout": {
+            "x": 1120,
+            "y": 50
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "wedge-start-to-isi",
+          "source": "wnode-start-kiosk",
+          "target": "wnode-isi-formulir",
+          "label": ""
+        },
+        {
+          "id": "wedge-isi-to-foto",
+          "source": "wnode-isi-formulir",
+          "target": "wnode-ambil-foto",
+          "label": "Lanjut Foto"
+        },
+        {
+          "id": "wedge-foto-to-validasi",
+          "source": "wnode-ambil-foto",
+          "target": "wnode-validasi-data",
+          "label": "Kirim Data"
+        },
+        {
+          "id": "wedge-valid-success",
+          "source": "wnode-validasi-data",
+          "target": "wnode-simpan-db",
+          "label": "Lengkap & Valid"
+        },
+        {
+          "id": "wedge-valid-failed",
+          "source": "wnode-validasi-data",
+          "target": "wnode-notif-error",
+          "label": "Data Tidak Lengkap"
+        },
+        {
+          "id": "wedge-simpan-to-print",
+          "source": "wnode-simpan-db",
+          "target": "wnode-print-badge",
+          "label": "Trigger Print"
+        },
+        {
+          "id": "wedge-print-to-end",
+          "source": "wnode-print-badge",
+          "target": "wnode-end-success",
+          "label": "Selesai"
+        },
+        {
+          "id": "wedge-error-to-isi",
+          "source": "wnode-notif-error",
+          "target": "wnode-isi-formulir",
+          "label": "Ulangi Input"
+        }
+      ]
+    },
+    {
+      "id": "wf-monitoring-dan-checkout",
+      "name": "Alur Pemantauan Tamu Aktif & Proses Check-Out",
+      "description": "Proses pengawasan daftar pengunjung aktif oleh resepsionis serta eksekusi check-out manual ketika kunjungan selesai.",
+      "lanes": [
+        {
+          "id": "lane-resepsionis",
+          "label": "Petugas Resepsionis",
+          "order": 1
+        },
+        {
+          "id": "lane-admin-dashboard",
+          "label": "Web Dashboard Resepsionis",
+          "order": 2
+        },
+        {
+          "id": "lane-backend-db",
+          "label": "Backend & Database",
+          "order": 3
+        }
+      ],
+      "nodes": [
+        {
+          "id": "wnode-start-monitor",
+          "lane_id": "lane-resepsionis",
+          "type": "start",
+          "label": "Buka Dashboard Admin",
+          "description": "Petugas resepsionis membuka panel web dashboard di meja layanan.",
+          "layout": {
+            "x": 50,
+            "y": 50
+          }
+        },
+        {
+          "id": "wnode-view-active-list",
+          "lane_id": "lane-admin-dashboard",
+          "type": "system_action",
+          "label": "Muat Daftar Tamu Aktif",
+          "description": "Dashboard menampilkan daftar seluruh pengunjung yang berstatus checked-in.",
+          "layout": {
+            "x": 250,
+            "y": 150
+          }
+        },
+        {
+          "id": "wnode-cek-kondisi-tamu",
+          "lane_id": "lane-resepsionis",
+          "type": "decision",
+          "label": "Periksa Status Kunjungan",
+          "description": "Resepsionis memantau apakah tamu akan melakukan check-out atau kunjungan selesai.",
+          "layout": {
+            "x": 450,
+            "y": 50
+          }
+        },
+        {
+          "id": "wnode-trigger-checkout",
+          "lane_id": "lane-resepsionis",
+          "type": "action",
+          "label": "Klik Tombol Check-Out",
+          "description": "Resepsionis menekan tombol check-out manual pada baris data tamu terkait.",
+          "layout": {
+            "x": 650,
+            "y": 50
+          }
+        },
+        {
+          "id": "wnode-update-db-checkout",
+          "lane_id": "lane-backend-db",
+          "type": "system_action",
+          "label": "Perbarui Status Checked-Out",
+          "description": "Backend mencatat timestamp waktu keluar dan mengubah status kunjungan menjadi selesai.",
+          "layout": {
+            "x": 850,
+            "y": 250
+          }
+        },
+        {
+          "id": "wnode-end-checkout",
+          "lane_id": "lane-admin-dashboard",
+          "type": "end",
+          "label": "Kunjungan Selesai (Closed)",
+          "description": "Dashboard memperbarui daftar tamu dan menampilkan riwayat kunjungan selesai.",
+          "layout": {
+            "x": 1050,
+            "y": 150
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "wedge-start-to-view",
+          "source": "wnode-start-monitor",
+          "target": "wnode-view-active-list",
+          "label": ""
+        },
+        {
+          "id": "wedge-view-to-cek",
+          "source": "wnode-view-active-list",
+          "target": "wnode-cek-kondisi-tamu",
+          "label": "Refresh Data"
+        },
+        {
+          "id": "wedge-cek-to-checkout",
+          "source": "wnode-cek-kondisi-tamu",
+          "target": "wnode-trigger-checkout",
+          "label": "Tamu Keluar Gedung"
+        },
+        {
+          "id": "wedge-cek-to-wait",
+          "source": "wnode-cek-kondisi-tamu",
+          "target": "wnode-view-active-list",
+          "label": "Tamu Masih di Dalam"
+        },
+        {
+          "id": "wedge-trigger-to-update",
+          "source": "wnode-trigger-checkout",
+          "target": "wnode-update-db-checkout",
+          "label": "API Request"
+        },
+        {
+          "id": "wedge-update-to-end",
+          "source": "wnode-update-db-checkout",
+          "target": "wnode-end-checkout",
+          "label": "Success"
+        }
+      ]
+    }
+  ],
+  "wbs": {
+    "modules": [
+      {
+        "id": "mod-core-visit-backend",
+        "name": "Modul Core Visit Backend Service",
+        "description": "Layanan backend Node.js/Express pengelola API registrasi kunjungan, manajemen entitas status, validasi data, dan integrasi perangkat printer termal.",
+        "priority": "high",
+        "dependencies": [],
+        "references": [
+          "architecture.node.node-backend-api",
+          "architecture.node.node-database",
+          "architecture.node.node-thermal-printer",
+          "state.state-registered",
+          "state.state-checked-in",
+          "state.state-checked-out"
+        ],
+        "features": [
+          {
+            "id": "feat-visit-registration-api",
+            "name": "API Pendaftaran & Validasi Kunjungan",
+            "description": "Endpoint REST API untuk menerima data formulir tamu, memvalidasi kolom wajib, dan menyimpan record profil ke dalam database relasional.",
+            "acceptance_criteria": [
+              "API menolak request registrasi jika kolom nama, nomor telepon, instansi, atau PIC kosong.",
+              "Record kunjungan berhasil disimpan dengan status awal terdaftar (REGISTERED)."
+            ]
+          },
+          {
+            "id": "feat-thermal-print-bridge",
+            "name": "Driver & Bridge Printer Termal ESC/POS",
+            "description": "Modul komunikasi backend untuk mengirimkan perintah cetak lencana stiker ke thermal printer lokal via port USB.",
+            "acceptance_criteria": [
+              "Perintah cetak terkirim otomatis setelah data kunjungan tervalidasi.",
+              "Proses pencetakan stiker lencana selesai dalam waktu kurang dari 3 detik."
+            ]
+          },
+          {
+            "id": "feat-checkout-management",
+            "name": "Manajemen Status & Check-Out Tamu",
+            "description": "Layanan pembaruan status kunjungan dari aktif (CHECKED_IN) menjadi selesai (CHECKED_OUT) berdasarkan aksi resepsionis.",
+            "acceptance_criteria": [
+              "Timestamp waktu keluar tercatat akurat saat resepsionis memicu proses check-out.",
+              "Status entitas kunjungan berhasil diperbarui ke terminal state secara konsisten."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "mod-kiosk-client-app",
+        "name": "Modul Tablet Kiosk Client SPA",
+        "description": "Aplikasi React SPA mandiri pada tablet kiosk lobi untuk pengisian formulir pendaftaran dan pengambilan foto wajah pengunjung.",
+        "priority": "high",
+        "dependencies": [
+          "mod-core-visit-backend"
+        ],
+        "references": [
+          "architecture.node.node-kiosk-app",
+          "journey.activity.act-isi-form-kiosk",
+          "journey.activity.act-ambil-foto-wajah",
+          "journey.activity.act-cetak-lencana-otomatis",
+          "workflow.step.wnode-start-kiosk",
+          "workflow.step.wnode-isi-formulir",
+          "workflow.step.wnode-ambil-foto"
+        ],
+        "features": [
+          {
+            "id": "feat-kiosk-form-ui",
+            "name": "Antarmuka Formulir Tamu Kiosk",
+            "description": "Formulir interaktif layar sentuh bagi pengunjung untuk memasukkan data diri dan tujuan kunjungan.",
+            "acceptance_criteria": [
+              "Antarmuka responsif dan mudah diakses pada layar sentuh tablet lobi.",
+              "Validasi sisi klien memberikan peringatan langsung jika input belum lengkap."
+            ]
+          },
+          {
+            "id": "feat-webcam-capture",
+            "name": "Pengambilan Swafoto Kamera Depan",
+            "description": "Integrasi Media Stream API untuk menangkap foto wajah pengunjung sebagai bagian dari prosedur keamanan.",
+            "acceptance_criteria": [
+              "Pratinjau kamera tampil secara real-time pada layar kiosk.",
+              "Foto swafoto berhasil diambil dan dikirimkan bersama payload registrasi."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "mod-admin-dashboard-app",
+        "name": "Modul Web Dashboard Admin Resepsionis",
+        "description": "Aplikasi web SPA bagi petugas resepsionis untuk memantau daftar tamu aktif di dalam gedung dan mengeksekusi check-out.",
+        "priority": "medium",
+        "dependencies": [
+          "mod-core-visit-backend"
+        ],
+        "references": [
+          "architecture.node.node-admin-dashboard",
+          "journey.activity.act-pemantauan-dashboard",
+          "journey.activity.act-check-out-tamu",
+          "workflow.step.wnode-start-monitor",
+          "workflow.step.wnode-view-active-list",
+          "workflow.step.wnode-trigger-checkout"
+        ],
+        "features": [
+          {
+            "id": "feat-active-visitor-list",
+            "name": "Panel Pemantauan Tamu Aktif",
+            "description": "Tabel daftar kunjungan real-time untuk menampilkan pengunjung yang sedang berada di dalam gedung.",
+            "acceptance_criteria": [
+              "Daftar tamu aktif memuat nama, instansi, PIC, dan waktu masuk.",
+              "Data diperbarui secara berkala atau saat muat ulang dashboard."
+            ]
+          },
+          {
+            "id": "feat-manual-checkout-action",
+            "name": "Eksekusi Check-Out Manual",
+            "description": "Tombol aksi cepat pada dashboard bagi resepsionis untuk mengakhiri sesi kunjungan tamu.",
+            "acceptance_criteria": [
+              "Klik tombol check-out mengirimkan permintaan API ke backend dan memperbarui status tabel.",
+              "Tamu yang telah selesai keluar dari daftar aktif dan berpindah ke riwayat selesai."
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "assumptions": [
+    "Perangkat tablet kiosk dan komputer dashboard resepsionis berada dalam jaringan lokal yang sama dengan printer label termal.",
+    "Aplikasi dijalankan secara lokal (on-premise) tanpa ketergantungan pada layanan cloud eksternal sesuai batasan operasional.",
+    "Browser web pada tablet kiosk mendukung akses media stream API untuk pengambilan gambar swafoto."
+  ],
+  "open_questions": [
+    {
+      "id": "oq-thermal-printer-driver",
+      "question": "Apakah pencetakan stiker label termal menggunakan pustaka Node.js ESC/POS langsung melalui USB port server lokal atau melalui WebSocket bridge dari browser tablet kiosk?",
+      "target_section": "architecture",
+      "impact": "Menentukan struktur komponen Device Agent pada rancangan arsitektur sistem dan batas tanggung jawab backend terhadap perangkat keras lobi.",
+      "status": "open"
+    },
+    {
+      "id": "oq-offline-storage-fallback",
+      "question": "Bagaimana mekanisme penanganan sinkronisasi data atau penyimpanan sementara apabila terjadi gangguan konektivitas lokal antara tablet kiosk dan database server?",
+      "target_section": "state_machine",
+      "impact": "Memengaruhi desain status entitas kunjungan dan ketahanan operasional aplikasi pada lobi kantor.",
+      "status": "open"
+    }
+  ],
+  "cross_references": [
+    {
+      "id": "xref-wbs-to-arch-backend",
+      "source_ref": "wbs.module.mod-core-visit-backend",
+      "target_ref": "architecture.node.node-backend-api",
+      "relation_type": "implements",
+      "description": "Modul core visit backend mengimplementasikan layanan API backend pada arsitektur sistem."
+    },
+    {
+      "id": "xref-wbs-to-arch-kiosk",
+      "source_ref": "wbs.module.mod-kiosk-client-app",
+      "target_ref": "architecture.node.node-kiosk-app",
+      "relation_type": "implements",
+      "description": "Modul kiosk client mengimplementasikan antarmuka tablet kiosk pendaftaran mandiri."
+    },
+    {
+      "id": "xref-wbs-to-arch-dashboard",
+      "source_ref": "wbs.module.mod-admin-dashboard-app",
+      "target_ref": "architecture.node.node-admin-dashboard",
+      "relation_type": "implements",
+      "description": "Modul admin dashboard mengimplementasikan antarmuka web resepsionis."
+    },
+    {
+      "id": "xref-wbs-to-journey-form",
+      "source_ref": "wbs.module.mod-kiosk-client-app",
+      "target_ref": "journey.activity.act-isi-form-kiosk",
+      "relation_type": "implements",
+      "description": "Modul kiosk memfasilitasi aktivitas pengisian formulir pendaftaran oleh pengunjung."
+    },
+    {
+      "id": "xref-wbs-to-journey-photo",
+      "source_ref": "wbs.module.mod-kiosk-client-app",
+      "target_ref": "journey.activity.act-ambil-foto-wajah",
+      "relation_type": "implements",
+      "description": "Modul kiosk memfasilitasi pengambilan swafoto wajah pengunjung."
+    },
+    {
+      "id": "xref-wbs-to-journey-print",
+      "source_ref": "wbs.module.mod-core-visit-backend",
+      "target_ref": "journey.activity.act-cetak-lencana-otomatis",
+      "relation_type": "implements",
+      "description": "Backend dan printer termal mengimplementasikan pencetakan stiker lencana otomatis."
+    },
+    {
+      "id": "xref-wbs-to-journey-monitor",
+      "source_ref": "wbs.module.mod-admin-dashboard-app",
+      "target_ref": "journey.activity.act-pemantauan-dashboard",
+      "relation_type": "implements",
+      "description": "Modul dashboard mendukung aktivitas pemantauan daftar tamu aktif oleh resepsionis."
+    },
+    {
+      "id": "xref-wbs-to-journey-checkout",
+      "source_ref": "wbs.module.mod-admin-dashboard-app",
+      "target_ref": "journey.activity.act-check-out-tamu",
+      "relation_type": "implements",
+      "description": "Modul dashboard memfasilitasi proses check-out kunjungan oleh resepsionis."
+    },
+    {
+      "id": "xref-workflow-to-state-reg",
+      "source_ref": "workflow.step.wnode-simpan-db",
+      "target_ref": "state.state-registered",
+      "relation_type": "transitions_on",
+      "description": "Langkah penyimpanan record kunjungan menempatkan entitas pada status terdaftar."
+    },
+    {
+      "id": "xref-workflow-to-state-checkin",
+      "source_ref": "workflow.step.wnode-print-badge",
+      "target_ref": "state.state-checked-in",
+      "relation_type": "transitions_on",
+      "description": "Pencetakan lencana dan penyelesaian registrasi memicu status kunjungan aktif."
+    },
+    {
+      "id": "xref-workflow-to-state-checkout",
+      "source_ref": "workflow.step.wnode-update-db-checkout",
+      "target_ref": "state.state-checked-out",
+      "relation_type": "transitions_on",
+      "description": "Langkah pembaruan check-out memindahkan entitas kunjungan ke status terminal selesai."
+    }
+  ]
+}

@@ -1,0 +1,799 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:venturo:rnd:blueprint-bundle:v1",
+  "title": "Blueprint Skill R&D Bundle Contract v1",
+  "description": "Strict schema definition for the 5-section Blueprint bundle (Journey, Architecture, State Machine, Workflows, WBS, Assumptions, Open Questions, Cross References) in Phase 3 R&D.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "title",
+    "summary",
+    "journey",
+    "architecture",
+    "state_machine",
+    "workflows",
+    "wbs",
+    "assumptions",
+    "open_questions",
+    "cross_references"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version of the blueprint bundle format."
+    },
+    "title": {
+      "$ref": "#/$defs/nonEmptyString",
+      "description": "Title of the blueprint system design."
+    },
+    "summary": {
+      "$ref": "#/$defs/nonEmptyString",
+      "description": "Executive summary of the blueprint system design."
+    },
+    "journey": {
+      "type": "object",
+      "description": "User Journey and Service Blueprint section.",
+      "additionalProperties": false,
+      "required": [
+        "phases",
+        "actors",
+        "activities"
+      ],
+      "properties": {
+        "phases": {
+          "type": "array",
+          "description": "Chronological phases in the user journey.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "order"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^phase-[a-z0-9-]+$",
+                "description": "Unique identifier for the phase."
+              },
+              "label": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Human-readable label for the phase."
+              },
+              "order": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Sequential order index (1-based)."
+              }
+            }
+          }
+        },
+        "actors": {
+          "type": "array",
+          "description": "Actors participating in the user journey.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "order"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^actor-[a-z0-9-]+$",
+                "description": "Unique identifier for the actor."
+              },
+              "label": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Human-readable name or role of the actor."
+              },
+              "order": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Sequential order index (1-based)."
+              }
+            }
+          }
+        },
+        "activities": {
+          "type": "array",
+          "description": "Activities or touchpoint interactions in the journey.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "phase_id",
+              "actor_id",
+              "label",
+              "description",
+              "touchpoints",
+              "references"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^act-[a-z0-9-]+$",
+                "description": "Unique identifier for the activity."
+              },
+              "phase_id": {
+                "type": "string",
+                "pattern": "^phase-[a-z0-9-]+$",
+                "description": "Identifier of the phase this activity belongs to."
+              },
+              "actor_id": {
+                "type": "string",
+                "pattern": "^actor-[a-z0-9-]+$",
+                "description": "Identifier of the actor performing this activity."
+              },
+              "label": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Brief name or title of the activity."
+              },
+              "description": {
+                "type": "string",
+                "description": "Detailed description of the activity."
+              },
+              "touchpoints": {
+                "type": "array",
+                "description": "Channels or interfaces used for this activity.",
+                "items": {
+                  "$ref": "#/$defs/nonEmptyString"
+                }
+              },
+              "references": {
+                "type": "array",
+                "description": "Canonical cross-references to other blueprint elements.",
+                "items": {
+                  "$ref": "#/$defs/canonicalRef"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "description": "System Architecture diagram section.",
+      "additionalProperties": false,
+      "required": [
+        "groups",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "groups": {
+          "type": "array",
+          "description": "Logical or physical grouping tiers in the architecture.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "order"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^grp-[a-z0-9-]+$",
+                "description": "Unique identifier for the group."
+              },
+              "label": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Human-readable label for the group."
+              },
+              "order": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Sequential order index (1-based)."
+              }
+            }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "description": "Components, services, databases, or devices in the architecture.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "group_id",
+              "type",
+              "label",
+              "description",
+              "layout"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^node-[a-z0-9-]+$",
+                "description": "Unique identifier for the architecture node."
+              },
+              "group_id": {
+                "type": "string",
+                "pattern": "^grp-[a-z0-9-]+$",
+                "description": "Identifier of the group containing this node."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "channel",
+                  "application",
+                  "service",
+                  "database",
+                  "cache",
+                  "storage",
+                  "integration",
+                  "device"
+                ],
+                "description": "Architectural component type."
+              },
+              "label": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Human-readable label of the node."
+              },
+              "description": {
+                "type": "string",
+                "description": "Detailed description or technology notes."
+              },
+              "layout": {
+                "$ref": "#/$defs/layoutCoordinate",
+                "description": "2D layout coordinates for visual diagram rendering."
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "description": "Connections, integrations, or data flows between nodes.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "source",
+              "target",
+              "label",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^edge-[a-z0-9-]+$",
+                "description": "Unique identifier for the architecture edge."
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^node-[a-z0-9-]+$",
+                "description": "Source node identifier."
+              },
+              "target": {
+                "type": "string",
+                "pattern": "^node-[a-z0-9-]+$",
+                "description": "Target node identifier."
+              },
+              "label": {
+                "type": "string",
+                "description": "Label describing the protocol, payload, or action."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sync",
+                  "async",
+                  "data_flow",
+                  "event"
+                ],
+                "description": "Communication paradigm between nodes."
+              }
+            }
+          }
+        }
+      }
+    },
+    "state_machine": {
+      "type": "object",
+      "description": "Entity lifecycle state machine section.",
+      "additionalProperties": false,
+      "required": [
+        "entity",
+        "initial_state",
+        "states",
+        "transitions"
+      ],
+      "properties": {
+        "entity": {
+          "$ref": "#/$defs/nonEmptyString",
+          "description": "Core domain entity governed by this state machine."
+        },
+        "initial_state": {
+          "type": "string",
+          "pattern": "^state-[a-z0-9-]+$",
+          "description": "Identifier of the initial state."
+        },
+        "states": {
+          "type": "array",
+          "description": "List of possible lifecycle states.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "type",
+              "layout"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^state-[a-z0-9-]+$",
+                "description": "Unique identifier for the state."
+              },
+              "label": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Human-readable label of the state."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "normal",
+                  "terminal",
+                  "exception"
+                ],
+                "description": "Classification of the state."
+              },
+              "layout": {
+                "$ref": "#/$defs/layoutCoordinate",
+                "description": "2D layout coordinates for visual diagram rendering."
+              }
+            }
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "description": "Allowed transitions between states.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "source",
+              "target",
+              "event",
+              "actor",
+              "guard",
+              "actions"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^trans-[a-z0-9-]+$",
+                "description": "Unique identifier for the state transition."
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^state-[a-z0-9-]+$",
+                "description": "Source state identifier."
+              },
+              "target": {
+                "type": "string",
+                "pattern": "^state-[a-z0-9-]+$",
+                "description": "Target state identifier."
+              },
+              "event": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Event or trigger initiating the transition."
+              },
+              "actor": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Actor or system role triggering the transition."
+              },
+              "guard": {
+                "type": "string",
+                "description": "Guard condition that must hold true for the transition."
+              },
+              "actions": {
+                "type": "array",
+                "description": "Side-effect actions executed during transition.",
+                "items": {
+                  "$ref": "#/$defs/nonEmptyString"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "workflows": {
+      "type": "array",
+      "description": "Business process workflows detailing operational flowcharts.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description",
+          "lanes",
+          "nodes",
+          "edges"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^wf-[a-z0-9-]+$",
+            "description": "Unique identifier for the workflow."
+          },
+          "name": {
+            "$ref": "#/$defs/nonEmptyString",
+            "description": "Human-readable name of the workflow."
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description of the workflow process."
+          },
+          "lanes": {
+            "type": "array",
+            "description": "Swimlanes representing actors or roles.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "label",
+                "order"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^lane-[a-z0-9-]+$",
+                  "description": "Unique identifier for the swimlane."
+                },
+                "label": {
+                  "$ref": "#/$defs/nonEmptyString",
+                  "description": "Label of the actor or system role for this swimlane."
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Sequential order index (1-based)."
+                }
+              }
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "description": "Step nodes within the workflow.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "lane_id",
+                "type",
+                "label",
+                "description",
+                "layout"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^wnode-[a-z0-9-]+$",
+                  "description": "Unique identifier for the workflow node."
+                },
+                "lane_id": {
+                  "type": "string",
+                  "pattern": "^lane-[a-z0-9-]+$",
+                  "description": "Identifier of the swimlane this node belongs to."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "start",
+                    "action",
+                    "system_action",
+                    "decision",
+                    "wait",
+                    "end"
+                  ],
+                  "description": "Workflow step node type."
+                },
+                "label": {
+                  "$ref": "#/$defs/nonEmptyString",
+                  "description": "Short label of the workflow step."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Detailed description of the workflow step."
+                },
+                "layout": {
+                  "$ref": "#/$defs/layoutCoordinate",
+                  "description": "2D layout coordinates for visual diagram rendering."
+                }
+              }
+            }
+          },
+          "edges": {
+            "type": "array",
+            "description": "Directed transitions between workflow nodes.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "source",
+                "target",
+                "label"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^wedge-[a-z0-9-]+$",
+                  "description": "Unique identifier for the workflow edge."
+                },
+                "source": {
+                  "type": "string",
+                  "pattern": "^wnode-[a-z0-9-]+$",
+                  "description": "Source workflow node identifier."
+                },
+                "target": {
+                  "type": "string",
+                  "pattern": "^wnode-[a-z0-9-]+$",
+                  "description": "Target workflow node identifier."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Branch label (e.g. 'Ya', 'Tidak') or transition note."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "wbs": {
+      "type": "object",
+      "description": "Work Breakdown Structure module and feature hierarchy.",
+      "additionalProperties": false,
+      "required": [
+        "modules"
+      ],
+      "properties": {
+        "modules": {
+          "type": "array",
+          "description": "Top-level modules in the work breakdown structure.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name",
+              "description",
+              "priority",
+              "dependencies",
+              "references",
+              "features"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^mod-[a-z0-9-]+$",
+                "description": "Unique identifier for the module."
+              },
+              "name": {
+                "$ref": "#/$defs/nonEmptyString",
+                "description": "Human-readable name of the module."
+              },
+              "description": {
+                "type": "string",
+                "description": "Detailed description of the module scope."
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "description": "Development priority level."
+              },
+              "dependencies": {
+                "type": "array",
+                "description": "Module IDs that this module depends on.",
+                "items": {
+                  "type": "string",
+                  "pattern": "^mod-[a-z0-9-]+$"
+                }
+              },
+              "references": {
+                "type": "array",
+                "description": "Canonical cross-references to related blueprint elements.",
+                "items": {
+                  "$ref": "#/$defs/canonicalRef"
+                }
+              },
+              "features": {
+                "type": "array",
+                "description": "List of granular features under this module.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "name",
+                    "description",
+                    "acceptance_criteria"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^feat-[a-z0-9-]+$",
+                      "description": "Unique identifier for the feature."
+                    },
+                    "name": {
+                      "$ref": "#/$defs/nonEmptyString",
+                      "description": "Human-readable name of the feature."
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Detailed functional description of the feature."
+                    },
+                    "acceptance_criteria": {
+                      "type": "array",
+                      "description": "Testable acceptance criteria for the feature.",
+                      "items": {
+                        "$ref": "#/$defs/nonEmptyString"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "description": "Technical or operational assumptions made during design.",
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "description": "Unresolved questions, uncertainties, or items requiring client clarification.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "question",
+          "target_section",
+          "impact",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^oq-[a-z0-9-]+$",
+            "description": "Unique identifier for the open question."
+          },
+          "question": {
+            "$ref": "#/$defs/nonEmptyString",
+            "description": "The specific inquiry or clarification needed."
+          },
+          "target_section": {
+            "type": "string",
+            "enum": [
+              "journey",
+              "architecture",
+              "state_machine",
+              "workflow",
+              "wbs",
+              "general"
+            ],
+            "description": "Blueprint section affected by this question."
+          },
+          "impact": {
+            "type": "string",
+            "description": "Technical, schedule, or scope impact if left unanswered."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "deferred"
+            ],
+            "description": "Current resolution status of the question."
+          }
+        }
+      }
+    },
+    "cross_references": {
+      "type": "array",
+      "description": "Traceability links across different blueprint sections.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_ref",
+          "target_ref",
+          "relation_type",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^xref-[a-z0-9-]+$",
+            "description": "Unique identifier for the cross-reference."
+          },
+          "source_ref": {
+            "$ref": "#/$defs/canonicalRef",
+            "description": "Canonical reference of the source element."
+          },
+          "target_ref": {
+            "$ref": "#/$defs/canonicalRef",
+            "description": "Canonical reference of the target element."
+          },
+          "relation_type": {
+            "type": "string",
+            "enum": [
+              "implements",
+              "transitions_on",
+              "interacts_with",
+              "deploys_to",
+              "depends_on"
+            ],
+            "description": "Semantic relationship type between elements."
+          },
+          "description": {
+            "type": "string",
+            "description": "Explanation of the relationship."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "layoutCoordinate": {
+      "type": "object",
+      "description": "2D layout coordinates for visual diagram placement.",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Horizontal X coordinate."
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical Y coordinate."
+        }
+      }
+    },
+    "canonicalRef": {
+      "type": "string",
+      "pattern": "^(journey|architecture|state|state_machine|workflow|wbs|open_questions|cross_references)(\\.[a-z0-9_-]+)+$",
+      "description": "Canonical cross-reference string identifier (e.g. journey.activity.act-create-booking, architecture.node.node-booking-engine, state.state-booked, workflow.step.wnode-call-next, wbs.module.mod-booking-engine)."
+    }
+  }
+}
