@@ -157,6 +157,116 @@ func (p *BlueprintPipeline) Continue(ctx context.Context, companyID, blueprintID
 		return nil, p.mapClaimError(err)
 	}
 
+	return p.executeClaimedProviderStage(ctx, companyID, claim)
+}
+
+func (p *BlueprintPipeline) RetrySection(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*BlueprintPipelineResult, error) {
+	if p == nil || p.repo == nil || p.providers == nil || p.prompts == nil || p.validator == nil || p.crossValidator == nil || p.clock == nil {
+		return nil, ErrBlueprintPipelineInvalidInput
+	}
+	if companyID == uuid.Nil || blueprintID == uuid.Nil {
+		return nil, ErrBlueprintPipelineInvalidInput
+	}
+	if !isProviderSection(sectionType) {
+		return nil, ErrBlueprintRetryNotAllowed
+	}
+
+	claim, err := p.repo.ClaimFailedBlueprintSection(ctx, companyID, blueprintID, sectionType, p.clock.Now(), p.recoveryWindow)
+	if err != nil {
+		return nil, p.mapClaimFailedError(err)
+	}
+
+	return p.executeClaimedProviderStage(ctx, companyID, claim)
+}
+
+func (p *BlueprintPipeline) ManualCompleteSection(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, payload json.RawMessage) (*BlueprintPipelineResult, error) {
+	if p == nil || p.repo == nil || p.providers == nil || p.prompts == nil || p.validator == nil || p.crossValidator == nil || p.clock == nil {
+		return nil, ErrBlueprintPipelineInvalidInput
+	}
+	if companyID == uuid.Nil || blueprintID == uuid.Nil {
+		return nil, ErrBlueprintPipelineInvalidInput
+	}
+	if !isProviderSection(sectionType) {
+		return nil, ErrBlueprintManualNotAllowed
+	}
+
+	snapshot, err := p.repo.LoadBlueprintManualSnapshot(ctx, companyID, blueprintID, sectionType)
+	if err != nil {
+		if errors.Is(err, repository.ErrBlueprintNotFound) {
+			return nil, ErrBlueprintPipelineNotFound
+		}
+		return nil, ErrBlueprintPersistenceFailure
+	}
+
+	validation := p.validator.Validate(sectionType, payload)
+	if !validation.Valid {
+		if validation.SafeOutcome == BlueprintValidationSecurityFailure {
+			return nil, ErrBlueprintSecurityFailure
+		}
+		return nil, ErrBlueprintInvalidSchema
+	}
+
+	merged, err := MergeBlueprintSection(
+		snapshot.RevisionContent, snapshot.BlueprintTitle, snapshot.ContextContent,
+		sectionType, validation.NormalizedContent,
+	)
+	if err != nil {
+		return nil, ErrBlueprintInvalidSchema
+	}
+
+	cleaned, invalidated, err := InvalidateBlueprintDownstream(merged, sectionType)
+	if err != nil {
+		return nil, ErrBlueprintInvalidSchema
+	}
+
+	safeValidation, err := json.Marshal(BlueprintValidationResult{
+		Valid:       validation.Valid,
+		SafeOutcome: validation.SafeOutcome,
+		Issues:      validation.Issues,
+	})
+	if err != nil {
+		return nil, ErrBlueprintPersistenceFailure
+	}
+
+	writeCtx, writeCancel := context.WithTimeout(context.WithoutCancel(ctx), BlueprintTerminalWriteTimeout)
+	defer writeCancel()
+
+	result, err := p.repo.CompleteBlueprintSectionManually(writeCtx, repository.CompleteBlueprintManualParams{
+		Snapshot:            *snapshot,
+		SectionContent:      validation.NormalizedContent,
+		SectionValidation:   safeValidation,
+		RevisionContent:     cleaned,
+		InvalidatedSections: invalidated,
+		CompletedAt:         p.clock.Now(),
+	})
+	if err != nil {
+		if errors.Is(err, repository.ErrBlueprintManualConflict) ||
+			errors.Is(err, repository.ErrBlueprintContentConflict) ||
+			errors.Is(err, repository.ErrBlueprintClaimConflict) {
+			return nil, ErrBlueprintExecutionConflict
+		}
+		if errors.Is(err, repository.ErrBlueprintNotFound) {
+			return nil, ErrBlueprintPipelineNotFound
+		}
+		return nil, ErrBlueprintPersistenceFailure
+	}
+
+	return &BlueprintPipelineResult{
+		BlueprintID:      snapshot.BlueprintID,
+		RevisionID:       result.RevisionID,
+		Section:          result.SectionType,
+		SectionStatus:    result.SectionStatus,
+		GenerationStatus: result.GenerationStatus,
+		ContentVersion:   result.ContentVersion,
+		Attempt:          result.Attempt,
+	}, nil
+}
+
+func (p *BlueprintPipeline) executeClaimedProviderStage(
+	ctx context.Context,
+	companyID uuid.UUID,
+	claim *repository.BlueprintSectionClaim,
+) (*BlueprintPipelineResult, error) {
 	provider, providerName, model, err := p.providers.ProviderForCompany(ctx, companyID)
 	if err != nil {
 		safeCode, sentinel := mapProviderResolutionError(err)
@@ -201,11 +311,22 @@ func (p *BlueprintPipeline) Continue(ctx context.Context, companyID, blueprintID
 		return nil, p.persistFailure(ctx, claim, safeCode, &validation, sentinel)
 	}
 
-	safeValidation, _ := json.Marshal(BlueprintValidationResult{
+	merged, err := MergeBlueprintSection(
+		claim.RevisionContent, claim.BlueprintTitle, claim.ContextContent,
+		claim.SectionType, validation.NormalizedContent,
+	)
+	if err != nil {
+		return nil, ErrBlueprintInvalidSchema
+	}
+
+	safeValidation, err := json.Marshal(BlueprintValidationResult{
 		Valid:       validation.Valid,
 		SafeOutcome: validation.SafeOutcome,
 		Issues:      validation.Issues,
 	})
+	if err != nil {
+		return nil, ErrBlueprintPersistenceFailure
+	}
 
 	writeCtx, writeCancel := context.WithTimeout(context.WithoutCancel(ctx), BlueprintTerminalWriteTimeout)
 	defer writeCancel()
@@ -214,7 +335,7 @@ func (p *BlueprintPipeline) Continue(ctx context.Context, companyID, blueprintID
 		Claim:                 *claim,
 		SectionContent:        validation.NormalizedContent,
 		SectionValidation:     safeValidation,
-		RevisionContent:       claim.RevisionContent,
+		RevisionContent:       merged,
 		CrossValidationResult: nil,
 		ProviderName:          providerName,
 		Model:                 model,
@@ -239,24 +360,17 @@ func (p *BlueprintPipeline) Continue(ctx context.Context, companyID, blueprintID
 	}, nil
 }
 
-func (p *BlueprintPipeline) RetrySection(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*BlueprintPipelineResult, error) {
-	if p == nil || p.repo == nil || p.providers == nil || p.prompts == nil || p.validator == nil || p.crossValidator == nil || p.clock == nil {
-		return nil, ErrBlueprintPipelineInvalidInput
+func isProviderSection(s domain.BlueprintSectionType) bool {
+	switch s {
+	case domain.BlueprintSectionJourney,
+		domain.BlueprintSectionArchitecture,
+		domain.BlueprintSectionStateMachine,
+		domain.BlueprintSectionWorkflow,
+		domain.BlueprintSectionWBS:
+		return true
+	default:
+		return false
 	}
-	if companyID == uuid.Nil || blueprintID == uuid.Nil {
-		return nil, ErrBlueprintPipelineInvalidInput
-	}
-	return nil, ErrBlueprintRetryNotAllowed
-}
-
-func (p *BlueprintPipeline) ManualCompleteSection(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, payload json.RawMessage) (*BlueprintPipelineResult, error) {
-	if p == nil || p.repo == nil || p.providers == nil || p.prompts == nil || p.validator == nil || p.crossValidator == nil || p.clock == nil {
-		return nil, ErrBlueprintPipelineInvalidInput
-	}
-	if companyID == uuid.Nil || blueprintID == uuid.Nil {
-		return nil, ErrBlueprintPipelineInvalidInput
-	}
-	return nil, ErrBlueprintManualNotAllowed
 }
 
 func (p *BlueprintPipeline) mapClaimError(err error) error {
@@ -268,6 +382,28 @@ func (p *BlueprintPipeline) mapClaimError(err error) error {
 	}
 	if errors.Is(err, repository.ErrBlueprintRecoveryRequired) {
 		return ErrBlueprintPipelineRecoveryRequired
+	}
+	if errors.Is(err, repository.ErrBlueprintNoEligibleSection) {
+		return ErrBlueprintPipelineBlocked
+	}
+	return ErrBlueprintPersistenceFailure
+}
+
+func (p *BlueprintPipeline) mapClaimFailedError(err error) error {
+	if errors.Is(err, repository.ErrBlueprintNotFound) {
+		return ErrBlueprintPipelineNotFound
+	}
+	if errors.Is(err, repository.ErrBlueprintClaimBusy) {
+		return ErrBlueprintPipelineBusy
+	}
+	if errors.Is(err, repository.ErrBlueprintRecoveryRequired) {
+		return ErrBlueprintPipelineRecoveryRequired
+	}
+	if errors.Is(err, repository.ErrBlueprintAttemptLimit) {
+		return ErrBlueprintAttemptLimitReached
+	}
+	if errors.Is(err, repository.ErrBlueprintSectionNotRetryable) {
+		return ErrBlueprintRetryNotAllowed
 	}
 	if errors.Is(err, repository.ErrBlueprintNoEligibleSection) {
 		return ErrBlueprintPipelineBlocked
