@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,4 +45,47 @@ type BlueprintStatusResponse struct {
 	Sections           []BlueprintSectionStatusResponse `json:"sections"`
 	CreatedAt          time.Time                        `json:"created_at"`
 	UpdatedAt          time.Time                        `json:"updated_at"`
+}
+
+func (r BlueprintStatusResponse) MarshalJSON() ([]byte, error) {
+	type Alias BlueprintStatusResponse
+	if r.Sections == nil {
+		r.Sections = make([]BlueprintSectionStatusResponse, 0)
+	}
+	return json.Marshal(Alias(r))
+}
+
+type BlueprintDetailResponse struct {
+	Status                    BlueprintStatusResponse `json:"status"`
+	QuotationID               uuid.UUID               `json:"quotation_id"`
+	SourceQuotationRevisionID *uuid.UUID              `json:"source_quotation_revision_id,omitempty"`
+	ContentJSON               json.RawMessage         `json:"content_json"`
+	ValidationResult          json.RawMessage         `json:"validation_result"`
+	CrossValidationResult     json.RawMessage         `json:"cross_validation_result"`
+}
+
+type BlueprintListItemResponse struct {
+	BlueprintID      uuid.UUID `json:"blueprint_id"`
+	QuotationID      uuid.UUID `json:"quotation_id"`
+	Title            string    `json:"title"`
+	GenerationStatus string    `json:"generation_status"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type BlueprintListResponse struct {
+	Items []BlueprintListItemResponse `json:"items"`
+}
+
+func (r BlueprintListResponse) MarshalJSON() ([]byte, error) {
+	type Alias BlueprintListResponse
+	if r.Items == nil {
+		r.Items = make([]BlueprintListItemResponse, 0)
+	}
+	return json.Marshal(Alias(r))
+}
+
+type ManualCompleteBlueprintSectionRequest struct {
+	RevisionID     uuid.UUID       `json:"revision_id" binding:"required"`
+	ContentVersion int             `json:"content_version" binding:"required,min=1"`
+	Content        json.RawMessage `json:"content" binding:"required"`
 }

@@ -458,7 +458,7 @@ func (r *BlueprintGenerationRepository) FindBlueprintByIdempotencyKey(ctx contex
 		rev.IdempotencyPayloadHash = &trimmed
 	}
 
-	runs, err := r.loadSectionRuns(ctx, rev.ID, companyID)
+	runs, err := r.loadSectionRuns(ctx, r.db, rev.ID, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +471,21 @@ func (r *BlueprintGenerationRepository) FindBlueprintByIdempotencyKey(ctx contex
 	}, nil
 }
 
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func (r *BlueprintGenerationRepository) GetBlueprintGeneration(ctx context.Context, blueprintID, companyID uuid.UUID) (*CreateBlueprintGenerationResult, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	query := `
 		SELECT
 			b.id, b.company_id, b.quotation_id, b.title, b.status, b.current_revision,
@@ -494,7 +508,7 @@ func (r *BlueprintGenerationRepository) GetBlueprintGeneration(ctx context.Conte
 	var bp domain.Blueprint
 	var rev domain.BlueprintRevision
 
-	err := r.db.QueryRow(ctx, query, blueprintID, companyID).Scan(
+	err = tx.QueryRow(ctx, query, blueprintID, companyID).Scan(
 		&bp.ID, &bp.CompanyID, &bp.QuotationID, &bp.Title, &bp.Status, &bp.CurrentRevision,
 		&bp.ActivePublishedRevisionID, &bp.CreatedBy, &bp.CreatedAt, &bp.UpdatedAt, &bp.DeletedAt,
 		&rev.ID, &rev.CompanyID, &rev.BlueprintID, &rev.RevisionNumber, &rev.IdempotencyKey, &rev.IdempotencyPayloadHash,
@@ -516,8 +530,12 @@ func (r *BlueprintGenerationRepository) GetBlueprintGeneration(ctx context.Conte
 		rev.IdempotencyPayloadHash = &trimmed
 	}
 
-	runs, err := r.loadSectionRuns(ctx, rev.ID, companyID)
+	runs, err := r.loadSectionRuns(ctx, tx, rev.ID, companyID)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -529,7 +547,7 @@ func (r *BlueprintGenerationRepository) GetBlueprintGeneration(ctx context.Conte
 	}, nil
 }
 
-func (r *BlueprintGenerationRepository) loadSectionRuns(ctx context.Context, revisionID, companyID uuid.UUID) ([]domain.BlueprintSectionRun, error) {
+func (r *BlueprintGenerationRepository) loadSectionRuns(ctx context.Context, q querier, revisionID, companyID uuid.UUID) ([]domain.BlueprintSectionRun, error) {
 	query := `
 		SELECT
 			id, company_id, blueprint_revision_id, section_type, status, attempt_count,
@@ -542,7 +560,7 @@ func (r *BlueprintGenerationRepository) loadSectionRuns(ctx context.Context, rev
 			WHEN 'cross_validation' THEN 7 ELSE 99 END
 	`
 
-	rows, err := r.db.Query(ctx, query, revisionID, companyID)
+	rows, err := q.Query(ctx, query, revisionID, companyID)
 	if err != nil {
 		return nil, err
 	}

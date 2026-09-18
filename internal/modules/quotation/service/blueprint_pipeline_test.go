@@ -981,6 +981,264 @@ func TestBlueprintPipelineManualCompleteSectionRejectsContextAndCrossValidation(
 	assert.Equal(t, 0, repo.completeManualCalls)
 }
 
+func TestBlueprintPipelineManualCompleteSectionAtVersion(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+	baseRevID := uuid.New()
+	baseVersion := 3
+
+	testCases := []struct {
+		name                      string
+		revisionID                uuid.UUID
+		expectedVersion           int
+		payload                   json.RawMessage
+		expectErr                 error
+		expectLoadManualCalls     int
+		expectCompleteManualCalls int
+		expectProviderCalls       int
+		checkResult               func(t *testing.T, res *BlueprintPipelineResult)
+	}{
+		{
+			name:                      "revision_mismatch",
+			revisionID:                uuid.New(), // different from snapshot.RevisionID
+			expectedVersion:           baseVersion,
+			payload:                   json.RawMessage(validArchitecturePayload()),
+			expectErr:                 ErrBlueprintExecutionConflict,
+			expectLoadManualCalls:     1,
+			expectCompleteManualCalls: 0,
+			expectProviderCalls:       0,
+		},
+		{
+			name:                      "version_mismatch",
+			revisionID:                baseRevID,
+			expectedVersion:           baseVersion + 1, // mismatch with snapshot.ExpectedContentVersion
+			payload:                   json.RawMessage(validArchitecturePayload()),
+			expectErr:                 ErrBlueprintExecutionConflict,
+			expectLoadManualCalls:     1,
+			expectCompleteManualCalls: 0,
+			expectProviderCalls:       0,
+		},
+		{
+			name:                      "invalid_version_zero",
+			revisionID:                baseRevID,
+			expectedVersion:           0,
+			payload:                   json.RawMessage(validArchitecturePayload()),
+			expectErr:                 ErrBlueprintPipelineInvalidInput,
+			expectLoadManualCalls:     0,
+			expectCompleteManualCalls: 0,
+			expectProviderCalls:       0,
+		},
+		{
+			name:                      "invalid_version_negative",
+			revisionID:                baseRevID,
+			expectedVersion:           -1,
+			payload:                   json.RawMessage(validArchitecturePayload()),
+			expectErr:                 ErrBlueprintPipelineInvalidInput,
+			expectLoadManualCalls:     0,
+			expectCompleteManualCalls: 0,
+			expectProviderCalls:       0,
+		},
+		{
+			name:                      "invalid_version_nil_revision",
+			revisionID:                uuid.Nil,
+			expectedVersion:           baseVersion,
+			payload:                   json.RawMessage(validArchitecturePayload()),
+			expectErr:                 ErrBlueprintPipelineInvalidInput,
+			expectLoadManualCalls:     0,
+			expectCompleteManualCalls: 0,
+			expectProviderCalls:       0,
+		},
+		{
+			name:                      "matching_version",
+			revisionID:                baseRevID,
+			expectedVersion:           baseVersion,
+			payload:                   json.RawMessage(validArchitecturePayload()),
+			expectErr:                 nil,
+			expectLoadManualCalls:     1,
+			expectCompleteManualCalls: 1,
+			expectProviderCalls:       0,
+			checkResult: func(t *testing.T, res *BlueprintPipelineResult) {
+				require.NotNil(t, res)
+				assert.Equal(t, baseVersion+1, res.ContentVersion)
+				assert.Equal(t, domain.BlueprintSectionValidated, res.SectionStatus)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := makeBaseManualSnapshot(companyID, blueprintID, domain.BlueprintSectionArchitecture)
+			snapshot.RevisionID = baseRevID
+			snapshot.ExpectedContentVersion = baseVersion
+
+			repo := &fakePipelineRepo{
+				loadManualFn: func(ctx context.Context, cID, bID uuid.UUID, sType domain.BlueprintSectionType) (*repository.BlueprintManualSnapshot, error) {
+					return snapshot, nil
+				},
+			}
+			prov := &fakeAIProvider{}
+			provSource := &fakeProviderSource{
+				providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+					return prov, "openai", "gpt-4o", nil
+				},
+			}
+			pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+			res, err := pipeline.ManualCompleteSectionAtVersion(
+				context.Background(),
+				companyID,
+				blueprintID,
+				domain.BlueprintSectionArchitecture,
+				tc.revisionID,
+				tc.expectedVersion,
+				tc.payload,
+			)
+
+			if tc.expectErr != nil {
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, tc.expectErr), "expected %v, got %v", tc.expectErr, err)
+			} else {
+				require.NoError(t, err)
+				if tc.checkResult != nil {
+					tc.checkResult(t, res)
+				}
+			}
+
+			assert.Equal(t, tc.expectLoadManualCalls, repo.loadManualCalls, "loadManualCalls mismatch")
+			assert.Equal(t, tc.expectCompleteManualCalls, repo.completeManualCalls, "completeManualCalls mismatch")
+			assert.Equal(t, tc.expectProviderCalls, provSource.calls, "provider calls mismatch")
+		})
+	}
+}
+
+func TestBlueprintPipelineManualCompleteSectionTypedValidationError(t *testing.T) {
+	companyID := uuid.New()
+	blueprintID := uuid.New()
+	baseRevID := uuid.New()
+	baseVersion := 1
+
+	canarySecret := "canary-secret-super-sensitive-token-12345"
+
+	t.Run("schema_issue_returns_typed_validation_error", func(t *testing.T) {
+		snapshot := makeBaseManualSnapshot(companyID, blueprintID, domain.BlueprintSectionArchitecture)
+		snapshot.RevisionID = baseRevID
+		snapshot.ExpectedContentVersion = baseVersion
+
+		repo := &fakePipelineRepo{
+			loadManualFn: func(ctx context.Context, cID, bID uuid.UUID, sType domain.BlueprintSectionType) (*repository.BlueprintManualSnapshot, error) {
+				return snapshot, nil
+			},
+		}
+		provSource := &fakeProviderSource{}
+		pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+		invalidSchemaPayload := json.RawMessage(`{"architecture":{"groups":[],"nodes":[{"id":"","group_id":"g"}],"edges":[]}}`)
+		res, err := pipeline.ManualCompleteSectionAtVersion(
+			context.Background(),
+			companyID,
+			blueprintID,
+			domain.BlueprintSectionArchitecture,
+			baseRevID,
+			baseVersion,
+			invalidSchemaPayload,
+		)
+		require.Error(t, err)
+		assert.Nil(t, res)
+
+		assert.True(t, errors.Is(err, ErrBlueprintInvalidSchema), "must match ErrBlueprintInvalidSchema")
+		assert.False(t, errors.Is(err, ErrBlueprintSecurityFailure), "must not match ErrBlueprintSecurityFailure")
+
+		var valErr *BlueprintManualValidationError
+		require.True(t, errors.As(err, &valErr), "must unwrap as BlueprintManualValidationError")
+		assert.Equal(t, BlueprintValidationInvalidSchema, valErr.SafeOutcome)
+		assert.NotEmpty(t, valErr.Issues, "must have validation issues")
+		assert.Equal(t, ErrBlueprintInvalidSchema, valErr.BaseErr)
+		assert.Equal(t, ErrBlueprintInvalidSchema.Error(), valErr.Error())
+		assert.Equal(t, 0, repo.completeManualCalls)
+	})
+
+	t.Run("security_issue_returns_typed_validation_error_without_leaks", func(t *testing.T) {
+		snapshot := makeBaseManualSnapshot(companyID, blueprintID, domain.BlueprintSectionArchitecture)
+		snapshot.RevisionID = baseRevID
+		snapshot.ExpectedContentVersion = baseVersion
+
+		repo := &fakePipelineRepo{
+			loadManualFn: func(ctx context.Context, cID, bID uuid.UUID, sType domain.BlueprintSectionType) (*repository.BlueprintManualSnapshot, error) {
+				return snapshot, nil
+			},
+		}
+		provSource := &fakeProviderSource{}
+		pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+		// Payload with forbidden key "credential" and canary secret value
+		payloadWithSecret := json.RawMessage(`{
+			"architecture": {
+				"groups": [],
+				"nodes": [],
+				"edges": [],
+				"credential": "` + canarySecret + `"
+			}
+		}`)
+
+		res, err := pipeline.ManualCompleteSectionAtVersion(
+			context.Background(),
+			companyID,
+			blueprintID,
+			domain.BlueprintSectionArchitecture,
+			baseRevID,
+			baseVersion,
+			payloadWithSecret,
+		)
+		require.Error(t, err)
+		assert.Nil(t, res)
+
+		assert.True(t, errors.Is(err, ErrBlueprintSecurityFailure), "must match ErrBlueprintSecurityFailure")
+		assert.False(t, errors.Is(err, ErrBlueprintInvalidSchema), "must not match ErrBlueprintInvalidSchema")
+
+		var valErr *BlueprintManualValidationError
+		require.True(t, errors.As(err, &valErr), "must unwrap as BlueprintManualValidationError")
+		assert.Equal(t, BlueprintValidationSecurityFailure, valErr.SafeOutcome)
+		assert.NotEmpty(t, valErr.Issues, "must have validation issues")
+		assert.Equal(t, ErrBlueprintSecurityFailure, valErr.BaseErr)
+
+		// Assert canary secret marker is NOT in the error message or issues
+		errStr := valErr.Error()
+		assert.NotContains(t, errStr, canarySecret, "error string must not leak canary secret")
+		for _, issue := range valErr.Issues {
+			assert.NotContains(t, issue.Message, canarySecret, "issue message must not leak canary secret")
+			assert.NotContains(t, issue.Remediation, canarySecret, "issue remediation must not leak canary secret")
+		}
+
+		assert.Equal(t, 0, repo.completeManualCalls)
+	})
+
+	t.Run("unversioned_manual_complete_section_also_returns_typed_validation_error", func(t *testing.T) {
+		snapshot := makeBaseManualSnapshot(companyID, blueprintID, domain.BlueprintSectionArchitecture)
+
+		repo := &fakePipelineRepo{
+			loadManualFn: func(ctx context.Context, cID, bID uuid.UUID, sType domain.BlueprintSectionType) (*repository.BlueprintManualSnapshot, error) {
+				return snapshot, nil
+			},
+		}
+		pipeline := NewBlueprintPipeline(repo, &fakeProviderSource{}, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+		invalidSchemaPayload := json.RawMessage(`{"architecture":{"groups":[],"nodes":[{"id":"","group_id":"g"}],"edges":[]}}`)
+		_, err := pipeline.ManualCompleteSection(
+			context.Background(),
+			companyID,
+			blueprintID,
+			domain.BlueprintSectionArchitecture,
+			invalidSchemaPayload,
+		)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBlueprintInvalidSchema))
+
+		var valErr *BlueprintManualValidationError
+		require.True(t, errors.As(err, &valErr))
+		assert.Equal(t, BlueprintValidationInvalidSchema, valErr.SafeOutcome)
+	})
+}
+
 func TestBlueprintPipelineConcurrentManualContinueRetryHasSingleWinner(t *testing.T) {
 	companyID := uuid.New()
 	blueprintID := uuid.New()

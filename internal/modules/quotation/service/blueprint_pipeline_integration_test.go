@@ -595,3 +595,98 @@ func TestBlueprintPipelineDoesNotPersistOrReturnSensitiveData(t *testing.T) {
 		assert.False(t, strings.Contains(string(dtoJSON), marker), "public DTO must not contain marker: %s", marker)
 	}
 }
+
+func TestBlueprintPipelineManualCompleteSectionAtVersionIntegration(t *testing.T) {
+	pool := getBlueprintIntegrationPool(t)
+	companyID := uuid.New()
+	cleanupIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupIntegrationTenant(t, pool, companyID) })
+
+	provider := newPipelineScriptedAIProvider()
+	provSource := &pipelineScriptedProviderSource{provider: provider}
+
+	pipeline, repo, createSvc := setupIntegrationPipeline(t, pool, provSource)
+	blueprintID, revisionID := seedIntegrationAggregate(t, pool, createSvc, companyID)
+
+	ctx := context.Background()
+
+	// 1. First advance Journey via Continue
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{Text: validJourneyIntegrationPayload()}, nil
+	}
+	resJourney, err := pipeline.Continue(ctx, companyID, blueprintID)
+	require.NoError(t, err)
+	require.NotNil(t, resJourney)
+	assert.Equal(t, 2, resJourney.ContentVersion)
+
+	// 2. Attempt ManualCompleteSectionAtVersion with mismatched revisionID -> conflict
+	mismatchedRevID := uuid.New()
+	_, err = pipeline.ManualCompleteSectionAtVersion(
+		ctx,
+		companyID,
+		blueprintID,
+		domain.BlueprintSectionArchitecture,
+		mismatchedRevID,
+		2,
+		json.RawMessage(validArchitectureIntegrationPayload()),
+	)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintExecutionConflict), "expected ErrBlueprintExecutionConflict on revision mismatch")
+
+	// 3. Attempt ManualCompleteSectionAtVersion with mismatched expectedVersion -> conflict
+	_, err = pipeline.ManualCompleteSectionAtVersion(
+		ctx,
+		companyID,
+		blueprintID,
+		domain.BlueprintSectionArchitecture,
+		revisionID,
+		999,
+		json.RawMessage(validArchitectureIntegrationPayload()),
+	)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintExecutionConflict), "expected ErrBlueprintExecutionConflict on version mismatch")
+
+	// 4. Successful ManualCompleteSectionAtVersion with matching revisionID and expectedVersion (2)
+	resArch, err := pipeline.ManualCompleteSectionAtVersion(
+		ctx,
+		companyID,
+		blueprintID,
+		domain.BlueprintSectionArchitecture,
+		revisionID,
+		2,
+		json.RawMessage(validArchitectureIntegrationPayload()),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, resArch)
+	assert.Equal(t, domain.BlueprintSectionArchitecture, resArch.Section)
+	assert.Equal(t, domain.BlueprintSectionValidated, resArch.SectionStatus)
+	assert.Equal(t, 3, resArch.ContentVersion)
+
+	// 5. Reload from DB and verify updated version and validated status
+	gen, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	assert.Equal(t, 3, gen.Revision.ContentVersion)
+
+	var archRun *domain.BlueprintSectionRun
+	for i := range gen.SectionRuns {
+		if gen.SectionRuns[i].SectionType == string(domain.BlueprintSectionArchitecture) {
+			archRun = &gen.SectionRuns[i]
+			break
+		}
+	}
+	require.NotNil(t, archRun)
+	assert.Equal(t, string(domain.BlueprintSectionValidated), archRun.Status)
+
+	// 6. Calling again with the stale expectedVersion (2) must fail with conflict
+	_, err = pipeline.ManualCompleteSectionAtVersion(
+		ctx,
+		companyID,
+		blueprintID,
+		domain.BlueprintSectionArchitecture,
+		revisionID,
+		2,
+		json.RawMessage(validArchitectureIntegrationPayload()),
+	)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintExecutionConflict), "expected conflict on stale version")
+}

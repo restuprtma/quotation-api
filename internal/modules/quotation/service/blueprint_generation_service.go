@@ -136,6 +136,9 @@ func (s *BlueprintGenerationService) CreateBlueprint(
 		CreatedBy:              &createdBy,
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrBlueprintAlreadyExists) {
+			return nil, fmt.Errorf("%w: blueprint already exists", repository.ErrBlueprintAlreadyExists)
+		}
 		if errors.Is(err, repository.ErrBlueprintIdempotencyPayloadMismatch) {
 			return nil, fmt.Errorf("%w: idempotency payload mismatch", repository.ErrBlueprintIdempotencyPayloadMismatch)
 		}

@@ -24,6 +24,14 @@ var (
 	ErrConflict         = errors.New("conflict: cannot edit signed revision")
 )
 
+type RevisionRepository interface {
+	ListRevisionsByQuotationID(ctx context.Context, quotationID, companyID string) ([]domain.QuotationRevision, error)
+}
+
+type QuotationRepository interface {
+	GetQuotationByID(ctx context.Context, id, companyID string) (*domain.Quotation, error)
+}
+
 type Service struct {
 	repo             *repository.Repository
 	credentialRepo   *repository.CredentialRepository
@@ -33,6 +41,8 @@ type Service struct {
 	settingsSvc      *SettingsService
 	rateCardSvc      *RateCardService
 	legalTemplateSvc *LegalTemplateService
+	revRepo          RevisionRepository
+	quotationRepo    QuotationRepository
 }
 
 func NewService(
@@ -45,7 +55,7 @@ func NewService(
 	rateCardSvc *RateCardService,
 	legalTemplateSvc *LegalTemplateService,
 ) *Service {
-	return &Service{
+	s := &Service{
 		repo:             repo,
 		credentialRepo:   credentialRepo,
 		skillRepo:        skillRepo,
@@ -55,6 +65,23 @@ func NewService(
 		rateCardSvc:      rateCardSvc,
 		legalTemplateSvc: legalTemplateSvc,
 	}
+	if repo != nil {
+		s.quotationRepo = repo
+		if repo.Pool() != nil {
+			s.revRepo = repository.NewRevisionRepository(repo.Pool())
+		}
+	}
+	return s
+}
+
+func (s *Service) WithRevisionRepository(revRepo RevisionRepository) *Service {
+	s.revRepo = revRepo
+	return s
+}
+
+func (s *Service) WithQuotationRepository(quotRepo QuotationRepository) *Service {
+	s.quotationRepo = quotRepo
+	return s
 }
 
 // Create creates a new quotation
@@ -90,9 +117,51 @@ func (s *Service) ShareInternal(ctx context.Context, companyID, id string) (*dto
 	return nil, errors.New("not implemented")
 }
 
-// ListRevisions returns all revisions
+// ListRevisions returns all revisions of a quotation along with blueprint source eligibility metadata.
 func (s *Service) ListRevisions(ctx context.Context, companyID, id string) ([]dto.QuotationRevisionResponse, error) {
-	return nil, errors.New("not implemented")
+	if companyID == "" {
+		return nil, ErrNoCompanyContext
+	}
+
+	quotRepo := s.quotationRepo
+	if quotRepo == nil && s.repo != nil {
+		quotRepo = s.repo
+	}
+	if quotRepo != nil {
+		if _, err := quotRepo.GetQuotationByID(ctx, id, companyID); err != nil {
+			return nil, mapRepoErr(err)
+		}
+	}
+
+	revRepo := s.revRepo
+	if revRepo == nil && s.repo != nil && s.repo.Pool() != nil {
+		revRepo = repository.NewRevisionRepository(s.repo.Pool())
+	}
+	if revRepo == nil {
+		return nil, errors.New("revision repository not configured")
+	}
+
+	revs, err := revRepo.ListRevisionsByQuotationID(ctx, id, companyID)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+
+	res := make([]dto.QuotationRevisionResponse, 0, len(revs))
+	for _, r := range revs {
+		meta := dto.EvaluateBlueprintSourceEligibility(r.PublicationStatus, r.GenerationStatus, r.ContentHTML)
+		res = append(res, dto.QuotationRevisionResponse{
+			ID:                      r.ID,
+			VersionNumber:           r.RevisionNumber,
+			Status:                  r.PublicationStatus,
+			SignatureImageURL:       r.SignatureData,
+			SignedAt:                r.SignedAt,
+			SignedBy:                r.SignerName,
+			SignedIP:                r.SignedIP,
+			BlueprintSourceMetadata: &meta,
+		})
+	}
+
+	return res, nil
 }
 
 // List returns a paginated list of quotations

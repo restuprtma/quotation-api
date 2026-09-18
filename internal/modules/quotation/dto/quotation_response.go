@@ -20,6 +20,8 @@ type QuotationRevisionResponse struct {
 	SignedAt          *time.Time             `json:"signed_at,omitempty"`
 	SignedBy          *string                `json:"signed_by,omitempty"`
 	SignedIP          *string                `json:"signed_ip,omitempty"`
+
+	*BlueprintSourceMetadata `json:",inline"`
 }
 
 // QuotationResponse is the API view of a quotation, optionally including

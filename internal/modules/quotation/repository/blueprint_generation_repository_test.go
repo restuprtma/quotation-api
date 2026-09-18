@@ -447,6 +447,55 @@ func TestGetBlueprintGenerationTenantIsolation(t *testing.T) {
 	assert.True(t, errors.Is(err, repository.ErrBlueprintNotFound))
 }
 
+func TestGetBlueprintGenerationConsistentSnapshotRead(t *testing.T) {
+	pool := getTestPool(t)
+	f := seedBlueprintSource(t, pool)
+	defer cleanupBlueprintFixture(t, pool, f.CompanyID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	repo := repository.NewBlueprintGenerationRepository(pool)
+	params := validBlueprintCreateParams(f)
+
+	created, err := repo.CreateBlueprintGeneration(ctx, params)
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	// Snapshot read under RepeatableRead
+	loaded, err := repo.GetBlueprintGeneration(ctx, created.Blueprint.ID, f.CompanyID)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+
+	// Verify aggregate snapshot consistency
+	assert.Equal(t, created.Blueprint.ID, loaded.Blueprint.ID)
+	assert.Equal(t, f.CompanyID, loaded.Blueprint.CompanyID)
+	assert.Equal(t, created.Revision.ID, loaded.Revision.ID)
+	assert.Equal(t, 1, loaded.Revision.RevisionNumber)
+	assert.Equal(t, string(domain.BlueprintGenerationPending), loaded.Revision.GenerationStatus)
+
+	// Verify all 7 section runs are loaded in canonical order
+	require.Len(t, loaded.SectionRuns, len(domain.BlueprintSectionOrder))
+	for i, expectedSecType := range domain.BlueprintSectionOrder {
+		run := loaded.SectionRuns[i]
+		assert.Equal(t, string(expectedSecType), run.SectionType)
+		assert.Equal(t, f.CompanyID, run.CompanyID)
+		assert.Equal(t, loaded.Revision.ID, run.BlueprintRevisionID)
+		if i == 0 {
+			assert.Equal(t, string(domain.BlueprintSectionValidated), run.Status)
+		} else {
+			assert.Equal(t, string(domain.BlueprintSectionPending), run.Status)
+		}
+	}
+
+	// Verify soft-deleted blueprint is not found
+	_, err = pool.Exec(ctx, `UPDATE blueprints SET deleted_at = NOW() WHERE id = $1`, created.Blueprint.ID)
+	require.NoError(t, err)
+
+	_, err = repo.GetBlueprintGeneration(ctx, created.Blueprint.ID, f.CompanyID)
+	assert.ErrorIs(t, err, repository.ErrBlueprintNotFound)
+}
+
 func TestClaimNextBlueprintSectionTenantIsolation(t *testing.T) {
 	pool := getTestPool(t)
 	f := seedBlueprintSource(t, pool)

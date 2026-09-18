@@ -183,7 +183,50 @@ func (p *BlueprintPipeline) RetrySection(ctx context.Context, companyID, bluepri
 	return p.executeClaimedProviderStage(ctx, companyID, claim)
 }
 
+// BlueprintManualValidationError provides typed validation error details for manual completion.
+type BlueprintManualValidationError struct {
+	BaseErr     error
+	SafeOutcome string
+	Issues      []BlueprintValidationIssue
+}
+
+func (e *BlueprintManualValidationError) Error() string {
+	if e.BaseErr != nil {
+		return e.BaseErr.Error()
+	}
+	return "blueprint manual validation error"
+}
+
+func (e *BlueprintManualValidationError) Unwrap() error {
+	return e.BaseErr
+}
+
 func (p *BlueprintPipeline) ManualCompleteSection(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, payload json.RawMessage) (*BlueprintPipelineResult, error) {
+	return p.manualCompleteSection(ctx, companyID, blueprintID, sectionType, nil, nil, payload)
+}
+
+func (p *BlueprintPipeline) ManualCompleteSectionAtVersion(
+	ctx context.Context,
+	companyID, blueprintID uuid.UUID,
+	sectionType domain.BlueprintSectionType,
+	revisionID uuid.UUID,
+	expectedVersion int,
+	payload json.RawMessage,
+) (*BlueprintPipelineResult, error) {
+	if companyID == uuid.Nil || blueprintID == uuid.Nil || revisionID == uuid.Nil || expectedVersion < 1 {
+		return nil, ErrBlueprintPipelineInvalidInput
+	}
+	return p.manualCompleteSection(ctx, companyID, blueprintID, sectionType, &revisionID, &expectedVersion, payload)
+}
+
+func (p *BlueprintPipeline) manualCompleteSection(
+	ctx context.Context,
+	companyID, blueprintID uuid.UUID,
+	sectionType domain.BlueprintSectionType,
+	expectedRevisionID *uuid.UUID,
+	expectedVersion *int,
+	payload json.RawMessage,
+) (*BlueprintPipelineResult, error) {
 	if p == nil || p.repo == nil || p.providers == nil || p.prompts == nil || p.validator == nil || p.crossValidator == nil || p.clock == nil {
 		return nil, ErrBlueprintPipelineInvalidInput
 	}
@@ -202,12 +245,23 @@ func (p *BlueprintPipeline) ManualCompleteSection(ctx context.Context, companyID
 		return nil, ErrBlueprintPersistenceFailure
 	}
 
+	if expectedRevisionID != nil && expectedVersion != nil {
+		if snapshot.RevisionID != *expectedRevisionID || snapshot.ExpectedContentVersion != *expectedVersion {
+			return nil, ErrBlueprintExecutionConflict
+		}
+	}
+
 	validation := p.validator.Validate(sectionType, payload)
 	if !validation.Valid {
+		baseErr := ErrBlueprintInvalidSchema
 		if validation.SafeOutcome == BlueprintValidationSecurityFailure {
-			return nil, ErrBlueprintSecurityFailure
+			baseErr = ErrBlueprintSecurityFailure
 		}
-		return nil, ErrBlueprintInvalidSchema
+		return nil, &BlueprintManualValidationError{
+			BaseErr:     baseErr,
+			SafeOutcome: validation.SafeOutcome,
+			Issues:      validation.Issues,
+		}
 	}
 
 	merged, err := MergeBlueprintSection(

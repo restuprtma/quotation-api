@@ -152,6 +152,7 @@ func (h *Handler) GetRevisionDetail(c *gin.Context) {
 
 	for _, r := range revs {
 		if r.ID.String() == revisionID {
+			r.BlueprintSourceMetadata = nil
 			response.Success(c, http.StatusOK, "Revision detail retrieved successfully", r)
 			return
 		}

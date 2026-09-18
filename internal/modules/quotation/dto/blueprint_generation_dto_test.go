@@ -100,3 +100,67 @@ func TestBlueprintStatusResponseOmitsSensitiveFields(t *testing.T) {
 		assert.NotContains(t, jsonStr, f, "forbidden field %q must not appear in BlueprintStatusResponse JSON", f)
 	}
 }
+
+func TestBlueprintListResponseSerializesEmptySlice(t *testing.T) {
+	resp := BlueprintListResponse{
+		Items: []BlueprintListItemResponse{},
+	}
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"items":[]}`, string(b))
+
+	// Also when Items is nil, MarshalJSON should enforce []
+	respNil := BlueprintListResponse{
+		Items: nil,
+	}
+	bNil, err := json.Marshal(respNil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"items":[]}`, string(bNil))
+}
+
+func TestBlueprintDetailResponseJSONContract(t *testing.T) {
+	now := time.Now().UTC()
+	qID := uuid.New()
+	sourceRevID := uuid.New()
+	detail := BlueprintDetailResponse{
+		Status: BlueprintStatusResponse{
+			BlueprintID:        uuid.New(),
+			RevisionID:         uuid.New(),
+			Title:              "Detail Test",
+			GenerationStatus:   "completed",
+			PublicationStatus:  "draft",
+			CompletenessStatus: "complete",
+			ContentVersion:     2,
+			Sections:           make([]BlueprintSectionStatusResponse, 0),
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+		QuotationID:               qID,
+		SourceQuotationRevisionID: &sourceRevID,
+		ContentJSON:               json.RawMessage(`{"sections":[]}`),
+		ValidationResult:          json.RawMessage(`{"valid":true}`),
+		CrossValidationResult:     json.RawMessage(`{"consistent":true}`),
+	}
+
+	b, err := json.Marshal(detail)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	err = json.Unmarshal(b, &raw)
+	require.NoError(t, err)
+
+	assert.Contains(t, raw, "status")
+	assert.Contains(t, raw, "quotation_id")
+	assert.Contains(t, raw, "source_quotation_revision_id")
+	assert.Contains(t, raw, "content_json")
+	assert.Contains(t, raw, "validation_result")
+	assert.Contains(t, raw, "cross_validation_result")
+
+	forbidden := []string{
+		"skill_snapshot", "source_context_snapshot", "ai_provider", "ai_model",
+	}
+	jsonStr := string(b)
+	for _, f := range forbidden {
+		assert.NotContains(t, jsonStr, f)
+	}
+}

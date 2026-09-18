@@ -12,9 +12,10 @@ import (
 )
 
 type Module struct {
-	Handler    *handler.Handler
-	GenHandler *handler.QuotationGenerationHandler
-	Service    *service.Service
+	Handler          *handler.Handler
+	GenHandler       *handler.QuotationGenerationHandler
+	BlueprintHandler *handler.BlueprintGenerationHandler
+	Service          *service.Service
 }
 
 // Initialize wires the quotation module. The AI provider is instantiated via
@@ -49,10 +50,24 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	genSvc := service.NewQuotationGenerationService(genRepo, providerSource)
 	previewCalculator := service.NewDedicatedSquadCalculator(rcRepo)
 
+	// Blueprint pipeline stack (Fase 8)
+	bpGenRepo := repository.NewBlueprintGenerationRepository(db)
+	bpReadRepo := repository.NewBlueprintReadRepository(db)
+	bpInputRepo := repository.NewBlueprintGenerationInputRepository(db)
+	bpContextBuilder := service.NewBlueprintSourceContextBuilder()
+	bpGenSvc := service.NewBlueprintGenerationService(bpInputRepo, skillRepo, bpContextBuilder, bpGenRepo)
+	bpReadSvc := service.NewBlueprintReadService(bpGenRepo, bpReadRepo)
+	bpPrompts := service.NewBlueprintPromptBuilder()
+	bpValidator := service.NewBlueprintSectionValidator()
+	bpCrossValidator := service.NewProductionBlueprintCrossValidator()
+	bpPipeline := service.NewBlueprintPipeline(bpGenRepo, providerSource, bpPrompts, bpValidator, bpCrossValidator)
+	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline)
+
 	return &Module{
-		Handler:    hdlr,
-		GenHandler: handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
-		Service:    svc,
+		Handler:          hdlr,
+		GenHandler:       handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
+		BlueprintHandler: bpHandler,
+		Service:          svc,
 	}
 }
 
@@ -119,6 +134,18 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 	{
 		legalTemplates.GET("", m.Handler.ListLegalTemplates)
 		legalTemplates.GET("/active/:code", m.Handler.GetActiveLegalTemplate)
+	}
+
+	blueprints := router.Group("/blueprints")
+	blueprints.Use(middleware.JWTAuth(), middleware.CompanyContext())
+	{
+		blueprints.POST("/generate", m.BlueprintHandler.Generate)
+		blueprints.GET("/:id/generation-status", m.BlueprintHandler.GetStatus)
+		blueprints.GET("/:id", m.BlueprintHandler.GetDetail)
+		blueprints.POST("/:id/continue", m.BlueprintHandler.Continue)
+		blueprints.POST("/:id/sections/:section/retry", m.BlueprintHandler.RetrySection)
+		blueprints.PUT("/:id/sections/:section/manual", m.BlueprintHandler.ManualCompleteSection)
+		blueprints.GET("", m.BlueprintHandler.List)
 	}
 }
 

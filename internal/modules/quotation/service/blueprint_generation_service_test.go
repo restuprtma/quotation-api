@@ -572,3 +572,24 @@ func TestBlueprintGenerationServiceCreateDoesNotLeakSourceOrSkillFields(t *testi
 		}
 	})
 }
+
+func TestCreateBlueprintPreservesBlueprintAlreadyExistsSentinel(t *testing.T) {
+	companyID, createdBy, sourceRecord, skill, request := validBlueprintGenerationServiceInput()
+	loader := &fakeBlueprintSourceLoader{record: sourceRecord}
+	resolver := &fakeBlueprintSkillResolver{skill: skill}
+	builder := &fakeBlueprintContextBuilder{
+		result: NormalizedBlueprintContext{
+			SourceContextSnapshot:  []byte(`{}`),
+			ContextContent:         []byte(`{}`),
+			IdempotencyPayloadHash: strings.Repeat("a", 64),
+		},
+	}
+	creator := &fakeBlueprintGenerationCreator{err: repository.ErrBlueprintAlreadyExists}
+
+	svc := NewBlueprintGenerationService(loader, resolver, builder, creator)
+
+	_, err := svc.CreateBlueprint(context.Background(), companyID, createdBy, request)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repository.ErrBlueprintAlreadyExists), "error must preserve ErrBlueprintAlreadyExists sentinel")
+	assert.False(t, errors.Is(err, ErrBlueprintGenerationInvalidInput), "must not wrap under ErrBlueprintGenerationInvalidInput")
+}
