@@ -44,19 +44,26 @@ type BlueprintPipelineRunner interface {
 	ManualCompleteSectionAtVersion(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error)
 }
 
+// BlueprintDraftSaver encapsulates draft saves for blueprint sections.
+type BlueprintDraftSaver interface {
+	SaveDraftSectionAtVersion(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error)
+}
+
 // BlueprintGenerationHandler serves HTTP requests for the Blueprint pipeline.
 type BlueprintGenerationHandler struct {
-	creator  BlueprintCreator
-	reader   BlueprintReader
-	pipeline BlueprintPipelineRunner
+	creator    BlueprintCreator
+	reader     BlueprintReader
+	pipeline   BlueprintPipelineRunner
+	draftSaver BlueprintDraftSaver
 }
 
 // NewBlueprintGenerationHandler constructs a new BlueprintGenerationHandler.
-func NewBlueprintGenerationHandler(creator BlueprintCreator, reader BlueprintReader, pipeline BlueprintPipelineRunner) *BlueprintGenerationHandler {
+func NewBlueprintGenerationHandler(creator BlueprintCreator, reader BlueprintReader, pipeline BlueprintPipelineRunner, draftSaver BlueprintDraftSaver) *BlueprintGenerationHandler {
 	return &BlueprintGenerationHandler{
-		creator:  creator,
-		reader:   reader,
-		pipeline: pipeline,
+		creator:    creator,
+		reader:     reader,
+		pipeline:   pipeline,
+		draftSaver: draftSaver,
 	}
 }
 
@@ -277,6 +284,74 @@ func (h *BlueprintGenerationHandler) ManualCompleteSection(c *gin.Context) {
 	}
 
 	response.Success(c, http.StatusOK, "Blueprint section manually completed successfully", status)
+}
+
+// SaveDraftSection saves section draft JSON edits with optimistic concurrency checks and returns canonical detail response.
+func (h *BlueprintGenerationHandler) SaveDraftSection(c *gin.Context) {
+	bpID, err := uuid.Parse(c.Param("id"))
+	if err != nil || bpID == uuid.Nil {
+		response.Error(c, http.StatusBadRequest, "Invalid blueprint id", "blueprint_invalid_input")
+		return
+	}
+
+	section, ok := parseProviderSection(c.Param("section"))
+	if !ok {
+		response.Error(c, http.StatusBadRequest, "Invalid section parameter", "blueprint_invalid_input")
+		return
+	}
+
+	var req dto.SaveBlueprintDraftSectionRequest
+	if !decodeStrictJSON(c, &req) {
+		return
+	}
+
+	if req.RevisionID == uuid.Nil || req.ContentVersion < 1 {
+		response.Error(c, http.StatusBadRequest, "Invalid draft parameters", "blueprint_invalid_input")
+		return
+	}
+
+	trimmedContent := bytes.TrimSpace(req.Content)
+	if len(trimmedContent) == 0 || string(trimmedContent) == "null" || !json.Valid(trimmedContent) {
+		response.Error(c, http.StatusBadRequest, "Invalid draft content payload", "blueprint_invalid_input")
+		return
+	}
+
+	companyID, ok := getCompanyID(c)
+	if !ok {
+		return
+	}
+
+	if h.draftSaver == nil {
+		response.Error(c, http.StatusInternalServerError, "Draft saver not initialized", "persistence_failure")
+		return
+	}
+
+	_, err = h.draftSaver.SaveDraftSectionAtVersion(
+		c.Request.Context(),
+		companyID,
+		bpID,
+		section,
+		req.RevisionID,
+		req.ContentVersion,
+		req.Content,
+	)
+	if err != nil {
+		MapBlueprintError(c, err)
+		return
+	}
+
+	if h.reader == nil {
+		response.Error(c, http.StatusInternalServerError, "Reader not initialized", "persistence_failure")
+		return
+	}
+
+	detail, err := h.reader.GetDetail(c.Request.Context(), companyID, bpID)
+	if err != nil {
+		MapBlueprintError(c, err)
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Blueprint draft saved successfully", detail)
 }
 
 // List returns tenant-filtered blueprint items.

@@ -99,25 +99,32 @@ func NewServer(pool *pgxpool.Pool, fixturePath string) (*Server, error) {
 		return nil, errors.New("QA fixture requires five provider sections")
 	}
 	s := &Server{pool: pool, CompanyID: uuid.New(), QuotationID: uuid.New(), RevisionID: uuid.New()}
+	seedQuotation := func(ctx context.Context) error {
+		s.QuotationID = uuid.New()
+		s.RevisionID = uuid.New()
+		_, err := pool.Exec(ctx, `INSERT INTO quotations (id,company_id,client_id,quotation_number,subject,solution_type,commercial_scheme,status,current_revision) VALUES ($1,$2,gen_random_uuid(),$3,'Public Service Queue System','custom_development','custom_development','draft',1)`, s.QuotationID, s.CompanyID, "BP-QA-"+uuid.NewString()[:8])
+		if err != nil {
+			return err
+		}
+		sourceHTML := "<section><h2>Queue System</h2><p>" + commercialCanary + " " + legalCanary + " " + credentialCanary + "</p></section>"
+		_, err = pool.Exec(ctx, `INSERT INTO quotation_revisions (id,company_id,quotation_id,revision_number,publication_status,generation_status,generation_input,content_html,content_version,created_by) VALUES ($1,$2,$3,1,'draft','completed','{"project":"Public Service Queue"}'::jsonb,$4,1,NULL)`, s.RevisionID, s.CompanyID, s.QuotationID, sourceHTML)
+		if err != nil {
+			return err
+		}
+		skill := &domain.Skill{ID: uuid.New(), CompanyID: s.CompanyID, Name: "Queue Blueprint Architect", Command: service.BlueprintSkillCommand, ContentInstruction: "Produce a high quality blueprint architecture. " + promptCanary, IsActive: true}
+		_ = repository.NewSkillRepository(pool).Create(ctx, pool, skill)
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err = pool.Exec(ctx, `INSERT INTO quotations (id,company_id,client_id,quotation_number,subject,solution_type,commercial_scheme,status,current_revision) VALUES ($1,$2,gen_random_uuid(),$3,'Public Service Queue System','custom_development','custom_development','draft',1)`, s.QuotationID, s.CompanyID, "BP-QA-"+uuid.NewString()[:8])
-	if err != nil {
+	if err := seedQuotation(ctx); err != nil {
+		_ = s.Close()
 		return nil, err
-	}
-	fail := func(e error) (*Server, error) { _ = s.Close(); return nil, e }
-	sourceHTML := "<section><h2>Queue System</h2><p>" + commercialCanary + " " + legalCanary + " " + credentialCanary + "</p></section>"
-	_, err = pool.Exec(ctx, `INSERT INTO quotation_revisions (id,company_id,quotation_id,revision_number,publication_status,generation_status,generation_input,content_html,content_version,created_by) VALUES ($1,$2,$3,1,'draft','completed','{"project":"Public Service Queue"}'::jsonb,$4,1,NULL)`, s.RevisionID, s.CompanyID, s.QuotationID, sourceHTML)
-	if err != nil {
-		return fail(err)
-	}
-	skill := &domain.Skill{ID: uuid.New(), CompanyID: s.CompanyID, Name: "Queue Blueprint Architect", Command: service.BlueprintSkillCommand, ContentInstruction: "Produce a high quality blueprint architecture. " + promptCanary, IsActive: true}
-	if err = repository.NewSkillRepository(pool).Create(ctx, pool, skill); err != nil {
-		return fail(err)
 	}
 	s.token, err = jwtpkg.GenerateToken(uuid.NewString(), s.CompanyID.String(), "QA Company", "", "", "qa@venturo.local", "qa_tester", "QA Tester", false, []string{"admin"})
 	if err != nil {
-		return fail(err)
+		_ = s.Close()
+		return nil, err
 	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -136,6 +143,14 @@ func NewServer(pool *pgxpool.Pool, fixturePath string) (*Server, error) {
 		c.Next()
 	})
 	r.GET("/qa/session", func(c *gin.Context) {
+		var exists bool
+		_ = s.pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM quotations WHERE id=$1 AND company_id=$2)`, s.QuotationID, s.CompanyID).Scan(&exists)
+		if !exists {
+			if err := seedQuotation(c.Request.Context()); err != nil {
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{"token": s.token, "company_id": s.CompanyID, "quotation_id": s.QuotationID, "revision_id": s.RevisionID})
 	})
 	r.POST("/qa/cleanup", middleware.JWTAuth(), middleware.CompanyContext(), func(c *gin.Context) {
@@ -170,7 +185,18 @@ func NewServer(pool *pgxpool.Pool, fixturePath string) (*Server, error) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"blueprint_id": id, "revision_id": revisionID, "status": status, "version": version})
+		runs := make(map[string]gin.H)
+		rows, qErr := s.pool.Query(c.Request.Context(), `SELECT section_type, status FROM blueprint_section_runs WHERE blueprint_revision_id=$1 AND company_id=$2`, revisionID, s.CompanyID)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var st, rStatus string
+				if scanErr := rows.Scan(&st, &rStatus); scanErr == nil {
+					runs[st] = gin.H{"status": rStatus}
+				}
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"blueprint_id": id, "revision_id": revisionID, "status": status, "version": version, "runs": runs})
 	})
 	r.GET("/qa/canary/:id", middleware.JWTAuth(), middleware.CompanyContext(), func(c *gin.Context) {
 		if middleware.GetCompanyID(c) != s.CompanyID.String() {
@@ -230,7 +256,16 @@ func NewServer(pool *pgxpool.Pool, fixturePath string) (*Server, error) {
 		scripted.mu.Unlock()
 		c.Status(http.StatusNoContent)
 	})
-	bpHandler := handler.NewBlueprintGenerationHandler(service.NewBlueprintGenerationService(repository.NewBlueprintGenerationInputRepository(pool), repository.NewSkillRepository(pool), service.NewBlueprintSourceContextBuilder(), bpRepo), service.NewBlueprintReadService(bpRepo, repository.NewBlueprintReadRepository(pool)), service.NewBlueprintPipeline(bpRepo, providerSource{scripted}, service.NewBlueprintPromptBuilder(), service.NewBlueprintSectionValidator(), service.NewProductionBlueprintCrossValidator()))
+	validator := service.NewBlueprintSectionValidator()
+	crossValidator := service.NewProductionBlueprintCrossValidator()
+	provSrc := providerSource{scripted}
+	bpDraftSvc := service.NewBlueprintDraftService(bpRepo, validator, crossValidator, provSrc)
+	bpHandler := handler.NewBlueprintGenerationHandler(
+		service.NewBlueprintGenerationService(repository.NewBlueprintGenerationInputRepository(pool), repository.NewSkillRepository(pool), service.NewBlueprintSourceContextBuilder(), bpRepo),
+		service.NewBlueprintReadService(bpRepo, repository.NewBlueprintReadRepository(pool)),
+		service.NewBlueprintPipeline(bpRepo, provSrc, service.NewBlueprintPromptBuilder(), validator, crossValidator),
+		bpDraftSvc,
+	)
 	module := quotation.Initialize(pool, config.Load())
 	module.BlueprintHandler = bpHandler
 	module.SetupRoutes(r.Group("/quotation/v1"))

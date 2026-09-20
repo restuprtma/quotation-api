@@ -121,6 +121,17 @@ func (m *mockPipeline) ManualCompleteSectionAtVersion(ctx context.Context, compa
 	}, nil
 }
 
+type mockDraftSaver struct {
+	saveDraftCalled bool
+}
+
+func (m *mockDraftSaver) SaveDraftSectionAtVersion(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+	m.saveDraftCalled = true
+	return &service.BlueprintPipelineResult{
+		BlueprintID: blueprintID,
+	}, nil
+}
+
 func setupTestQuotationModule() (*gin.Engine, *mockCreator, *mockReader, *mockPipeline) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -128,8 +139,9 @@ func setupTestQuotationModule() (*gin.Engine, *mockCreator, *mockReader, *mockPi
 	creator := &mockCreator{}
 	reader := &mockReader{}
 	pipeline := &mockPipeline{}
+	draftSaver := &mockDraftSaver{}
 
-	bpHdlr := handler.NewBlueprintGenerationHandler(creator, reader, pipeline)
+	bpHdlr := handler.NewBlueprintGenerationHandler(creator, reader, pipeline, draftSaver)
 
 	mod := &quotation.Module{
 		BlueprintHandler: bpHdlr,
@@ -157,13 +169,14 @@ func TestMainQuotation_BlueprintRoutes_Registered(t *testing.T) {
 	router, _, _, _ := setupTestQuotationModule()
 
 	expectedRoutes := map[string]string{
-		"POST /quotation/v1/blueprints/generate":                   "",
-		"GET /quotation/v1/blueprints/:id/generation-status":       "",
-		"GET /quotation/v1/blueprints/:id":                         "",
-		"POST /quotation/v1/blueprints/:id/continue":               "",
-		"POST /quotation/v1/blueprints/:id/sections/:section/retry":  "",
+		"POST /quotation/v1/blueprints/generate":                    "",
+		"GET /quotation/v1/blueprints/:id/generation-status":        "",
+		"GET /quotation/v1/blueprints/:id":                          "",
+		"POST /quotation/v1/blueprints/:id/continue":                "",
+		"POST /quotation/v1/blueprints/:id/sections/:section/retry": "",
 		"PUT /quotation/v1/blueprints/:id/sections/:section/manual": "",
-		"GET /quotation/v1/blueprints":                             "",
+		"PUT /quotation/v1/blueprints/:id/sections/:section/draft":  "",
+		"GET /quotation/v1/blueprints":                              "",
 	}
 
 	registeredRoutes := make(map[string]bool)
@@ -192,6 +205,7 @@ func TestMainQuotation_BlueprintRoutes_Unauthorized_Returns401(t *testing.T) {
 		{http.MethodPost, "/quotation/v1/blueprints/" + bpID.String() + "/continue", nil},
 		{http.MethodPost, "/quotation/v1/blueprints/" + bpID.String() + "/sections/journey/retry", nil},
 		{http.MethodPut, "/quotation/v1/blueprints/" + bpID.String() + "/sections/journey/manual", []byte(`{}`)},
+		{http.MethodPut, "/quotation/v1/blueprints/" + bpID.String() + "/sections/journey/draft", []byte(`{}`)},
 		{http.MethodGet, "/quotation/v1/blueprints", nil},
 	}
 

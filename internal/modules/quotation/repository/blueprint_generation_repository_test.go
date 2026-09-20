@@ -1371,3 +1371,155 @@ func TestCompleteBlueprintSectionManuallyRejectsConcurrentGenerating(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, "generating", archStatus)
 }
+
+func TestBlueprintDraftRepository_SaveDraft_SuccessAndDownstreamInvalidation(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	f := seedBlueprintSource(t, pool)
+	defer cleanupBlueprintFixture(t, pool, f.CompanyID)
+
+	repo := repository.NewBlueprintGenerationRepository(pool)
+	createParams := validBlueprintCreateParams(f)
+	res, err := repo.CreateBlueprintGeneration(ctx, createParams)
+	require.NoError(t, err)
+
+	now := time.Now()
+
+	// Load draft snapshot for Journey
+	snap, err := repo.LoadBlueprintDraftSnapshot(ctx, f.CompanyID, res.Blueprint.ID, domain.BlueprintSectionJourney)
+	require.NoError(t, err)
+	require.NotNil(t, snap)
+	assert.Equal(t, domain.BlueprintSectionJourney, snap.SectionType)
+	assert.Equal(t, domain.BlueprintSectionPending, snap.SectionStatus)
+	assert.Equal(t, 1, snap.ExpectedContentVersion)
+
+	// Save draft for Journey
+	draftContent := json.RawMessage(`{"journey":{"phases":[{"id":"phase-1","label":"Start","order":1}],"actors":[],"activities":[]}}`)
+	validationJSON := json.RawMessage(`{"valid":false,"issues":[{"code":"ERR_MISSING_ID","message":"Incomplete draft"}]}`)
+	revContent := json.RawMessage(`{"schema_version":"1.0","title":"Draft Test","journey":{"phases":[{"id":"phase-1","label":"Start","order":1}],"actors":[],"activities":[]}}`)
+
+	persResult, err := repo.SaveBlueprintDraft(ctx, repository.SaveBlueprintDraftParams{
+		Snapshot:            *snap,
+		SectionContent:      draftContent,
+		SectionValidation:   validationJSON,
+		RevisionContent:     revContent,
+		InvalidatedSections: []domain.BlueprintSectionType{domain.BlueprintSectionArchitecture, domain.BlueprintSectionStateMachine, domain.BlueprintSectionWorkflow, domain.BlueprintSectionWBS, domain.BlueprintSectionCrossValidation},
+		SavedAt:             now,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, persResult)
+	assert.Equal(t, domain.BlueprintSectionManualEdit, persResult.SectionStatus, "Draft save must set status to manual_edit, not validated")
+	assert.Equal(t, 2, persResult.ContentVersion, "Content version must increment to 2")
+
+	// Verify database rows directly
+	var dbRunStatus string
+	var dbRunContent []byte
+	err = pool.QueryRow(ctx, `
+		SELECT status, content_json
+		FROM blueprint_section_runs
+		WHERE blueprint_revision_id = $1 AND section_type = 'journey' AND company_id = $2
+	`, res.Revision.ID, f.CompanyID).Scan(&dbRunStatus, &dbRunContent)
+	require.NoError(t, err)
+	assert.Equal(t, "manual_edit", dbRunStatus)
+	assert.Contains(t, string(dbRunContent), "phase-1")
+
+	// Verify downstream runs are pending
+	var archRunStatus string
+	err = pool.QueryRow(ctx, `
+		SELECT status
+		FROM blueprint_section_runs
+		WHERE blueprint_revision_id = $1 AND section_type = 'architecture' AND company_id = $2
+	`, res.Revision.ID, f.CompanyID).Scan(&archRunStatus)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", archRunStatus)
+
+	// Verify revision version and content_json in DB
+	var dbRevVersion int
+	var dbRevContent []byte
+	err = pool.QueryRow(ctx, `
+		SELECT content_version, content_json
+		FROM blueprint_revisions
+		WHERE id = $1 AND company_id = $2
+	`, res.Revision.ID, f.CompanyID).Scan(&dbRevVersion, &dbRevContent)
+	require.NoError(t, err)
+	assert.Equal(t, 2, dbRevVersion)
+	assert.Contains(t, string(dbRevContent), "Draft Test")
+}
+
+func TestBlueprintDraftRepository_SaveDraft_Conflict_CASAndGenerating(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	f := seedBlueprintSource(t, pool)
+	defer cleanupBlueprintFixture(t, pool, f.CompanyID)
+
+	repo := repository.NewBlueprintGenerationRepository(pool)
+	createParams := validBlueprintCreateParams(f)
+	res, err := repo.CreateBlueprintGeneration(ctx, createParams)
+	require.NoError(t, err)
+
+	now := time.Now()
+
+	snap, err := repo.LoadBlueprintDraftSnapshot(ctx, f.CompanyID, res.Blueprint.ID, domain.BlueprintSectionJourney)
+	require.NoError(t, err)
+
+	// 1. Stale version conflict (expected 2 while DB is at 1)
+	staleSnap := *snap
+	staleSnap.ExpectedContentVersion = 99
+	_, err = repo.SaveBlueprintDraft(ctx, repository.SaveBlueprintDraftParams{
+		Snapshot:            staleSnap,
+		SectionContent:      json.RawMessage(`{}`),
+		SectionValidation:   json.RawMessage(`{}`),
+		RevisionContent:     json.RawMessage(`{}`),
+		InvalidatedSections: nil,
+		SavedAt:             now,
+	})
+	assert.ErrorIs(t, err, repository.ErrBlueprintContentConflict, "Stale content_version must conflict")
+
+	// 2. Generating run conflict
+	_, err = pool.Exec(ctx, `
+		UPDATE blueprint_section_runs
+		SET status = 'generating'
+		WHERE blueprint_revision_id = $1 AND section_type = 'journey' AND company_id = $2
+	`, res.Revision.ID, f.CompanyID)
+	require.NoError(t, err)
+
+	_, err = repo.SaveBlueprintDraft(ctx, repository.SaveBlueprintDraftParams{
+		Snapshot:            *snap,
+		SectionContent:      json.RawMessage(`{}`),
+		SectionValidation:   json.RawMessage(`{}`),
+		RevisionContent:     json.RawMessage(`{}`),
+		InvalidatedSections: nil,
+		SavedAt:             now,
+	})
+	assert.ErrorIs(t, err, repository.ErrBlueprintClaimConflict, "Saving draft while run is generating must conflict")
+}
+
+func TestBlueprintDraftRepository_SaveDraft_ForeignTenant_Rejection(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	f := seedBlueprintSource(t, pool)
+	defer cleanupBlueprintFixture(t, pool, f.CompanyID)
+
+	repo := repository.NewBlueprintGenerationRepository(pool)
+	createParams := validBlueprintCreateParams(f)
+	res, err := repo.CreateBlueprintGeneration(ctx, createParams)
+	require.NoError(t, err)
+
+	foreignCompanyID := uuid.New()
+
+	// Load from foreign company ID must return ErrBlueprintNotFound
+	_, err = repo.LoadBlueprintDraftSnapshot(ctx, foreignCompanyID, res.Blueprint.ID, domain.BlueprintSectionJourney)
+	assert.ErrorIs(t, err, repository.ErrBlueprintNotFound)
+}

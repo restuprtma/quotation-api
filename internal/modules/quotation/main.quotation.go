@@ -61,7 +61,8 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	bpValidator := service.NewBlueprintSectionValidator()
 	bpCrossValidator := service.NewProductionBlueprintCrossValidator()
 	bpPipeline := service.NewBlueprintPipeline(bpGenRepo, providerSource, bpPrompts, bpValidator, bpCrossValidator)
-	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline)
+	bpDraftSvc := service.NewBlueprintDraftService(bpGenRepo, bpValidator, bpCrossValidator, providerSource)
+	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline, bpDraftSvc)
 
 	return &Module{
 		Handler:          hdlr,
@@ -145,6 +146,7 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		blueprints.POST("/:id/continue", m.BlueprintHandler.Continue)
 		blueprints.POST("/:id/sections/:section/retry", m.BlueprintHandler.RetrySection)
 		blueprints.PUT("/:id/sections/:section/manual", m.BlueprintHandler.ManualCompleteSection)
+		blueprints.PUT("/:id/sections/:section/draft", m.BlueprintHandler.SaveDraftSection)
 		blueprints.GET("", m.BlueprintHandler.List)
 	}
 }

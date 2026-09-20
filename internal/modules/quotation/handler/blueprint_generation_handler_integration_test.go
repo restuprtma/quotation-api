@@ -348,7 +348,8 @@ func setupHTTPIntegrationRouter(
 	crossValidator := service.NewProductionBlueprintCrossValidator()
 
 	bpPipeline := service.NewBlueprintPipeline(bpGenRepo, provSource, prompts, validator, crossValidator)
-	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline)
+	bpDraftSvc := service.NewBlueprintDraftService(bpGenRepo, validator, crossValidator, provSource)
+	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline, bpDraftSvc)
 
 	blueprints := router.Group("/quotation/v1/blueprints")
 	blueprints.Use(middleware.JWTAuth(), middleware.CompanyContext())
@@ -359,6 +360,7 @@ func setupHTTPIntegrationRouter(
 		blueprints.POST("/:id/continue", bpHandler.Continue)
 		blueprints.POST("/:id/sections/:section/retry", bpHandler.RetrySection)
 		blueprints.PUT("/:id/sections/:section/manual", bpHandler.ManualCompleteSection)
+		blueprints.PUT("/:id/sections/:section/draft", bpHandler.SaveDraftSection)
 		blueprints.GET("", bpHandler.List)
 	}
 
@@ -1222,4 +1224,641 @@ func TestBlueprintHTTP_MiddlewareJWTAndCompanyContext(t *testing.T) {
 	router.ServeHTTP(wNoComp, rNoComp)
 	assert.Equal(t, http.StatusForbidden, wNoComp.Code)
 	assert.Contains(t, wNoComp.Body.String(), "missing_company_context")
+}
+
+// =========================================================================
+// Phase 09 Session 03: BlueprintDraft HTTP & DB Integration Tests (1.04-1.06)
+// =========================================================================
+
+func TestBlueprintDraft_HTTPIntegration_SaveDraft_ValidAndIncomplete(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(
+		t, pool, companyID, "published", "completed",
+		"<section><h2>Sistem Antrian</h2><p>Spesifikasi sistem antrean loket terpadu.</p></section>",
+	)
+
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+	require.Equal(t, 1, genResp.Data.ContentVersion)
+
+	// --- 1. Valid Journey Draft Save -> 200 OK, version increment to 2, status manual_edit ---
+	validJourney := fix.Sections["journey"]
+	draftReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 1,
+		Content:        validJourney,
+	}
+	draftBytes, err := json.Marshal(draftReq)
+	require.NoError(t, err)
+
+	wDraft := httptest.NewRecorder()
+	httpReqDraft := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(draftBytes))
+	httpReqDraft.Header.Set("Authorization", "Bearer "+token)
+	httpReqDraft.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wDraft, httpReqDraft)
+
+	require.Equal(t, http.StatusOK, wDraft.Code)
+
+	var draftResp struct {
+		Message string                      `json:"message"`
+		Data    dto.BlueprintDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wDraft.Body.Bytes(), &draftResp))
+	assert.Equal(t, "Blueprint draft saved successfully", draftResp.Message)
+	assert.Equal(t, 2, draftResp.Data.Status.ContentVersion)
+	assert.Equal(t, "in_progress", draftResp.Data.Status.GenerationStatus)
+
+	var journeyStatus *dto.BlueprintSectionStatusResponse
+	for _, sec := range draftResp.Data.Status.Sections {
+		if sec.Type == "journey" {
+			journeyStatus = &sec
+			break
+		}
+	}
+	require.NotNil(t, journeyStatus)
+	assert.Equal(t, "manual_edit", journeyStatus.Status)
+
+	// Direct DB verification
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var dbVersion int
+	var dbGenStatus string
+	err = pool.QueryRow(ctx, `SELECT content_version, generation_status FROM blueprint_revisions WHERE id = $1 AND company_id = $2`, activeRevID, companyID).Scan(&dbVersion, &dbGenStatus)
+	require.NoError(t, err)
+	assert.Equal(t, 2, dbVersion)
+	assert.Equal(t, "in_progress", dbGenStatus)
+
+	var dbRunStatus string
+	err = pool.QueryRow(ctx, `SELECT status FROM blueprint_section_runs WHERE blueprint_revision_id = $1 AND company_id = $2 AND section_type = 'journey'`, activeRevID, companyID).Scan(&dbRunStatus)
+	require.NoError(t, err)
+	assert.Equal(t, "manual_edit", dbRunStatus)
+
+	// --- 2. Incomplete Journey Draft Save -> 200 OK, version increment to 3, manual_edit, valid: false with issues ---
+	incompleteJourney := []byte(`{"journey":{"phases":[{"id":"phase_01","label":"Loket","order":1}],"actors":[],"activities":[{"id":"act_01","phase_id":"phase_01","actor_id":"actor_unknown","label":"Ambil Nomor","description":"Ambil antrean"}]}}`)
+	draftReq2 := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 2,
+		Content:        incompleteJourney,
+	}
+	draftBytes2, err := json.Marshal(draftReq2)
+	require.NoError(t, err)
+
+	wDraft2 := httptest.NewRecorder()
+	httpReqDraft2 := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(draftBytes2))
+	httpReqDraft2.Header.Set("Authorization", "Bearer "+token)
+	httpReqDraft2.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wDraft2, httpReqDraft2)
+
+	require.Equal(t, http.StatusOK, wDraft2.Code)
+	var draftResp2 struct {
+		Message string                      `json:"message"`
+		Data    dto.BlueprintDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wDraft2.Body.Bytes(), &draftResp2))
+	assert.Equal(t, 3, draftResp2.Data.Status.ContentVersion)
+
+	// Check validation result contains issues and valid: false
+	var valResult map[string]interface{}
+	require.NoError(t, json.Unmarshal(draftResp2.Data.ValidationResult, &valResult))
+	journeyVal := valResult["journey"].(map[string]interface{})
+	assert.Equal(t, false, journeyVal["valid"])
+	issues := journeyVal["issues"].([]interface{})
+	assert.NotEmpty(t, issues)
+
+	// Direct DB check
+	var dbVersion3 int
+	err = pool.QueryRow(ctx, `SELECT content_version FROM blueprint_revisions WHERE id = $1 AND company_id = $2`, activeRevID, companyID).Scan(&dbVersion3)
+	require.NoError(t, err)
+	assert.Equal(t, 3, dbVersion3)
+}
+
+func TestBlueprintDraft_HTTPIntegration_Conflict_StaleVersionAndRevisionMismatch(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyID, "published", "completed", "<section><h2>Test</h2></section>")
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+
+	// 1. Stale content_version (expected 1, passing 99) -> 409 Conflict
+	staleReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 99,
+		Content:        fix.Sections["journey"],
+	}
+	staleBytes, err := json.Marshal(staleReq)
+	require.NoError(t, err)
+
+	wStale := httptest.NewRecorder()
+	httpReqStale := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(staleBytes))
+	httpReqStale.Header.Set("Authorization", "Bearer "+token)
+	httpReqStale.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wStale, httpReqStale)
+
+	assert.Equal(t, http.StatusConflict, wStale.Code)
+	assert.Contains(t, wStale.Body.String(), "execution_conflict")
+
+	// 2. Mismatched revision_id -> 409 Conflict
+	wrongRevReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     uuid.New(),
+		ContentVersion: 1,
+		Content:        fix.Sections["journey"],
+	}
+	wrongRevBytes, err := json.Marshal(wrongRevReq)
+	require.NoError(t, err)
+
+	wWrongRev := httptest.NewRecorder()
+	httpReqWrongRev := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(wrongRevBytes))
+	httpReqWrongRev.Header.Set("Authorization", "Bearer "+token)
+	httpReqWrongRev.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wWrongRev, httpReqWrongRev)
+
+	assert.Equal(t, http.StatusConflict, wWrongRev.Code)
+	assert.Contains(t, wWrongRev.Body.String(), "execution_conflict")
+
+	// Verify DB unchanged
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var dbVersion int
+	err = pool.QueryRow(ctx, `SELECT content_version FROM blueprint_revisions WHERE id = $1 AND company_id = $2`, activeRevID, companyID).Scan(&dbVersion)
+	require.NoError(t, err)
+	assert.Equal(t, 1, dbVersion)
+}
+
+func TestBlueprintDraft_HTTPIntegration_ForeignTenant_Rejection(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyA := uuid.New()
+	companyB := uuid.New()
+	userA := uuid.New()
+	userB := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyA)
+	cleanupHTTPIntegrationTenant(t, pool, companyB)
+	t.Cleanup(func() {
+		cleanupHTTPIntegrationTenant(t, pool, companyA)
+		cleanupHTTPIntegrationTenant(t, pool, companyB)
+	})
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	tokenA := generateTestJWTToken(t, userA.String(), companyA.String())
+	tokenB := generateTestJWTToken(t, userB.String(), companyB.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyA, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyA, "published", "completed", "<section><h2>Test</h2></section>")
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+tokenA)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+
+	// Company B tries to save draft on Company A's blueprint -> 404 Not Found
+	draftReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 1,
+		Content:        fix.Sections["journey"],
+	}
+	draftBytes, err := json.Marshal(draftReq)
+	require.NoError(t, err)
+
+	wForeign := httptest.NewRecorder()
+	httpReqForeign := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(draftBytes))
+	httpReqForeign.Header.Set("Authorization", "Bearer "+tokenB)
+	httpReqForeign.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wForeign, httpReqForeign)
+
+	assert.Equal(t, http.StatusNotFound, wForeign.Code)
+	assert.Contains(t, wForeign.Body.String(), "blueprint_not_found")
+}
+
+func TestBlueprintDraft_HTTPIntegration_422ShapeAndSecurity_Rejection(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyID, "published", "completed", "<section><h2>Test</h2></section>")
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+
+	// 1. Malformed shape (wrong top-level section key) -> 422 invalid_schema
+	malformedReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 1,
+		Content:        json.RawMessage(`{"wrong_root":{"phases":[]}}`),
+	}
+	malformedBytes, _ := json.Marshal(malformedReq)
+
+	wMal := httptest.NewRecorder()
+	httpReqMal := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(malformedBytes))
+	httpReqMal.Header.Set("Authorization", "Bearer "+token)
+	httpReqMal.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wMal, httpReqMal)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, wMal.Code)
+	assert.Contains(t, wMal.Body.String(), "invalid_schema")
+
+	// 2. Forbidden security key (`apiKey`) -> 422 security_failure
+	securityReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 1,
+		Content:        json.RawMessage(`{"journey":{"apiKey":"secret_token_123","phases":[]}}`),
+	}
+	securityBytes, _ := json.Marshal(securityReq)
+
+	wSec := httptest.NewRecorder()
+	httpReqSec := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(securityBytes))
+	httpReqSec.Header.Set("Authorization", "Bearer "+token)
+	httpReqSec.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wSec, httpReqSec)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, wSec.Code)
+	assert.Contains(t, wSec.Body.String(), "security_failure")
+
+	// Verify DB content_version is still 1
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var dbVersion int
+	err = pool.QueryRow(ctx, `SELECT content_version FROM blueprint_revisions WHERE id = $1 AND company_id = $2`, activeRevID, companyID).Scan(&dbVersion)
+	require.NoError(t, err)
+	assert.Equal(t, 1, dbVersion)
+}
+
+func TestBlueprintDraft_HTTPIntegration_TwoConcurrentWriters_CAS(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyID, "published", "completed", "<section><h2>Test</h2></section>")
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+
+	// Two concurrent writers attempting draft save with same content_version: 1
+	var wg sync.WaitGroup
+	results := make([]int, 2)
+	wg.Add(2)
+
+	for i := 0; i < 2; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+			draftReq := dto.SaveBlueprintDraftSectionRequest{
+				RevisionID:     activeRevID,
+				ContentVersion: 1,
+				Content:        fix.Sections["journey"],
+			}
+			draftBytes, _ := json.Marshal(draftReq)
+			w := httptest.NewRecorder()
+			httpReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(draftBytes))
+			httpReq.Header.Set("Authorization", "Bearer "+token)
+			httpReq.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, httpReq)
+			results[idx] = w.Code
+		}()
+	}
+
+	wg.Wait()
+
+	// Assert exactly one 200 and one 409
+	statusCounts := make(map[int]int)
+	for _, code := range results {
+		statusCounts[code]++
+	}
+	assert.Equal(t, 1, statusCounts[http.StatusOK], "Expected exactly one 200 OK")
+	assert.Equal(t, 1, statusCounts[http.StatusConflict], "Expected exactly one 409 Conflict")
+
+	// Direct DB verify: content_version incremented exactly once to 2
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var dbVersion int
+	err = pool.QueryRow(ctx, `SELECT content_version FROM blueprint_revisions WHERE id = $1 AND company_id = $2`, activeRevID, companyID).Scan(&dbVersion)
+	require.NoError(t, err)
+	assert.Equal(t, 2, dbVersion)
+}
+
+func TestBlueprintDraft_HTTPIntegration_DownstreamInvalidation(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyID, "published", "completed", "<section><h2>Test</h2></section>")
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+
+	// Continue 1: generates Journey -> completed
+	wCont1 := httptest.NewRecorder()
+	httpReqCont1 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/continue", bpID.String()), nil)
+	httpReqCont1.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wCont1, httpReqCont1)
+	require.Equal(t, http.StatusOK, wCont1.Code)
+
+	// Continue 2: generates Architecture -> completed
+	wCont2 := httptest.NewRecorder()
+	httpReqCont2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/continue", bpID.String()), nil)
+	httpReqCont2.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wCont2, httpReqCont2)
+	require.Equal(t, http.StatusOK, wCont2.Code)
+
+	// Get detail before draft save: version is 3, Architecture is completed
+	wDetBefore := httptest.NewRecorder()
+	httpReqDetBefore := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/quotation/v1/blueprints/%s", bpID.String()), nil)
+	httpReqDetBefore.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wDetBefore, httpReqDetBefore)
+	require.Equal(t, http.StatusOK, wDetBefore.Code)
+
+	var detBefore struct {
+		Data dto.BlueprintDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wDetBefore.Body.Bytes(), &detBefore))
+	currentVersion := detBefore.Data.Status.ContentVersion
+	require.Equal(t, 3, currentVersion)
+
+	// Now save a new Journey draft at version 3
+	draftReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 3,
+		Content:        fix.Sections["journey"],
+	}
+	draftBytes, err := json.Marshal(draftReq)
+	require.NoError(t, err)
+
+	wDraft := httptest.NewRecorder()
+	httpReqDraft := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(draftBytes))
+	httpReqDraft.Header.Set("Authorization", "Bearer "+token)
+	httpReqDraft.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wDraft, httpReqDraft)
+
+	require.Equal(t, http.StatusOK, wDraft.Code)
+
+	var draftResp struct {
+		Data dto.BlueprintDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wDraft.Body.Bytes(), &draftResp))
+	assert.Equal(t, 4, draftResp.Data.Status.ContentVersion)
+
+	// Verify downstream sections (architecture, state_machine, workflow, wbs) are reset to pending
+	sectionStatusMap := make(map[string]string)
+	for _, sec := range draftResp.Data.Status.Sections {
+		sectionStatusMap[sec.Type] = sec.Status
+	}
+	assert.Equal(t, "manual_edit", sectionStatusMap["journey"])
+	assert.Equal(t, "pending", sectionStatusMap["architecture"])
+	assert.Equal(t, "pending", sectionStatusMap["state_machine"])
+	assert.Equal(t, "pending", sectionStatusMap["workflow"])
+	assert.Equal(t, "pending", sectionStatusMap["wbs"])
+
+	// Direct DB check for downstream runs
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var archStatus string
+	err = pool.QueryRow(ctx, `SELECT status FROM blueprint_section_runs WHERE blueprint_revision_id = $1 AND company_id = $2 AND section_type = 'architecture'`, activeRevID, companyID).Scan(&archStatus)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", archStatus)
+}
+
+func TestBlueprintDraft_HTTPIntegration_ManualAndContinueRegression(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyID, "published", "completed", "<section><h2>Test</h2></section>")
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+
+	// 1. Save Journey draft as manual_edit at version 1
+	draftReq := dto.SaveBlueprintDraftSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 1,
+		Content:        fix.Sections["journey"],
+	}
+	draftBytes, _ := json.Marshal(draftReq)
+	wDraft := httptest.NewRecorder()
+	httpReqDraft := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), bytes.NewReader(draftBytes))
+	httpReqDraft.Header.Set("Authorization", "Bearer "+token)
+	httpReqDraft.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wDraft, httpReqDraft)
+	require.Equal(t, http.StatusOK, wDraft.Code)
+
+	// 2. Perform manual completion via PUT /manual endpoint at version 2 -> sets validated
+	manualReq := dto.ManualCompleteBlueprintSectionRequest{
+		RevisionID:     activeRevID,
+		ContentVersion: 2,
+		Content:        fix.Sections["journey"],
+	}
+	manualBytes, _ := json.Marshal(manualReq)
+	wManual := httptest.NewRecorder()
+	httpReqManual := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/manual", bpID.String()), bytes.NewReader(manualBytes))
+	httpReqManual.Header.Set("Authorization", "Bearer "+token)
+	httpReqManual.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wManual, httpReqManual)
+	require.Equal(t, http.StatusOK, wManual.Code)
+
+	var manualResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wManual.Body.Bytes(), &manualResp))
+	assert.Equal(t, 3, manualResp.Data.ContentVersion)
+
+	var journeyStatus string
+	for _, sec := range manualResp.Data.Sections {
+		if sec.Type == "journey" {
+			journeyStatus = sec.Status
+			break
+		}
+	}
+	assert.Equal(t, "validated", journeyStatus)
+
+	// 3. Continue to next section (Architecture) -> succeeds
+	wCont := httptest.NewRecorder()
+	httpReqCont := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/continue", bpID.String()), nil)
+	httpReqCont.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wCont, httpReqCont)
+	require.Equal(t, http.StatusOK, wCont.Code)
+
+	var contResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wCont.Body.Bytes(), &contResp))
+	var archStatus string
+	for _, sec := range contResp.Data.Sections {
+		if sec.Type == "architecture" {
+			archStatus = sec.Status
+			break
+		}
+	}
+	assert.Equal(t, "completed", archStatus)
 }

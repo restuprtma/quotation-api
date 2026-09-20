@@ -1589,6 +1589,112 @@ func (v *BlueprintSectionValidator) Validate(
 	}
 }
 
+// ValidateDraft executes depth check, security scanning, and strict envelope decoding for draft saves.
+// Unlike Validate, structural and reference completeness issues do NOT block draft saves (SafeOutcome is empty and NormalizedContent is returned).
+// Only invalid JSON encoding, nesting depth >32, forbidden security content, unknown fields, or malformed top-level envelope result in a blocking SafeOutcome (422 rejection).
+func (v *BlueprintSectionValidator) ValidateDraft(
+	sectionType domain.BlueprintSectionType,
+	payload json.RawMessage,
+) BlueprintValidationResult {
+	secName := string(sectionType)
+	if secName == "" {
+		secName = "general"
+	}
+
+	// 1. Check max nesting depth and valid UTF-8
+	if !checkJSONDepthAndUTF8(payload) {
+		issue := BlueprintValidationIssue{
+			Code:        BlueprintIssueUnsupportedVersion,
+			Severity:    "BLOCKING_ERROR",
+			Section:     secName,
+			Path:        "",
+			Message:     "malformed or unsupported section payload",
+			Blocking:    true,
+			Remediation: "Provide valid UTF-8 JSON within accepted nesting depth limits.",
+		}
+		return BlueprintValidationResult{
+			Valid:             false,
+			SafeOutcome:       BlueprintValidationInvalidSchema,
+			Issues:            []BlueprintValidationIssue{issue},
+			NormalizedContent: nil,
+		}
+	}
+
+	// 2. Security walk on raw JSON tree
+	var rawTree any
+	var securityIssues []BlueprintValidationIssue
+	if err := json.Unmarshal(payload, &rawTree); err == nil && rawTree != nil {
+		securityIssues = validateBlueprintJSONSecurity(rawAny(rawTree), "", secName)
+	}
+	if len(securityIssues) > 0 {
+		sortBlueprintValidationIssues(securityIssues)
+		return BlueprintValidationResult{
+			Valid:             false,
+			SafeOutcome:       BlueprintValidationSecurityFailure,
+			Issues:            securityIssues,
+			NormalizedContent: nil,
+		}
+	}
+
+	// 3. Strict envelope decoding
+	decoded, errPath, decodeErr := strictDecodeBlueprintSection(sectionType, payload)
+	if decodeErr != nil {
+		issue := BlueprintValidationIssue{
+			Code:        BlueprintIssueUnsupportedVersion,
+			Severity:    "BLOCKING_ERROR",
+			Section:     secName,
+			Path:        errPath,
+			Message:     "malformed or unsupported section envelope",
+			Blocking:    true,
+			Remediation: "Provide valid JSON matching the section schema contract without unknown fields.",
+		}
+		issues := []BlueprintValidationIssue{issue}
+		return BlueprintValidationResult{
+			Valid:             false,
+			SafeOutcome:       BlueprintValidationInvalidSchema,
+			Issues:            issues,
+			NormalizedContent: nil,
+		}
+	}
+
+	// 4. Section structural validation (to compute issues for BA guidance)
+	var structIssues []BlueprintValidationIssue
+	switch sectionType {
+	case domain.BlueprintSectionJourney:
+		structIssues = validateJourneySection(decoded.(BlueprintJourney))
+	case domain.BlueprintSectionArchitecture:
+		structIssues = validateArchitectureSection(decoded.(BlueprintArchitecture))
+	case domain.BlueprintSectionStateMachine:
+		structIssues = validateStateMachineSection(decoded.(BlueprintStateMachine))
+	case domain.BlueprintSectionWorkflow:
+		structIssues = validateWorkflowSection(decoded.([]BlueprintWorkflow))
+	case domain.BlueprintSectionWBS:
+		wbsData := decoded.(decodedWBSSection)
+		structIssues = validateWBSSection(wbsData.WBS, wbsData.CrossReferences)
+	}
+
+	sortBlueprintValidationIssues(structIssues)
+
+	wrapped := wrapSectionForNormalization(sectionType, decoded)
+	normContent := normalizedJSON(wrapped)
+
+	if len(structIssues) > 0 {
+		return BlueprintValidationResult{
+			Valid:             false,
+			SafeOutcome:       "",
+			Issues:            structIssues,
+			NormalizedContent: normContent,
+		}
+	}
+
+	return BlueprintValidationResult{
+		Valid:             true,
+		SafeOutcome:       "",
+		Issues:            []BlueprintValidationIssue{},
+		NormalizedContent: normContent,
+	}
+}
+
 func rawAny(v any) any {
 	return v
 }

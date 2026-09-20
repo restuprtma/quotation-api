@@ -89,3 +89,9 @@ type ManualCompleteBlueprintSectionRequest struct {
 	ContentVersion int             `json:"content_version" binding:"required,min=1"`
 	Content        json.RawMessage `json:"content" binding:"required"`
 }
+
+type SaveBlueprintDraftSectionRequest struct {
+	RevisionID     uuid.UUID       `json:"revision_id" binding:"required"`
+	ContentVersion int             `json:"content_version" binding:"required,min=1"`
+	Content        json.RawMessage `json:"content" binding:"required"`
+}

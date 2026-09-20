@@ -90,9 +90,9 @@ func (m *mockBlueprintReader) List(ctx context.Context, companyID uuid.UUID, quo
 }
 
 type mockBlueprintPipelineRunner struct {
-	continueFunc func(ctx context.Context, companyID, blueprintID uuid.UUID) (*service.BlueprintPipelineResult, error)
-	retryFunc    func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*service.BlueprintPipelineResult, error)
-	manualFunc   func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error)
+	continueFunc  func(ctx context.Context, companyID, blueprintID uuid.UUID) (*service.BlueprintPipelineResult, error)
+	retryFunc     func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*service.BlueprintPipelineResult, error)
+	manualFunc    func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error)
 	continueCalls int
 	retryCalls    int
 	manualCalls   int
@@ -139,28 +139,55 @@ func (m *mockBlueprintPipelineRunner) ManualCompleteSectionAtVersion(ctx context
 	return nil, errors.New("unimplemented mock manual")
 }
 
+type mockBlueprintDraftSaver struct {
+	saveDraftFunc  func(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error)
+	saveDraftCalls int
+	lastCompID     uuid.UUID
+	lastBpID       uuid.UUID
+	lastSection    domain.BlueprintSectionType
+	lastRevID      uuid.UUID
+	lastVersion    int
+	lastPayload    json.RawMessage
+}
+
+func (m *mockBlueprintDraftSaver) SaveDraftSectionAtVersion(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType, revisionID uuid.UUID, expectedVersion int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+	m.saveDraftCalls++
+	m.lastCompID = companyID
+	m.lastBpID = blueprintID
+	m.lastSection = sectionType
+	m.lastRevID = revisionID
+	m.lastVersion = expectedVersion
+	m.lastPayload = payload
+	if m.saveDraftFunc != nil {
+		return m.saveDraftFunc(ctx, companyID, blueprintID, sectionType, revisionID, expectedVersion, payload)
+	}
+	return nil, errors.New("unimplemented mock save draft")
+}
+
 // --- Router and Test Helpers ---
 
 type blueprintHandlerTestRig struct {
-	creator  *mockBlueprintCreator
-	reader   *mockBlueprintReader
-	pipeline *mockBlueprintPipelineRunner
-	handler  *handler.BlueprintGenerationHandler
-	router   *gin.Engine
-	companyID uuid.UUID
-	userID    uuid.UUID
+	creator    *mockBlueprintCreator
+	reader     *mockBlueprintReader
+	pipeline   *mockBlueprintPipelineRunner
+	draftSaver *mockBlueprintDraftSaver
+	handler    *handler.BlueprintGenerationHandler
+	router     *gin.Engine
+	companyID  uuid.UUID
+	userID     uuid.UUID
 }
 
 func setupBlueprintTestRig() *blueprintHandlerTestRig {
 	gin.SetMode(gin.TestMode)
 	rig := &blueprintHandlerTestRig{
-		creator:   &mockBlueprintCreator{},
-		reader:    &mockBlueprintReader{},
-		pipeline:  &mockBlueprintPipelineRunner{},
-		companyID: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
-		userID:    uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		creator:    &mockBlueprintCreator{},
+		reader:     &mockBlueprintReader{},
+		pipeline:   &mockBlueprintPipelineRunner{},
+		draftSaver: &mockBlueprintDraftSaver{},
+		companyID:  uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		userID:     uuid.MustParse("22222222-2222-2222-2222-222222222222"),
 	}
-	rig.handler = handler.NewBlueprintGenerationHandler(rig.creator, rig.reader, rig.pipeline)
+	rig.handler = handler.NewBlueprintGenerationHandler(rig.creator, rig.reader, rig.pipeline, rig.draftSaver)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -200,6 +227,7 @@ func setupBlueprintTestRig() *blueprintHandlerTestRig {
 		blueprints.POST("/:id/continue", rig.handler.Continue)
 		blueprints.POST("/:id/sections/:section/retry", rig.handler.RetrySection)
 		blueprints.PUT("/:id/sections/:section/manual", rig.handler.ManualCompleteSection)
+		blueprints.PUT("/:id/sections/:section/draft", rig.handler.SaveDraftSection)
 		blueprints.GET("", rig.handler.List)
 	}
 	rig.router = router
@@ -989,5 +1017,378 @@ func TestBlueprintHandler_InvalidInputs_Returns400WithZeroServiceCalls(t *testin
 		require.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
 		assert.Equal(t, 0, rig.pipeline.retryCalls)
+	})
+}
+
+func TestBlueprintGenerationHandler_SaveDraftSection(t *testing.T) {
+	t.Run("valid journey draft save returns 200 with canonical detail response", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		revID := uuid.New()
+		journeyContent := `{"journey":{"phases":[{"id":"p1","name":"Discovery","order":1}],"actors":[{"id":"a1","name":"User","role":"End User"}],"activities":[{"id":"act1","phase_id":"p1","actor_id":"a1","name":"Browse","order":1}]}}`
+
+		rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, sec domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+			assert.Equal(t, rig.companyID, compID)
+			assert.Equal(t, bpID, bID)
+			assert.Equal(t, domain.BlueprintSectionJourney, sec)
+			assert.Equal(t, revID, rID)
+			assert.Equal(t, 2, ver)
+			assert.JSONEq(t, journeyContent, string(payload))
+			return &service.BlueprintPipelineResult{
+				BlueprintID:      bpID,
+				RevisionID:       revID,
+				Section:          domain.BlueprintSectionJourney,
+				SectionStatus:    domain.BlueprintSectionManualEdit,
+				GenerationStatus: domain.BlueprintGenerationInProgress,
+				ContentVersion:   3,
+			}, nil
+		}
+
+		expectedDetail := &dto.BlueprintDetailResponse{
+			Status: dto.BlueprintStatusResponse{
+				BlueprintID:        bpID,
+				RevisionID:         revID,
+				Title:              "E-Commerce System",
+				GenerationStatus:   "in_progress",
+				PublicationStatus:  "draft",
+				CompletenessStatus: "partial",
+				ContentVersion:     3,
+				Sections: []dto.BlueprintSectionStatusResponse{
+					{Type: "journey", Status: "manual_edit", Attempts: 1, UpdatedAt: time.Now()},
+				},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			},
+			QuotationID: uuid.New(),
+			ContentJSON: json.RawMessage(`{"journey":{"phases":[{"id":"p1","name":"Discovery","order":1}]}}`),
+		}
+
+		rig.reader.getDetailFunc = func(ctx context.Context, compID, bID uuid.UUID) (*dto.BlueprintDetailResponse, error) {
+			assert.Equal(t, rig.companyID, compID)
+			assert.Equal(t, bpID, bID)
+			return expectedDetail, nil
+		}
+
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     revID,
+			ContentVersion: 2,
+			Content:        json.RawMessage(journeyContent),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 1, rig.draftSaver.saveDraftCalls)
+		assert.Equal(t, 1, rig.reader.detailCalls)
+
+		var resp map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "Blueprint draft saved successfully", resp["message"])
+		data := resp["data"].(map[string]interface{})
+		status := data["status"].(map[string]interface{})
+		assert.Equal(t, float64(3), status["content_version"])
+		assert.Equal(t, "in_progress", status["generation_status"])
+	})
+
+	t.Run("all five provider sections accept draft saves", func(t *testing.T) {
+		sections := []domain.BlueprintSectionType{
+			domain.BlueprintSectionJourney,
+			domain.BlueprintSectionArchitecture,
+			domain.BlueprintSectionStateMachine,
+			domain.BlueprintSectionWorkflow,
+			domain.BlueprintSectionWBS,
+		}
+
+		for _, sec := range sections {
+			t.Run(string(sec), func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				bpID := uuid.New()
+				revID := uuid.New()
+
+				rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, s domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+					assert.Equal(t, sec, s)
+					return &service.BlueprintPipelineResult{
+						BlueprintID:    bpID,
+						RevisionID:     revID,
+						Section:        sec,
+						ContentVersion: ver + 1,
+					}, nil
+				}
+				rig.reader.getDetailFunc = func(ctx context.Context, compID, bID uuid.UUID) (*dto.BlueprintDetailResponse, error) {
+					return &dto.BlueprintDetailResponse{
+						Status: dto.BlueprintStatusResponse{
+							BlueprintID:    bpID,
+							RevisionID:     revID,
+							ContentVersion: 2,
+						},
+					}, nil
+				}
+
+				draftReq := dto.SaveBlueprintDraftSectionRequest{
+					RevisionID:     revID,
+					ContentVersion: 1,
+					Content:        json.RawMessage(`{"` + string(sec) + `":{}}`),
+				}
+				body, _ := json.Marshal(draftReq)
+
+				w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/%s/draft", bpID.String(), sec), body, nil)
+				require.Equal(t, http.StatusOK, w.Code)
+				assert.Equal(t, 1, rig.draftSaver.saveDraftCalls)
+			})
+		}
+	})
+
+	t.Run("invalid blueprint ID returns 400", func(t *testing.T) {
+		invalidIDs := []string{"not-a-uuid", "12345", uuid.Nil.String()}
+		for _, idStr := range invalidIDs {
+			t.Run(idStr, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				draftReq := dto.SaveBlueprintDraftSectionRequest{
+					RevisionID:     uuid.New(),
+					ContentVersion: 1,
+					Content:        json.RawMessage(`{"journey":{}}`),
+				}
+				body, _ := json.Marshal(draftReq)
+
+				w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", idStr), body, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+			})
+		}
+	})
+
+	t.Run("invalid section parameter returns 400", func(t *testing.T) {
+		invalidSections := []string{"context", "unknown", "invalid", "full_bundle", "phases"}
+		for _, sec := range invalidSections {
+			t.Run(sec, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				bpID := uuid.New()
+				draftReq := dto.SaveBlueprintDraftSectionRequest{
+					RevisionID:     uuid.New(),
+					ContentVersion: 1,
+					Content:        json.RawMessage(`{"data":"val"}`),
+				}
+				body, _ := json.Marshal(draftReq)
+
+				w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/%s/draft", bpID.String(), sec), body, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+			})
+		}
+	})
+
+	t.Run("strict JSON unknown top-level field returns 400", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		body := []byte(fmt.Sprintf(`{"revision_id":"%s","content_version":1,"content":{"journey":{}},"extra_field":"disallowed"}`, uuid.New().String()))
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+		assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+	})
+
+	t.Run("multiple JSON tokens return 400", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		body := []byte(fmt.Sprintf(`{"revision_id":"%s","content_version":1,"content":{"journey":{}}}{"another":"token"}`, uuid.New().String()))
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+		assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+	})
+
+	t.Run("oversized draft body > 1 MiB returns 400", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		largeContent := `{"big":"` + strings.Repeat("x", (1<<20)+100) + `"}`
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(largeContent),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+		assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+	})
+
+	t.Run("nil revision_id returns 400", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.Nil,
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+		assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+	})
+
+	t.Run("content_version <= 0 returns 400", func(t *testing.T) {
+		versions := []int{0, -1, -100}
+		for _, ver := range versions {
+			t.Run(fmt.Sprintf("version_%d", ver), func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				bpID := uuid.New()
+				draftReq := dto.SaveBlueprintDraftSectionRequest{
+					RevisionID:     uuid.New(),
+					ContentVersion: ver,
+					Content:        json.RawMessage(`{"journey":{}}`),
+				}
+				body, _ := json.Marshal(draftReq)
+
+				w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+			})
+		}
+	})
+
+	t.Run("empty, null, or whitespace content returns 400", func(t *testing.T) {
+		contents := []string{"", "   ", "null"}
+		for _, c := range contents {
+			t.Run("content_"+c, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				bpID := uuid.New()
+				var raw json.RawMessage
+				if c != "" {
+					raw = json.RawMessage(c)
+				}
+				draftReq := dto.SaveBlueprintDraftSectionRequest{
+					RevisionID:     uuid.New(),
+					ContentVersion: 1,
+					Content:        raw,
+				}
+				body, _ := json.Marshal(draftReq)
+
+				w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+			})
+		}
+	})
+
+	t.Run("missing company context returns 403", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		headers := map[string]string{"X-Test-Company": "none"}
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, headers)
+		require.Equal(t, http.StatusForbidden, w.Code)
+		assert.Equal(t, 0, rig.draftSaver.saveDraftCalls)
+	})
+
+	t.Run("draft save conflict ErrBlueprintExecutionConflict returns 409", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, sec domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+			return nil, service.ErrBlueprintExecutionConflict
+		}
+
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusConflict, w.Code)
+		assert.Equal(t, "execution_conflict", getDetailCode(t, w))
+	})
+
+	t.Run("draft save shape rejection ErrBlueprintInvalidSchema returns 422", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, sec domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+			return nil, service.ErrBlueprintInvalidSchema
+		}
+
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Equal(t, "invalid_schema", getDetailCode(t, w))
+	})
+
+	t.Run("draft save security failure ErrBlueprintSecurityFailure returns 422", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, sec domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+			return nil, service.ErrBlueprintSecurityFailure
+		}
+
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{"apiKey":"secret"}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Equal(t, "security_failure", getDetailCode(t, w))
+	})
+
+	t.Run("draft save not found ErrBlueprintPipelineNotFound returns 404", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, sec domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+			return nil, service.ErrBlueprintPipelineNotFound
+		}
+
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, "blueprint_not_found", getDetailCode(t, w))
+	})
+
+	t.Run("draft save persistence error ErrBlueprintPersistenceFailure returns 500", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		bpID := uuid.New()
+		rig.draftSaver.saveDraftFunc = func(ctx context.Context, compID, bID uuid.UUID, sec domain.BlueprintSectionType, rID uuid.UUID, ver int, payload json.RawMessage) (*service.BlueprintPipelineResult, error) {
+			return nil, service.ErrBlueprintPersistenceFailure
+		}
+
+		draftReq := dto.SaveBlueprintDraftSectionRequest{
+			RevisionID:     uuid.New(),
+			ContentVersion: 1,
+			Content:        json.RawMessage(`{"journey":{}}`),
+		}
+		body, _ := json.Marshal(draftReq)
+
+		w := execRequest(rig.router, http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/draft", bpID.String()), body, nil)
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, "persistence_failure", getDetailCode(t, w))
 	})
 }

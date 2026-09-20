@@ -870,6 +870,163 @@ func TestBlueprintSectionValidatorWBS(t *testing.T) {
 	})
 }
 
+func TestBlueprintSectionValidator_ValidateDraft(t *testing.T) {
+	v := NewBlueprintSectionValidator()
+
+	t.Run("valid_draft_journey", func(t *testing.T) {
+		validJourney := `{
+			"journey": {
+				"phases": [{"id": "phase-1", "label": "Phase 1", "order": 1}],
+				"actors": [{"id": "actor-1", "label": "Actor 1", "order": 1}],
+				"activities": [{
+					"id": "act-1",
+					"phase_id": "phase-1",
+					"actor_id": "actor-1",
+					"label": "Activity 1",
+					"description": "Desc",
+					"touchpoints": ["Web"],
+					"references": []
+				}]
+			}
+		}`
+		res := v.ValidateDraft(domain.BlueprintSectionJourney, json.RawMessage(validJourney))
+		assert.True(t, res.Valid)
+		assert.Empty(t, res.SafeOutcome)
+		assert.Empty(t, res.Issues)
+		assert.NotNil(t, res.NormalizedContent)
+	})
+
+	t.Run("incomplete_draft_journey_allowed_with_issues", func(t *testing.T) {
+		incompleteJourney := `{
+			"journey": {
+				"phases": [{"id": "phase-1", "label": "Phase 1", "order": 1}],
+				"actors": [{"id": "actor-1", "label": "Actor 1", "order": 1}],
+				"activities": [{
+					"id": "act-1",
+					"phase_id": "phase-missing-99",
+					"actor_id": "actor-missing-99",
+					"label": "Activity 1",
+					"description": "Desc",
+					"touchpoints": [],
+					"references": []
+				}]
+			}
+		}`
+		// ValidateDraft: allows draft saving, attaches issues, no 422 SafeOutcome
+		draftRes := v.ValidateDraft(domain.BlueprintSectionJourney, json.RawMessage(incompleteJourney))
+		assert.False(t, draftRes.Valid)
+		assert.Empty(t, draftRes.SafeOutcome, "SafeOutcome must be empty for incomplete draft to allow saving")
+		assert.NotEmpty(t, draftRes.Issues)
+		assert.NotNil(t, draftRes.NormalizedContent, "NormalizedContent must be generated for incomplete draft")
+
+		// Authoritative Validate (manual/provider): strict rejection
+		authRes := v.Validate(domain.BlueprintSectionJourney, json.RawMessage(incompleteJourney))
+		assert.False(t, authRes.Valid)
+		assert.Equal(t, BlueprintValidationInvalidSchema, authRes.SafeOutcome)
+		assert.Nil(t, authRes.NormalizedContent)
+	})
+
+	t.Run("incomplete_draft_architecture_allowed_with_issues", func(t *testing.T) {
+		incompleteArch := `{
+			"architecture": {
+				"groups": [{"id": "grp-1", "label": "Group 1", "order": 1}],
+				"nodes": [{"id": "node-1", "group_id": "grp-missing", "type": "service", "label": "Node 1", "description": "", "layout": {"x": 0, "y": 0}}],
+				"edges": [{"id": "edge-1", "source": "node-1", "target": "node-missing", "label": "", "type": "sync"}]
+			}
+		}`
+		res := v.ValidateDraft(domain.BlueprintSectionArchitecture, json.RawMessage(incompleteArch))
+		assert.False(t, res.Valid)
+		assert.Empty(t, res.SafeOutcome)
+		assert.NotEmpty(t, res.Issues)
+		assert.NotNil(t, res.NormalizedContent)
+	})
+
+	t.Run("incomplete_draft_state_machine_allowed_with_issues", func(t *testing.T) {
+		incompleteSM := `{
+			"state_machine": {
+				"entity": "Order",
+				"initial_state": "state-missing",
+				"states": [{"id": "state-1", "label": "Created", "type": "normal", "layout": {"x": 0, "y": 0}}],
+				"transitions": [{"id": "trans-1", "source": "state-1", "target": "state-missing", "event": "E", "actor": "", "guard": "", "actions": []}]
+			}
+		}`
+		res := v.ValidateDraft(domain.BlueprintSectionStateMachine, json.RawMessage(incompleteSM))
+		assert.False(t, res.Valid)
+		assert.Empty(t, res.SafeOutcome)
+		assert.NotEmpty(t, res.Issues)
+		assert.NotNil(t, res.NormalizedContent)
+	})
+
+	t.Run("incomplete_draft_workflow_allowed_with_issues", func(t *testing.T) {
+		incompleteWF := `{
+			"workflows": [{
+				"id": "wf-1",
+				"name": "Flow 1",
+				"description": "",
+				"lanes": [{"id": "lane-1", "label": "Lane 1", "order": 1}],
+				"nodes": [
+					{"id": "node-dec", "lane_id": "lane-1", "type": "decision", "label": "Decide", "description": "", "layout": {"x": 0, "y": 0}},
+					{"id": "node-act", "lane_id": "lane-1", "type": "action", "label": "Action", "description": "", "layout": {"x": 50, "y": 0}},
+					{"id": "node-orphan", "lane_id": "lane-1", "type": "action", "label": "Orphan", "description": "", "layout": {"x": 100, "y": 0}}
+				],
+				"edges": [
+					{"id": "edge-1", "source": "node-dec", "target": "node-act", "label": "Branch 1"}
+				]
+			}]
+		}`
+		res := v.ValidateDraft(domain.BlueprintSectionWorkflow, json.RawMessage(incompleteWF))
+		assert.False(t, res.Valid)
+		assert.Empty(t, res.SafeOutcome)
+		assert.NotEmpty(t, res.Issues)
+		assert.NotNil(t, res.NormalizedContent)
+	})
+
+	t.Run("incomplete_draft_wbs_cycle_allowed_with_issues", func(t *testing.T) {
+		cycleWBS := `{
+			"wbs": {
+				"modules": [
+					{"id": "mod-a", "name": "Module A", "description": "", "priority": "high", "dependencies": ["mod-b"], "references": [], "features": []},
+					{"id": "mod-b", "name": "Module B", "description": "", "priority": "high", "dependencies": ["mod-a"], "references": [], "features": []}
+				]
+			},
+			"cross_references": []
+		}`
+		res := v.ValidateDraft(domain.BlueprintSectionWBS, json.RawMessage(cycleWBS))
+		assert.False(t, res.Valid)
+		assert.Empty(t, res.SafeOutcome)
+		assert.NotEmpty(t, res.Issues)
+		assert.NotNil(t, res.NormalizedContent)
+	})
+
+	t.Run("malformed_envelope_rejected_422", func(t *testing.T) {
+		unknownField := `{"journey":{"phases":[],"actors":[],"activities":[]},"unknown_extra":123}`
+		res := v.ValidateDraft(domain.BlueprintSectionJourney, json.RawMessage(unknownField))
+		assert.False(t, res.Valid)
+		assert.Equal(t, BlueprintValidationInvalidSchema, res.SafeOutcome)
+		assert.Nil(t, res.NormalizedContent)
+
+		wrongRoot := `{"wrong_root":{}}`
+		res2 := v.ValidateDraft(domain.BlueprintSectionJourney, json.RawMessage(wrongRoot))
+		assert.False(t, res2.Valid)
+		assert.Equal(t, BlueprintValidationInvalidSchema, res2.SafeOutcome)
+		assert.Nil(t, res2.NormalizedContent)
+	})
+
+	t.Run("security_failure_rejected_422", func(t *testing.T) {
+		forbiddenKey := `{"journey":{"phases":[],"actors":[],"activities":[],"apiKey":"secret-leak"}}`
+		res := v.ValidateDraft(domain.BlueprintSectionJourney, json.RawMessage(forbiddenKey))
+		assert.False(t, res.Valid)
+		assert.Equal(t, BlueprintValidationSecurityFailure, res.SafeOutcome)
+		assert.Nil(t, res.NormalizedContent)
+
+		xssPattern := `{"journey":{"phases":[{"id":"phase-1","label":"<script>alert(1)</script>","order":1}],"actors":[],"activities":[]}}`
+		res2 := v.ValidateDraft(domain.BlueprintSectionJourney, json.RawMessage(xssPattern))
+		assert.False(t, res2.Valid)
+		assert.Equal(t, BlueprintValidationSecurityFailure, res2.SafeOutcome)
+		assert.Nil(t, res2.NormalizedContent)
+	})
+}
+
 func assertIssuePresent(t *testing.T, issues []BlueprintValidationIssue, expectedCode, expectedPath, expectedTargetID string) {
 	t.Helper()
 	for _, iss := range issues {
