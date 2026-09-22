@@ -137,6 +137,18 @@ func MapBlueprintError(c *gin.Context, err error) {
 		response.Error(c, http.StatusUnprocessableEntity, "Invalid provider credential", "provider_invalid_credential")
 		return
 	}
+	if errors.Is(err, service.ErrBlueprintPromptConstruction) {
+		response.Error(c, http.StatusUnprocessableEntity, "Prompt construction failed", "prompt_construction_failed")
+		return
+	}
+	if errors.Is(err, service.ErrBlueprintProviderRejected) {
+		response.Error(c, http.StatusUnprocessableEntity, "Provider request rejected", "provider_request_rejected")
+		return
+	}
+	if errors.Is(err, service.ErrBlueprintProviderPayloadSize) {
+		response.Error(c, http.StatusUnprocessableEntity, "Provider payload too large", "provider_payload_too_large")
+		return
+	}
 
 	// 6. 429 Too Many Requests
 	if errors.Is(err, service.ErrBlueprintProviderRateLimited) {

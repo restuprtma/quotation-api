@@ -1557,3 +1557,75 @@ func TestBlueprintPipelineContinueBlocksWhenDependencyIsNotStable(t *testing.T) 
 	assert.Equal(t, 0, repo.completeCalls)
 	assert.Equal(t, 0, repo.failCalls)
 }
+
+func TestBlueprintPipelinePromptClassification(t *testing.T) {
+	testCases := []struct {
+		name             string
+		promptErr        error
+		expectedErr      error
+		expectedSafeCode string
+		expectedTerminal bool
+	}{
+		{
+			name:             "prompt invalid input fails with prompt_construction_failed",
+			promptErr:        ErrBlueprintPromptInvalidInput,
+			expectedErr:      ErrBlueprintPromptConstruction,
+			expectedSafeCode: "prompt_construction_failed",
+			expectedTerminal: false,
+		},
+		{
+			name:             "prompt security violation fails with security_failure",
+			promptErr:        ErrBlueprintPromptSecurity,
+			expectedErr:      ErrBlueprintSecurityFailure,
+			expectedSafeCode: "security_failure",
+			expectedTerminal: true,
+		},
+		{
+			name:             "arbitrary prompt error falls back to prompt_construction_failed",
+			promptErr:        errors.New("arbitrary prompt formatting failure"),
+			expectedErr:      ErrBlueprintPromptConstruction,
+			expectedSafeCode: "prompt_construction_failed",
+			expectedTerminal: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			companyID := uuid.New()
+			blueprintID := uuid.New()
+
+			repo := &fakePipelineRepo{
+				claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+					return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+				},
+			}
+			prov := &fakeAIProvider{}
+			provSource := &fakeProviderSource{
+				providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+					return prov, "openai", "gpt-4o", nil
+				},
+			}
+			prompts := &fakePromptBuilder{
+				buildFn: func(input BlueprintPromptInput) (string, error) {
+					return "", tc.promptErr
+				},
+			}
+
+			pipeline := NewBlueprintPipeline(repo, provSource, prompts, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+			res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+			assert.Nil(t, res)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tc.expectedErr)
+
+			assert.Equal(t, 0, prov.calls, "fake provider must have zero calls")
+			assert.Equal(t, 1, repo.failCalls, "failure must be persisted")
+			require.Len(t, repo.failParams, 1)
+			assert.Equal(t, tc.expectedSafeCode, repo.failParams[0].SafeErrorCode)
+			assert.Equal(t, tc.expectedTerminal, repo.failParams[0].Terminal)
+			assert.Nil(t, repo.failParams[0].SectionContent)
+			assert.Equal(t, 0, repo.completeCalls)
+		})
+	}
+}
+

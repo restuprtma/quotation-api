@@ -700,6 +700,9 @@ func TestBlueprintHandler_ErrorMappingTable(t *testing.T) {
 		{"ErrBlueprintCrossValidationFailure", service.ErrBlueprintCrossValidationFailure, http.StatusUnprocessableEntity, "cross_validation_error"},
 		{"ErrBlueprintProviderConfiguration", service.ErrBlueprintProviderConfiguration, http.StatusUnprocessableEntity, "provider_configuration"},
 		{"ErrBlueprintProviderInvalidCredential", service.ErrBlueprintProviderInvalidCredential, http.StatusUnprocessableEntity, "provider_invalid_credential"},
+		{"ErrBlueprintPromptConstruction", service.ErrBlueprintPromptConstruction, http.StatusUnprocessableEntity, "prompt_construction_failed"},
+		{"ErrBlueprintProviderRejected", service.ErrBlueprintProviderRejected, http.StatusUnprocessableEntity, "provider_request_rejected"},
+		{"ErrBlueprintProviderPayloadSize", service.ErrBlueprintProviderPayloadSize, http.StatusUnprocessableEntity, "provider_payload_too_large"},
 
 		// 429 Too Many Requests
 		{"ErrBlueprintProviderRateLimited", service.ErrBlueprintProviderRateLimited, http.StatusTooManyRequests, "provider_rate_limited"},

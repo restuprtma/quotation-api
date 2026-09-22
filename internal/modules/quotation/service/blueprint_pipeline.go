@@ -31,11 +31,14 @@ var (
 	ErrBlueprintAttemptLimitReached       = errors.New("attempt_limit_reached")
 	ErrBlueprintManualNotAllowed          = errors.New("manual_completion_not_allowed")
 	ErrBlueprintExecutionConflict         = errors.New("execution_conflict")
+	ErrBlueprintPromptConstruction        = errors.New("prompt_construction_failed")
 	ErrBlueprintProviderInvalidCredential = errors.New("provider_invalid_credential")
 	ErrBlueprintProviderConfiguration     = errors.New("provider_configuration")
 	ErrBlueprintProviderRateLimited       = errors.New("provider_rate_limited")
 	ErrBlueprintProviderTimeout           = errors.New("provider_timeout")
 	ErrBlueprintProviderUnavailable       = errors.New("provider_unavailable")
+	ErrBlueprintProviderRejected          = errors.New("provider_request_rejected")
+	ErrBlueprintProviderPayloadSize       = errors.New("provider_payload_too_large")
 	ErrBlueprintInvalidSchema             = errors.New("invalid_schema")
 	ErrBlueprintSecurityFailure           = errors.New("security_failure")
 	ErrBlueprintCrossValidationFailure    = errors.New("cross_validation_error")
@@ -341,11 +344,15 @@ func (p *BlueprintPipeline) executeClaimedProviderStage(
 		Dependencies:  claim.Dependencies,
 	})
 	if err != nil {
-		safeCode := "provider_configuration"
-		sentinel := ErrBlueprintProviderConfiguration
-		if errors.Is(err, ErrBlueprintPromptSecurity) {
-			safeCode = "security_failure"
-			sentinel = ErrBlueprintSecurityFailure
+		var safeCode string
+		var sentinel error
+		switch {
+		case errors.Is(err, ErrBlueprintPromptSecurity):
+			safeCode, sentinel = "security_failure", ErrBlueprintSecurityFailure
+		case errors.Is(err, ErrBlueprintPromptInvalidInput):
+			safeCode, sentinel = "prompt_construction_failed", ErrBlueprintPromptConstruction
+		default:
+			safeCode, sentinel = "prompt_construction_failed", ErrBlueprintPromptConstruction
 		}
 		return nil, p.persistFailure(ctx, claim, safeCode, nil, sentinel)
 	}
