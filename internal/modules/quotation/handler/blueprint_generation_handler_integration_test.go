@@ -1862,3 +1862,237 @@ func TestBlueprintDraft_HTTPIntegration_ManualAndContinueRegression(t *testing.T
 	}
 	assert.Equal(t, "completed", archStatus)
 }
+
+// =========================================================================
+// Task 7: Manual Journey to Architecture Integration Regression (HTTP)
+// =========================================================================
+
+func TestBlueprintHTTP_ManualJourneyToArchitectureProviderRecovery(t *testing.T) {
+	pool := getBlueprintHTTPIntegrationPool(t)
+	companyID := uuid.New()
+	userID := uuid.New()
+	cleanupHTTPIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupHTTPIntegrationTenant(t, pool, companyID) })
+
+	fix := loadHTTPQueueFixture(t)
+	provider := newHTTPIntegrationAIProvider(fix)
+	provSource := &httpIntegrationProviderSource{provider: provider}
+
+	router, _ := setupHTTPIntegrationRouter(t, pool, provSource)
+	token := generateTestJWTToken(t, userID.String(), companyID.String())
+
+	seedHTTPActiveBlueprintSkill(t, pool, companyID, "Queue Blueprint Architect", "Produce high quality blueprint architecture")
+	qID, revID := seedHTTPQuotationAndRevision(t, pool, companyID, "draft", "completed", "<section><h2>Queue System</h2></section>")
+
+	// 1. Generate -> 201 Created (content_version = 1)
+	reqBody := buildQueueGenerationRequest(qID, revID, fix)
+	reqBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	wGen := httptest.NewRecorder()
+	httpReqGen := httptest.NewRequest(http.MethodPost, "/quotation/v1/blueprints/generate", bytes.NewReader(reqBytes))
+	httpReqGen.Header.Set("Authorization", "Bearer "+token)
+	httpReqGen.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wGen, httpReqGen)
+	require.Equal(t, http.StatusCreated, wGen.Code)
+
+	var genResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wGen.Body.Bytes(), &genResp))
+	bpID := genResp.Data.BlueprintID
+	activeRevID := genResp.Data.RevisionID
+	require.Equal(t, 1, genResp.Data.ContentVersion)
+
+	// 2. Journey provider attempts fail 3 times
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrInvalidCredential,
+			UpstreamStatus: 401,
+			Message:        "invalid credentials",
+		}
+	}
+
+	// Attempt 1 via Continue -> 422 provider_invalid_credential
+	wJ1 := httptest.NewRecorder()
+	httpReqJ1 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/continue", bpID), nil)
+	httpReqJ1.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wJ1, httpReqJ1)
+	require.Equal(t, http.StatusUnprocessableEntity, wJ1.Code)
+	assert.Contains(t, wJ1.Body.String(), "provider_invalid_credential")
+
+	// Attempt 2 via RetrySection -> 422 provider_invalid_credential
+	wJ2 := httptest.NewRecorder()
+	httpReqJ2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/retry", bpID), nil)
+	httpReqJ2.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wJ2, httpReqJ2)
+	require.Equal(t, http.StatusUnprocessableEntity, wJ2.Code)
+	assert.Contains(t, wJ2.Body.String(), "provider_invalid_credential")
+
+	// Attempt 3 via RetrySection -> 422 provider_invalid_credential
+	wJ3 := httptest.NewRecorder()
+	httpReqJ3 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/retry", bpID), nil)
+	httpReqJ3.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wJ3, httpReqJ3)
+	require.Equal(t, http.StatusUnprocessableEntity, wJ3.Code)
+	assert.Contains(t, wJ3.Body.String(), "provider_invalid_credential")
+
+	// Attempt 4 via RetrySection -> 409 attempt_limit_reached
+	wJ4 := httptest.NewRecorder()
+	httpReqJ4 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/retry", bpID), nil)
+	httpReqJ4.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wJ4, httpReqJ4)
+	require.Equal(t, http.StatusConflict, wJ4.Code)
+	assert.Contains(t, wJ4.Body.String(), "attempt_limit_reached")
+
+	// 3. Manually complete Journey with valid payload at content_version 1
+	var validJourneyContent map[string]interface{}
+	require.NoError(t, json.Unmarshal(fix.Sections["journey"], &validJourneyContent))
+
+	manualReq := map[string]interface{}{
+		"revision_id":     activeRevID,
+		"content_version": 1,
+		"content":         validJourneyContent,
+	}
+	manualBytes, err := json.Marshal(manualReq)
+	require.NoError(t, err)
+
+	wManual := httptest.NewRecorder()
+	httpReqManual := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/journey/manual", bpID), bytes.NewReader(manualBytes))
+	httpReqManual.Header.Set("Authorization", "Bearer "+token)
+	httpReqManual.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(wManual, httpReqManual)
+	require.Equal(t, http.StatusOK, wManual.Code)
+
+	var manualResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wManual.Body.Bytes(), &manualResp))
+	assert.Equal(t, 2, manualResp.Data.ContentVersion)
+
+	var journeyStatus string
+	var journeyAttempts int
+	var journeyErrorCode *string
+	for _, sec := range manualResp.Data.Sections {
+		if sec.Type == "journey" {
+			journeyStatus = sec.Status
+			journeyAttempts = sec.Attempts
+			journeyErrorCode = sec.ErrorCode
+			break
+		}
+	}
+	assert.Equal(t, "validated", journeyStatus)
+	assert.Equal(t, 3, journeyAttempts, "Journey attempt count must remain 3")
+	assert.Nil(t, journeyErrorCode, "Journey safe_error_code must be empty after manual completion")
+
+	// 4. Continue into Architecture with request_rejected provider error
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrRequestRejected,
+			UpstreamStatus: 400,
+			Message:        "upstream bad request",
+		}
+	}
+
+	wArchCont := httptest.NewRecorder()
+	httpReqArchCont := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/continue", bpID), nil)
+	httpReqArchCont.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wArchCont, httpReqArchCont)
+	require.Equal(t, http.StatusUnprocessableEntity, wArchCont.Code)
+	assert.Contains(t, wArchCont.Body.String(), "provider_request_rejected")
+
+	// RetrySection on request_rejected is non-retryable -> 409 retry_not_allowed
+	wArchRetryBlocked := httptest.NewRecorder()
+	httpReqArchRetryBlocked := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/architecture/retry", bpID), nil)
+	httpReqArchRetryBlocked.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wArchRetryBlocked, httpReqArchRetryBlocked)
+	require.Equal(t, http.StatusConflict, wArchRetryBlocked.Code)
+	assert.Contains(t, wArchRetryBlocked.Body.String(), "retry_not_allowed")
+
+	// 5. Stale Lease Recovery on Architecture
+	staleTime := time.Now().Add(-10 * time.Minute)
+	_, err = pool.Exec(context.Background(), `
+		UPDATE blueprint_section_runs
+		SET status = 'generating', attempt_count = 1, started_at = $1, updated_at = $1
+		WHERE blueprint_revision_id = $2 AND company_id = $3 AND section_type = 'architecture'
+	`, staleTime, activeRevID, companyID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(context.Background(), `
+		UPDATE blueprint_revisions
+		SET generation_status = 'in_progress', updated_at = $1
+		WHERE id = $2 AND company_id = $3
+	`, staleTime, activeRevID, companyID)
+	require.NoError(t, err)
+
+	// POST /continue triggers stale lease reconciliation -> 409 recovery_required
+	wRecov := httptest.NewRecorder()
+	httpReqRecov := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/continue", bpID), nil)
+	httpReqRecov.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wRecov, httpReqRecov)
+	require.Equal(t, http.StatusConflict, wRecov.Code)
+	assert.Contains(t, wRecov.Body.String(), "recovery_required")
+
+	// Check status: Architecture is failed with safe_error_code "interrupted" and attempt remains 1
+	wStatus := httptest.NewRecorder()
+	httpReqStatus := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/quotation/v1/blueprints/%s/generation-status", bpID), nil)
+	httpReqStatus.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wStatus, httpReqStatus)
+	require.Equal(t, http.StatusOK, wStatus.Code)
+
+	var statusResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wStatus.Body.Bytes(), &statusResp))
+	assert.Equal(t, 2, statusResp.Data.ContentVersion)
+	assert.Equal(t, string(domain.BlueprintGenerationPartialFailed), statusResp.Data.GenerationStatus)
+
+	var archStatusAfterRecov string
+	var archAttemptsAfterRecov int
+	var archErrorAfterRecov *string
+	for _, sec := range statusResp.Data.Sections {
+		if sec.Type == "architecture" {
+			archStatusAfterRecov = sec.Status
+			archAttemptsAfterRecov = sec.Attempts
+			archErrorAfterRecov = sec.ErrorCode
+			break
+		}
+	}
+	assert.Equal(t, "failed", archStatusAfterRecov)
+	assert.Equal(t, 1, archAttemptsAfterRecov, "Attempt count must not increment during lease recovery")
+	require.NotNil(t, archErrorAfterRecov)
+	assert.Equal(t, "interrupted", *archErrorAfterRecov)
+
+	// 6. Explicit RetrySection executes attempt 2 and succeeds
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{Text: string(fix.Sections["architecture"])}, nil
+	}
+
+	wArchRetry := httptest.NewRecorder()
+	httpReqArchRetry := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/quotation/v1/blueprints/%s/sections/architecture/retry", bpID), nil)
+	httpReqArchRetry.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(wArchRetry, httpReqArchRetry)
+	require.Equal(t, http.StatusOK, wArchRetry.Code)
+
+	var retryResp struct {
+		Data dto.BlueprintStatusResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wArchRetry.Body.Bytes(), &retryResp))
+	assert.Equal(t, 3, retryResp.Data.ContentVersion)
+
+	var archFinalStatus string
+	var archFinalAttempts int
+	var archFinalError *string
+	for _, sec := range retryResp.Data.Sections {
+		if sec.Type == "architecture" {
+			archFinalStatus = sec.Status
+			archFinalAttempts = sec.Attempts
+			archFinalError = sec.ErrorCode
+			break
+		}
+	}
+	assert.Equal(t, "completed", archFinalStatus)
+	assert.Equal(t, 2, archFinalAttempts, "Attempt count must be exactly 2")
+	assert.Nil(t, archFinalError)
+}
+

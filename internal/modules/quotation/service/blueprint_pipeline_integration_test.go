@@ -46,6 +46,22 @@ func (s *pipelineScriptedAIProvider) Generate(ctx context.Context, req service.G
 	return service.GenerateResult{Text: "{}"}, nil
 }
 
+func detectStageFromPrompt(prompt string) domain.BlueprintSectionType {
+	if strings.Contains(prompt, `stage="journey"`) {
+		return domain.BlueprintSectionJourney
+	} else if strings.Contains(prompt, `stage="architecture"`) {
+		return domain.BlueprintSectionArchitecture
+	} else if strings.Contains(prompt, `stage="state_machine"`) {
+		return domain.BlueprintSectionStateMachine
+	} else if strings.Contains(prompt, `stage="workflow"`) {
+		return domain.BlueprintSectionWorkflow
+	} else if strings.Contains(prompt, `stage="wbs"`) {
+		return domain.BlueprintSectionWBS
+	}
+	return domain.BlueprintSectionContext
+}
+
+
 type pipelineScriptedProviderSource struct {
 	mu         sync.Mutex
 	calls      int
@@ -690,3 +706,556 @@ func TestBlueprintPipelineManualCompleteSectionAtVersionIntegration(t *testing.T
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, service.ErrBlueprintExecutionConflict), "expected conflict on stale version")
 }
+
+func seedIntegrationBlueprintWithManualJourneyAtAttempt3(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	pipeline *service.BlueprintPipeline,
+	repo *repository.BlueprintGenerationRepository,
+	createSvc *service.BlueprintGenerationService,
+	provider *pipelineScriptedAIProvider,
+	companyID uuid.UUID,
+) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	blueprintID, revisionID := seedIntegrationAggregate(t, pool, createSvc, companyID)
+
+	// Attempt 1: Journey fails via Continue with provider unavailable
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrProviderUnavailable,
+			UpstreamStatus: 503,
+			Message:        "upstream unavailable",
+		}
+	}
+	_, err := pipeline.Continue(ctx, companyID, blueprintID)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, service.ErrBlueprintProviderUnavailable))
+
+	// Attempt 2: Journey fails via RetrySection with provider timeout
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrTimeout,
+			UpstreamStatus: 504,
+			Message:        "upstream timeout",
+		}
+	}
+	_, err = pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionJourney)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, service.ErrBlueprintProviderTimeout))
+
+	// Attempt 3: Journey fails via RetrySection with provider rate limit
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrRateLimited,
+			UpstreamStatus: 429,
+			Message:        "rate limited",
+		}
+	}
+	_, err = pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionJourney)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, service.ErrBlueprintProviderRateLimited))
+
+	// Attempt 4: Exceeding 3 provider attempts must be rejected
+	_, err = pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionJourney)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, service.ErrBlueprintAttemptLimitReached))
+
+	// Manually complete Journey at expected version 1 with valid payload
+	manualPayload := json.RawMessage(validJourneyIntegrationPayload())
+	resManual, err := pipeline.ManualCompleteSectionAtVersion(
+		ctx,
+		companyID,
+		blueprintID,
+		domain.BlueprintSectionJourney,
+		revisionID,
+		1,
+		manualPayload,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, resManual)
+	require.Equal(t, domain.BlueprintSectionJourney, resManual.Section)
+	require.Equal(t, domain.BlueprintSectionValidated, resManual.SectionStatus)
+	require.Equal(t, 2, resManual.ContentVersion)
+	require.Equal(t, 3, resManual.Attempt)
+
+	return blueprintID, revisionID
+}
+
+func TestBlueprintPipelineManualJourneyInvariantsIntegration(t *testing.T) {
+	pool := getBlueprintIntegrationPool(t)
+	companyID := uuid.New()
+	cleanupIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupIntegrationTenant(t, pool, companyID) })
+
+	provider := newPipelineScriptedAIProvider()
+	provSource := &pipelineScriptedProviderSource{provider: provider}
+
+	pipeline, repo, createSvc := setupIntegrationPipeline(t, pool, provSource)
+	ctx := context.Background()
+
+	blueprintID, revisionID := seedIntegrationAggregate(t, pool, createSvc, companyID)
+
+	// 1. Initial snapshot check
+	genInit, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	require.Equal(t, 1, genInit.Revision.ContentVersion)
+	require.Equal(t, string(domain.BlueprintGenerationPending), genInit.Revision.GenerationStatus)
+
+	// 2. Journey Attempt 1 -> fails with invalid credential
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrInvalidCredential,
+			UpstreamStatus: 401,
+			Message:        "invalid api key",
+		}
+	}
+	res1, err := pipeline.Continue(ctx, companyID, blueprintID)
+	assert.Nil(t, res1)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintProviderInvalidCredential))
+
+	// DB check after attempt 1: status failed, attempt 1, safe_error_code provider_invalid_credential
+	gen1, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	var journeyRun1 *domain.BlueprintSectionRun
+	for i := range gen1.SectionRuns {
+		if gen1.SectionRuns[i].SectionType == string(domain.BlueprintSectionJourney) {
+			journeyRun1 = &gen1.SectionRuns[i]
+			break
+		}
+	}
+	require.NotNil(t, journeyRun1)
+	assert.Equal(t, string(domain.BlueprintSectionFailed), journeyRun1.Status)
+	assert.Equal(t, 1, journeyRun1.AttemptCount)
+	require.NotNil(t, journeyRun1.SafeErrorCode)
+	assert.Equal(t, "provider_invalid_credential", *journeyRun1.SafeErrorCode)
+	assert.Equal(t, 1, gen1.Revision.ContentVersion)
+
+	// 3. Journey Attempt 2 -> fails with configuration / unsupported model
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrUnsupportedModel,
+			UpstreamStatus: 404,
+			Message:        "model not found",
+		}
+	}
+	res2, err := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionJourney)
+	assert.Nil(t, res2)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintProviderConfiguration))
+
+	// DB check after attempt 2: attempt 2, safe_error_code provider_configuration
+	gen2, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	var journeyRun2 *domain.BlueprintSectionRun
+	for i := range gen2.SectionRuns {
+		if gen2.SectionRuns[i].SectionType == string(domain.BlueprintSectionJourney) {
+			journeyRun2 = &gen2.SectionRuns[i]
+			break
+		}
+	}
+	require.NotNil(t, journeyRun2)
+	assert.Equal(t, string(domain.BlueprintSectionFailed), journeyRun2.Status)
+	assert.Equal(t, 2, journeyRun2.AttemptCount)
+	require.NotNil(t, journeyRun2.SafeErrorCode)
+	assert.Equal(t, "provider_configuration", *journeyRun2.SafeErrorCode)
+
+	// 4. Journey Attempt 3 -> fails with provider unavailable
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{}, &service.ProviderError{
+			Code:           service.ErrProviderUnavailable,
+			UpstreamStatus: 503,
+			Message:        "service unavailable",
+		}
+	}
+	res3, err := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionJourney)
+	assert.Nil(t, res3)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintProviderUnavailable))
+
+	// DB check after attempt 3: attempt 3, safe_error_code provider_unavailable, revision status failed
+	gen3, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	var journeyRun3 *domain.BlueprintSectionRun
+	for i := range gen3.SectionRuns {
+		if gen3.SectionRuns[i].SectionType == string(domain.BlueprintSectionJourney) {
+			journeyRun3 = &gen3.SectionRuns[i]
+			break
+		}
+	}
+	require.NotNil(t, journeyRun3)
+	assert.Equal(t, string(domain.BlueprintSectionFailed), journeyRun3.Status)
+	assert.Equal(t, 3, journeyRun3.AttemptCount)
+	require.NotNil(t, journeyRun3.SafeErrorCode)
+	assert.Equal(t, "provider_unavailable", *journeyRun3.SafeErrorCode)
+	assert.Equal(t, string(domain.BlueprintGenerationFailed), gen3.Revision.GenerationStatus)
+
+	// 5. Journey Attempt 4 -> blocked by attempt limit
+	res4, err := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionJourney)
+	assert.Nil(t, res4)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintAttemptLimitReached))
+
+	// 6. Manually complete Journey with valid content at expectedVersion 1
+	resManual, err := pipeline.ManualCompleteSectionAtVersion(
+		ctx,
+		companyID,
+		blueprintID,
+		domain.BlueprintSectionJourney,
+		revisionID,
+		1,
+		json.RawMessage(validJourneyIntegrationPayload()),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, resManual)
+	assert.Equal(t, domain.BlueprintSectionJourney, resManual.Section)
+	assert.Equal(t, domain.BlueprintSectionValidated, resManual.SectionStatus)
+	assert.Equal(t, 2, resManual.ContentVersion)
+	assert.Equal(t, 3, resManual.Attempt, "Attempt count must remain 3 after manual completion")
+
+	// 7. Assert manual completion invariants in DB
+	genAfterManual, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, genAfterManual.Revision.ContentVersion)
+	assert.Equal(t, string(domain.BlueprintGenerationInProgress), genAfterManual.Revision.GenerationStatus)
+	assert.Contains(t, string(genAfterManual.Revision.ContentJSON), "Discovery")
+
+	for _, run := range genAfterManual.SectionRuns {
+		switch run.SectionType {
+		case string(domain.BlueprintSectionContext):
+			assert.Equal(t, string(domain.BlueprintSectionValidated), run.Status)
+		case string(domain.BlueprintSectionJourney):
+			assert.Equal(t, string(domain.BlueprintSectionValidated), run.Status, "Journey must be validated")
+			assert.Nil(t, run.SafeErrorCode, "safe_error_code must be NULL/empty after manual completion")
+			assert.Equal(t, 3, run.AttemptCount, "attempt count must remain exactly 3")
+			assert.NotEmpty(t, run.ContentJSON, "content_json must be populated")
+			assert.Contains(t, string(run.ContentJSON), "Discovery")
+		default:
+			// Downstream sections must be pending, 0 attempts, and empty content
+			assert.Equal(t, string(domain.BlueprintSectionPending), run.Status, "Downstream %s must be pending", run.SectionType)
+			assert.Equal(t, 0, run.AttemptCount, "Downstream %s attempt count must be 0", run.SectionType)
+			assert.Nil(t, run.SafeErrorCode, "Downstream %s safe_error_code must be nil", run.SectionType)
+			assert.True(t, len(run.ContentJSON) == 0 || string(run.ContentJSON) == "null" || string(run.ContentJSON) == "{}", "Downstream %s content must be empty", run.SectionType)
+		}
+	}
+}
+
+func TestBlueprintPipelineManualJourneyToArchitecturePromptConstructionIntegration(t *testing.T) {
+	pool := getBlueprintIntegrationPool(t)
+	companyID := uuid.New()
+	cleanupIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupIntegrationTenant(t, pool, companyID) })
+
+	provider := newPipelineScriptedAIProvider()
+	provSource := &pipelineScriptedProviderSource{provider: provider}
+
+	pipeline, repo, createSvc := setupIntegrationPipeline(t, pool, provSource)
+	ctx := context.Background()
+
+	blueprintID, _ := seedIntegrationBlueprintWithManualJourneyAtAttempt3(
+		t, pool, pipeline, repo, createSvc, provider, companyID,
+	)
+
+	// Intercept provider generate request to verify Architecture prompt construction
+	var capturedPrompt string
+	var capturedStage domain.BlueprintSectionType
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		capturedPrompt = req.Prompt
+		capturedStage = detectStageFromPrompt(req.Prompt)
+		return service.GenerateResult{Text: validArchitectureIntegrationPayload()}, nil
+	}
+
+	resArch, err := pipeline.Continue(ctx, companyID, blueprintID)
+	require.NoError(t, err)
+	require.NotNil(t, resArch)
+	assert.Equal(t, domain.BlueprintSectionArchitecture, resArch.Section)
+	assert.Equal(t, domain.BlueprintSectionCompleted, resArch.SectionStatus)
+	assert.Equal(t, 3, resArch.ContentVersion)
+	assert.Equal(t, 1, resArch.Attempt)
+
+	// Assert prompt construction invariants
+	assert.NotEmpty(t, capturedPrompt, "Architecture prompt must not be empty")
+	assert.True(t, strings.Contains(capturedPrompt, `stage="architecture"`), "Prompt must include architecture stage marker")
+	assert.True(t, strings.Contains(capturedPrompt, "Discovery") || strings.Contains(capturedPrompt, "Initial Meeting"),
+		"Architecture prompt must contain manually completed Journey dependency content")
+	assert.Equal(t, domain.BlueprintSectionArchitecture, capturedStage)
+
+	// Non-secret size and routing properties
+	assert.Greater(t, len(capturedPrompt), 200, "Prompt must contain structured context and dependency data")
+	assert.False(t, strings.Contains(capturedPrompt, "SECRET_"), "Prompt must not contain secret tokens")
+}
+
+func TestBlueprintPipelineManualJourneyToArchitectureProviderFailureCategoriesIntegration(t *testing.T) {
+	pool := getBlueprintIntegrationPool(t)
+
+	tests := []struct {
+		name                 string
+		providerErr          error
+		expectedSentinel     error
+		expectedSafeCode     string
+		isRetryable          bool
+		expectedRetryOutcome string
+	}{
+		{
+			name: "RequestRejected_NonRetryable",
+			providerErr: &service.ProviderError{
+				Code:           service.ErrRequestRejected,
+				UpstreamStatus: 400,
+				Message:        "upstream bad request / schema rejection",
+				Retryable:      false,
+			},
+			expectedSentinel:     service.ErrBlueprintProviderRejected,
+			expectedSafeCode:     "provider_request_rejected",
+			isRetryable:          false,
+			expectedRetryOutcome: "retry_not_allowed",
+		},
+		{
+			name: "PayloadTooLarge_NonRetryable",
+			providerErr: &service.ProviderError{
+				Code:           service.ErrPayloadTooLarge,
+				UpstreamStatus: 413,
+				Message:        "upstream prompt too large",
+				Retryable:      false,
+			},
+			expectedSentinel:     service.ErrBlueprintProviderPayloadSize,
+			expectedSafeCode:     "provider_payload_too_large",
+			isRetryable:          false,
+			expectedRetryOutcome: "retry_not_allowed",
+		},
+		{
+			name: "ProviderUnavailable_Retryable",
+			providerErr: &service.ProviderError{
+				Code:           service.ErrProviderUnavailable,
+				UpstreamStatus: 503,
+				Message:        "upstream service unavailable",
+				Retryable:      true,
+			},
+			expectedSentinel:     service.ErrBlueprintProviderUnavailable,
+			expectedSafeCode:     "provider_unavailable",
+			isRetryable:          true,
+			expectedRetryOutcome: "retry_allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			companyID := uuid.New()
+			cleanupIntegrationTenant(t, pool, companyID)
+			t.Cleanup(func() { cleanupIntegrationTenant(t, pool, companyID) })
+
+			provider := newPipelineScriptedAIProvider()
+			provSource := &pipelineScriptedProviderSource{provider: provider}
+
+			pipeline, repo, createSvc := setupIntegrationPipeline(t, pool, provSource)
+			ctx := context.Background()
+
+			blueprintID, _ := seedIntegrationBlueprintWithManualJourneyAtAttempt3(
+				t, pool, pipeline, repo, createSvc, provider, companyID,
+			)
+
+			// 1. Continue into Architecture -> fails with the specific provider error
+			provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+				return service.GenerateResult{}, tt.providerErr
+			}
+
+			res, err := pipeline.Continue(ctx, companyID, blueprintID)
+			assert.Nil(t, res)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, tt.expectedSentinel), "expected error sentinel %v, got %v", tt.expectedSentinel, err)
+
+			// 2. Verify persisted safe error code in DB
+			genAfterFail, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+			require.NoError(t, err)
+			assert.Equal(t, 2, genAfterFail.Revision.ContentVersion, "failure must not increment content version")
+			assert.Equal(t, string(domain.BlueprintGenerationPartialFailed), genAfterFail.Revision.GenerationStatus)
+
+			var archRun *domain.BlueprintSectionRun
+			for i := range genAfterFail.SectionRuns {
+				if genAfterFail.SectionRuns[i].SectionType == string(domain.BlueprintSectionArchitecture) {
+					archRun = &genAfterFail.SectionRuns[i]
+					break
+				}
+			}
+			require.NotNil(t, archRun)
+			assert.Equal(t, string(domain.BlueprintSectionFailed), archRun.Status)
+			assert.Equal(t, 1, archRun.AttemptCount)
+			require.NotNil(t, archRun.SafeErrorCode)
+			assert.Equal(t, tt.expectedSafeCode, *archRun.SafeErrorCode)
+
+			// 3. Test retry eligibility
+			if tt.isRetryable {
+				// Retry should succeed to claim and execute attempt 2
+				provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+					return service.GenerateResult{Text: validArchitectureIntegrationPayload()}, nil
+				}
+				retryRes, retryErr := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionArchitecture)
+				require.NoError(t, retryErr)
+				require.NotNil(t, retryRes)
+				assert.Equal(t, domain.BlueprintSectionArchitecture, retryRes.Section)
+				assert.Equal(t, domain.BlueprintSectionCompleted, retryRes.SectionStatus)
+				assert.Equal(t, 2, retryRes.Attempt, "Attempt must increment to 2 on retry")
+				assert.Equal(t, 3, retryRes.ContentVersion, "Content version must increment to 3 on completion")
+			} else {
+				// Non-retryable error: RetrySection must return ErrBlueprintRetryNotAllowed
+				retryRes, retryErr := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionArchitecture)
+				assert.Nil(t, retryRes)
+				require.Error(t, retryErr)
+				assert.True(t, errors.Is(retryErr, service.ErrBlueprintRetryNotAllowed),
+					"expected ErrBlueprintRetryNotAllowed for %s, got: %v", tt.expectedSafeCode, retryErr)
+
+				// DB check: attempt must still be 1, status still failed
+				genAfterBlockedRetry, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+				require.NoError(t, err)
+				var archRunBlocked *domain.BlueprintSectionRun
+				for i := range genAfterBlockedRetry.SectionRuns {
+					if genAfterBlockedRetry.SectionRuns[i].SectionType == string(domain.BlueprintSectionArchitecture) {
+						archRunBlocked = &genAfterBlockedRetry.SectionRuns[i]
+						break
+					}
+				}
+				require.NotNil(t, archRunBlocked)
+				assert.Equal(t, 1, archRunBlocked.AttemptCount, "Attempt count must not increment on blocked retry")
+				assert.Equal(t, string(domain.BlueprintSectionFailed), archRunBlocked.Status)
+			}
+		})
+	}
+}
+
+func TestBlueprintPipelineManualJourneyToArchitectureSuccessAndRetryGuardIntegration(t *testing.T) {
+	pool := getBlueprintIntegrationPool(t)
+	companyID := uuid.New()
+	cleanupIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupIntegrationTenant(t, pool, companyID) })
+
+	provider := newPipelineScriptedAIProvider()
+	provSource := &pipelineScriptedProviderSource{provider: provider}
+
+	pipeline, repo, createSvc := setupIntegrationPipeline(t, pool, provSource)
+	ctx := context.Background()
+
+	blueprintID, _ := seedIntegrationBlueprintWithManualJourneyAtAttempt3(
+		t, pool, pipeline, repo, createSvc, provider, companyID,
+	)
+
+	// Continue into Architecture -> success
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{Text: validArchitectureIntegrationPayload()}, nil
+	}
+
+	resArch, err := pipeline.Continue(ctx, companyID, blueprintID)
+	require.NoError(t, err)
+	require.NotNil(t, resArch)
+	assert.Equal(t, domain.BlueprintSectionArchitecture, resArch.Section)
+	assert.Equal(t, domain.BlueprintSectionCompleted, resArch.SectionStatus)
+	assert.Equal(t, 3, resArch.ContentVersion)
+	assert.Equal(t, 1, resArch.Attempt)
+
+	// Attempting RetrySection on completed Architecture must fail with ErrBlueprintRetryNotAllowed
+	resRetry, err := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionArchitecture)
+	assert.Nil(t, resRetry)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintRetryNotAllowed))
+}
+
+func TestBlueprintPipelineManualJourneyToArchitectureStaleLeaseRecoveryIntegration(t *testing.T) {
+	pool := getBlueprintIntegrationPool(t)
+	companyID := uuid.New()
+	cleanupIntegrationTenant(t, pool, companyID)
+	t.Cleanup(func() { cleanupIntegrationTenant(t, pool, companyID) })
+
+	provider := newPipelineScriptedAIProvider()
+	provSource := &pipelineScriptedProviderSource{provider: provider}
+
+	pipeline, repo, createSvc := setupIntegrationPipeline(t, pool, provSource)
+	ctx := context.Background()
+
+	blueprintID, revisionID := seedIntegrationBlueprintWithManualJourneyAtAttempt3(
+		t, pool, pipeline, repo, createSvc, provider, companyID,
+	)
+
+	// 1. Simulate Architecture entering 'generating' state and becoming stale (> 5 minutes ago)
+	staleTime := time.Now().Add(-10 * time.Minute)
+	_, err := pool.Exec(ctx, `
+		UPDATE blueprint_section_runs
+		SET status = 'generating', attempt_count = 1, started_at = $1, updated_at = $1
+		WHERE blueprint_revision_id = $2 AND company_id = $3 AND section_type = 'architecture'
+	`, staleTime, revisionID, companyID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
+		UPDATE blueprint_revisions
+		SET generation_status = 'in_progress', updated_at = $1
+		WHERE id = $2 AND company_id = $3
+	`, staleTime, revisionID, companyID)
+	require.NoError(t, err)
+
+	provCallsBeforeContinue := provider.calls
+
+	// 2. Calling Continue once triggers stale lease reconciliation
+	resRecov, err := pipeline.Continue(ctx, companyID, blueprintID)
+	assert.Nil(t, resRecov)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintPipelineRecoveryRequired),
+		"Expected ErrBlueprintPipelineRecoveryRequired on stale lease, got: %v", err)
+
+	// Assert reconciliation did NOT invoke the AI provider
+	assert.Equal(t, provCallsBeforeContinue, provider.calls, "Stale lease reconciliation must make ZERO provider calls")
+
+	// 3. Check DB state after reconciliation: Architecture is failed, safe_error_code is interrupted, attempt remains 1
+	genAfterRecov, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, genAfterRecov.Revision.ContentVersion, "Reconciliation must not increment content version")
+	assert.Equal(t, string(domain.BlueprintGenerationPartialFailed), genAfterRecov.Revision.GenerationStatus)
+
+	var archRunRecov *domain.BlueprintSectionRun
+	for i := range genAfterRecov.SectionRuns {
+		if genAfterRecov.SectionRuns[i].SectionType == string(domain.BlueprintSectionArchitecture) {
+			archRunRecov = &genAfterRecov.SectionRuns[i]
+			break
+		}
+	}
+	require.NotNil(t, archRunRecov)
+	assert.Equal(t, string(domain.BlueprintSectionFailed), archRunRecov.Status)
+	assert.Equal(t, 1, archRunRecov.AttemptCount, "Reconciliation must NOT increment attempt count")
+	require.NotNil(t, archRunRecov.SafeErrorCode)
+	assert.Equal(t, "interrupted", *archRunRecov.SafeErrorCode)
+
+	// Calling Continue again while Architecture is failed should return ErrBlueprintPipelineBlocked (no eligible section)
+	resBlocked, err := pipeline.Continue(ctx, companyID, blueprintID)
+	assert.Nil(t, resBlocked)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, service.ErrBlueprintPipelineBlocked))
+
+	// 4. Calling explicit RetrySection consumes attempt 2 and succeeds
+	provider.generateFn = func(ctx context.Context, req service.GenerateRequest) (service.GenerateResult, error) {
+		return service.GenerateResult{Text: validArchitectureIntegrationPayload()}, nil
+	}
+
+	resRetry, err := pipeline.RetrySection(ctx, companyID, blueprintID, domain.BlueprintSectionArchitecture)
+	require.NoError(t, err)
+	require.NotNil(t, resRetry)
+	assert.Equal(t, domain.BlueprintSectionArchitecture, resRetry.Section)
+	assert.Equal(t, domain.BlueprintSectionCompleted, resRetry.SectionStatus)
+	assert.Equal(t, 2, resRetry.Attempt, "Attempt must increment to exactly 2 on explicit RetrySection")
+	assert.Equal(t, 3, resRetry.ContentVersion, "Content version must increment to 3 on completion")
+
+	// 5. Final DB state check
+	finalGen, err := repo.GetBlueprintGeneration(ctx, blueprintID, companyID)
+	require.NoError(t, err)
+	assert.Equal(t, 3, finalGen.Revision.ContentVersion)
+
+	var finalArchRun *domain.BlueprintSectionRun
+	for i := range finalGen.SectionRuns {
+		if finalGen.SectionRuns[i].SectionType == string(domain.BlueprintSectionArchitecture) {
+			finalArchRun = &finalGen.SectionRuns[i]
+			break
+		}
+	}
+	require.NotNil(t, finalArchRun)
+	assert.Equal(t, string(domain.BlueprintSectionCompleted), finalArchRun.Status)
+	assert.Equal(t, 2, finalArchRun.AttemptCount)
+	assert.Nil(t, finalArchRun.SafeErrorCode)
+	assert.NotEmpty(t, finalArchRun.ContentJSON)
+}
+
