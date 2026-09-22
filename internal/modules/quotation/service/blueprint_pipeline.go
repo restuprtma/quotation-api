@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -328,12 +329,18 @@ func (p *BlueprintPipeline) executeClaimedProviderStage(
 	companyID uuid.UUID,
 	claim *repository.BlueprintSectionClaim,
 ) (*BlueprintPipelineResult, error) {
+	startRes := p.clock.Now()
 	provider, providerName, model, err := p.providers.ProviderForCompany(ctx, companyID)
+	resElapsed := p.clock.Now().Sub(startRes)
 	if err != nil {
 		safeCode, sentinel := mapProviderResolutionError(err)
+		var pErr *ProviderError
+		errors.As(err, &pErr)
+		logBlueprintProviderFailure(claim, providerName, model, safeCode, 0, resElapsed, pErr)
 		return nil, p.persistFailure(ctx, claim, safeCode, nil, sentinel)
 	}
 	if provider == nil {
+		logBlueprintProviderFailure(claim, providerName, model, "provider_configuration", 0, resElapsed, &ProviderError{Code: ErrCredentialNotConfigured})
 		return nil, p.persistFailure(ctx, claim, "provider_configuration", nil, ErrBlueprintProviderConfiguration)
 	}
 
@@ -357,11 +364,17 @@ func (p *BlueprintPipeline) executeClaimedProviderStage(
 		return nil, p.persistFailure(ctx, claim, safeCode, nil, sentinel)
 	}
 
+	promptBytes := len(prompt)
 	attemptCtx, cancel := context.WithTimeout(ctx, p.providerTimeout)
+	startGen := p.clock.Now()
 	generated, genErr := provider.Generate(attemptCtx, GenerateRequest{Prompt: prompt})
+	elapsed := p.clock.Now().Sub(startGen)
 	cancel()
 	if genErr != nil {
 		safeCode, sentinel := mapProviderGenerateError(genErr, attemptCtx)
+		var pErr *ProviderError
+		errors.As(genErr, &pErr)
+		logBlueprintProviderFailure(claim, providerName, model, safeCode, promptBytes, elapsed, pErr)
 		return nil, p.persistFailure(ctx, claim, safeCode, nil, sentinel)
 	}
 
@@ -613,6 +626,51 @@ func (p *BlueprintPipeline) persistFailure(
 	return sentinel
 }
 
+func logBlueprintProviderFailure(
+	claim *repository.BlueprintSectionClaim,
+	providerName, model, safeCode string,
+	promptBytes int,
+	elapsed time.Duration,
+	providerErr *ProviderError,
+) {
+	var (
+		blueprintID string
+		revisionID  string
+		section     string
+		attempt     int
+		companyID   string
+	)
+	if claim != nil {
+		blueprintID = claim.BlueprintID.String()
+		revisionID = claim.RevisionID.String()
+		section = string(claim.SectionType)
+		attempt = claim.Attempt
+		companyID = claim.CompanyID.String()
+	}
+
+	upstreamStatus := 0
+	requestID := ""
+	if providerErr != nil {
+		upstreamStatus = providerErr.UpstreamStatus
+		requestID = providerErr.RequestID
+	}
+
+	slog.Warn("blueprint provider failure",
+		slog.String("blueprint_id", blueprintID),
+		slog.String("revision_id", revisionID),
+		slog.String("section", section),
+		slog.Int("attempt", attempt),
+		slog.String("company_id", companyID),
+		slog.String("provider", providerName),
+		slog.String("model", model),
+		slog.String("safe_code", safeCode),
+		slog.Int("prompt_bytes", promptBytes),
+		slog.Duration("duration", elapsed),
+		slog.Int("upstream_status", upstreamStatus),
+		slog.String("request_id", requestID),
+	)
+}
+
 func mapProviderResolutionError(err error) (string, error) {
 	var pErr *ProviderError
 	if errors.As(err, &pErr) {
@@ -627,8 +685,12 @@ func mapProviderResolutionError(err error) (string, error) {
 			return "provider_timeout", ErrBlueprintProviderTimeout
 		case ErrProviderUnavailable:
 			return "provider_unavailable", ErrBlueprintProviderUnavailable
+		case ErrRequestRejected:
+			return "provider_request_rejected", ErrBlueprintProviderRejected
+		case ErrPayloadTooLarge:
+			return "provider_payload_too_large", ErrBlueprintProviderPayloadSize
 		default:
-			return "provider_configuration", ErrBlueprintProviderConfiguration
+			return "provider_unavailable", ErrBlueprintProviderUnavailable
 		}
 	}
 	errStr := strings.ToLower(err.Error())
@@ -643,6 +705,12 @@ func mapProviderResolutionError(err error) (string, error) {
 	}
 	if strings.Contains(errStr, "timeout") || errors.Is(err, context.DeadlineExceeded) {
 		return "provider_timeout", ErrBlueprintProviderTimeout
+	}
+	if strings.Contains(errStr, "payload") || strings.Contains(errStr, "too large") {
+		return "provider_payload_too_large", ErrBlueprintProviderPayloadSize
+	}
+	if strings.Contains(errStr, "rejected") {
+		return "provider_request_rejected", ErrBlueprintProviderRejected
 	}
 	return "provider_unavailable", ErrBlueprintProviderUnavailable
 }
@@ -664,6 +732,10 @@ func mapProviderGenerateError(err error, attemptCtx context.Context) (string, er
 			return "provider_configuration", ErrBlueprintProviderConfiguration
 		case ErrProviderUnavailable:
 			return "provider_unavailable", ErrBlueprintProviderUnavailable
+		case ErrRequestRejected:
+			return "provider_request_rejected", ErrBlueprintProviderRejected
+		case ErrPayloadTooLarge:
+			return "provider_payload_too_large", ErrBlueprintProviderPayloadSize
 		default:
 			return "provider_unavailable", ErrBlueprintProviderUnavailable
 		}
@@ -678,5 +750,12 @@ func mapProviderGenerateError(err error, attemptCtx context.Context) (string, er
 	if strings.Contains(errStr, "credential") || strings.Contains(errStr, "key") {
 		return "provider_invalid_credential", ErrBlueprintProviderInvalidCredential
 	}
+	if strings.Contains(errStr, "payload") || strings.Contains(errStr, "too large") {
+		return "provider_payload_too_large", ErrBlueprintProviderPayloadSize
+	}
+	if strings.Contains(errStr, "rejected") {
+		return "provider_request_rejected", ErrBlueprintProviderRejected
+	}
 	return "provider_unavailable", ErrBlueprintProviderUnavailable
 }
+

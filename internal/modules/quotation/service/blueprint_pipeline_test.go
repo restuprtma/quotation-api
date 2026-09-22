@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -1627,5 +1629,406 @@ func TestBlueprintPipelinePromptClassification(t *testing.T) {
 			assert.Equal(t, 0, repo.completeCalls)
 		})
 	}
+}
+
+func TestMapProviderResolutionError(t *testing.T) {
+	testCases := []struct {
+		name             string
+		inputErr         error
+		expectedSafeCode string
+		expectedSentinel error
+	}{
+		{
+			name:             "typed invalid credential",
+			inputErr:         &ProviderError{Code: ErrInvalidCredential},
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "typed credential not configured",
+			inputErr:         &ProviderError{Code: ErrCredentialNotConfigured},
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "typed unsupported model",
+			inputErr:         &ProviderError{Code: ErrUnsupportedModel},
+			expectedSafeCode: "provider_configuration",
+			expectedSentinel: ErrBlueprintProviderConfiguration,
+		},
+		{
+			name:             "typed rate limited",
+			inputErr:         &ProviderError{Code: ErrRateLimited},
+			expectedSafeCode: "provider_rate_limited",
+			expectedSentinel: ErrBlueprintProviderRateLimited,
+		},
+		{
+			name:             "typed timeout",
+			inputErr:         &ProviderError{Code: ErrTimeout},
+			expectedSafeCode: "provider_timeout",
+			expectedSentinel: ErrBlueprintProviderTimeout,
+		},
+		{
+			name:             "typed provider unavailable",
+			inputErr:         &ProviderError{Code: ErrProviderUnavailable},
+			expectedSafeCode: "provider_unavailable",
+			expectedSentinel: ErrBlueprintProviderUnavailable,
+		},
+		{
+			name:             "typed request rejected",
+			inputErr:         &ProviderError{Code: ErrRequestRejected},
+			expectedSafeCode: "provider_request_rejected",
+			expectedSentinel: ErrBlueprintProviderRejected,
+		},
+		{
+			name:             "typed payload too large",
+			inputErr:         &ProviderError{Code: ErrPayloadTooLarge},
+			expectedSafeCode: "provider_payload_too_large",
+			expectedSentinel: ErrBlueprintProviderPayloadSize,
+		},
+		{
+			name:             "typed unknown code defaults to provider_unavailable",
+			inputErr:         &ProviderError{Code: "custom_unknown_code"},
+			expectedSafeCode: "provider_unavailable",
+			expectedSentinel: ErrBlueprintProviderUnavailable,
+		},
+		{
+			name:             "untyped credential string",
+			inputErr:         errors.New("missing API credential in settings"),
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "untyped api key string",
+			inputErr:         errors.New("invalid key provided"),
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "untyped model string",
+			inputErr:         errors.New("unsupported model claude-1"),
+			expectedSafeCode: "provider_configuration",
+			expectedSentinel: ErrBlueprintProviderConfiguration,
+		},
+		{
+			name:             "untyped config string",
+			inputErr:         errors.New("config is missing baseUrl"),
+			expectedSafeCode: "provider_configuration",
+			expectedSentinel: ErrBlueprintProviderConfiguration,
+		},
+		{
+			name:             "untyped rate string",
+			inputErr:         errors.New("rate limit quota exceeded"),
+			expectedSafeCode: "provider_rate_limited",
+			expectedSentinel: ErrBlueprintProviderRateLimited,
+		},
+		{
+			name:             "untyped timeout string",
+			inputErr:         errors.New("connection timeout to provider"),
+			expectedSafeCode: "provider_timeout",
+			expectedSentinel: ErrBlueprintProviderTimeout,
+		},
+		{
+			name:             "untyped payload string",
+			inputErr:         errors.New("payload exceeds maximum allowed limit"),
+			expectedSafeCode: "provider_payload_too_large",
+			expectedSentinel: ErrBlueprintProviderPayloadSize,
+		},
+		{
+			name:             "untyped too large string",
+			inputErr:         errors.New("request entity is too large"),
+			expectedSafeCode: "provider_payload_too_large",
+			expectedSentinel: ErrBlueprintProviderPayloadSize,
+		},
+		{
+			name:             "untyped rejected string",
+			inputErr:         errors.New("request rejected by remote policy"),
+			expectedSafeCode: "provider_request_rejected",
+			expectedSentinel: ErrBlueprintProviderRejected,
+		},
+		{
+			name:             "untyped unknown defaults to provider_unavailable",
+			inputErr:         errors.New("something totally random happened"),
+			expectedSafeCode: "provider_unavailable",
+			expectedSentinel: ErrBlueprintProviderUnavailable,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			safeCode, sentinel := mapProviderResolutionError(tc.inputErr)
+			assert.Equal(t, tc.expectedSafeCode, safeCode)
+			assert.Equal(t, tc.expectedSentinel, sentinel)
+		})
+	}
+}
+
+func TestMapProviderGenerateError(t *testing.T) {
+	testCases := []struct {
+		name             string
+		inputErr         error
+		attemptCtx       context.Context
+		expectedSafeCode string
+		expectedSentinel error
+	}{
+		{
+			name:             "context deadline exceeded",
+			inputErr:         context.DeadlineExceeded,
+			expectedSafeCode: "provider_timeout",
+			expectedSentinel: ErrBlueprintProviderTimeout,
+		},
+		{
+			name:             "typed timeout",
+			inputErr:         &ProviderError{Code: ErrTimeout},
+			expectedSafeCode: "provider_timeout",
+			expectedSentinel: ErrBlueprintProviderTimeout,
+		},
+		{
+			name:             "typed rate limited",
+			inputErr:         &ProviderError{Code: ErrRateLimited},
+			expectedSafeCode: "provider_rate_limited",
+			expectedSentinel: ErrBlueprintProviderRateLimited,
+		},
+		{
+			name:             "typed invalid credential",
+			inputErr:         &ProviderError{Code: ErrInvalidCredential},
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "typed credential not configured",
+			inputErr:         &ProviderError{Code: ErrCredentialNotConfigured},
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "typed unsupported model",
+			inputErr:         &ProviderError{Code: ErrUnsupportedModel},
+			expectedSafeCode: "provider_configuration",
+			expectedSentinel: ErrBlueprintProviderConfiguration,
+		},
+		{
+			name:             "typed provider unavailable",
+			inputErr:         &ProviderError{Code: ErrProviderUnavailable},
+			expectedSafeCode: "provider_unavailable",
+			expectedSentinel: ErrBlueprintProviderUnavailable,
+		},
+		{
+			name:             "typed request rejected",
+			inputErr:         &ProviderError{Code: ErrRequestRejected},
+			expectedSafeCode: "provider_request_rejected",
+			expectedSentinel: ErrBlueprintProviderRejected,
+		},
+		{
+			name:             "typed payload too large",
+			inputErr:         &ProviderError{Code: ErrPayloadTooLarge},
+			expectedSafeCode: "provider_payload_too_large",
+			expectedSentinel: ErrBlueprintProviderPayloadSize,
+		},
+		{
+			name:             "typed unknown code defaults to provider_unavailable",
+			inputErr:         &ProviderError{Code: "unknown_generate_code"},
+			expectedSafeCode: "provider_unavailable",
+			expectedSentinel: ErrBlueprintProviderUnavailable,
+		},
+		{
+			name:             "untyped timeout string",
+			inputErr:         errors.New("upstream connection timeout"),
+			expectedSafeCode: "provider_timeout",
+			expectedSentinel: ErrBlueprintProviderTimeout,
+		},
+		{
+			name:             "untyped rate string",
+			inputErr:         errors.New("exceeded rate limit per minute"),
+			expectedSafeCode: "provider_rate_limited",
+			expectedSentinel: ErrBlueprintProviderRateLimited,
+		},
+		{
+			name:             "untyped credential string",
+			inputErr:         errors.New("bad credential error"),
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "untyped key string",
+			inputErr:         errors.New("api key rejected"),
+			expectedSafeCode: "provider_invalid_credential",
+			expectedSentinel: ErrBlueprintProviderInvalidCredential,
+		},
+		{
+			name:             "untyped payload string",
+			inputErr:         errors.New("prompt payload is too big"),
+			expectedSafeCode: "provider_payload_too_large",
+			expectedSentinel: ErrBlueprintProviderPayloadSize,
+		},
+		{
+			name:             "untyped too large string",
+			inputErr:         errors.New("context length too large"),
+			expectedSafeCode: "provider_payload_too_large",
+			expectedSentinel: ErrBlueprintProviderPayloadSize,
+		},
+		{
+			name:             "untyped rejected string",
+			inputErr:         errors.New("prompt rejected by safety filters"),
+			expectedSafeCode: "provider_request_rejected",
+			expectedSentinel: ErrBlueprintProviderRejected,
+		},
+		{
+			name:             "untyped unknown defaults to provider_unavailable",
+			inputErr:         errors.New("some network socket drop"),
+			expectedSafeCode: "provider_unavailable",
+			expectedSentinel: ErrBlueprintProviderUnavailable,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			safeCode, sentinel := mapProviderGenerateError(tc.inputErr, tc.attemptCtx)
+			assert.Equal(t, tc.expectedSafeCode, safeCode)
+			assert.Equal(t, tc.expectedSentinel, sentinel)
+		})
+	}
+}
+
+func TestBlueprintPipelineContinueProviderErrorMapping(t *testing.T) {
+	testCases := []struct {
+		name             string
+		resolutionErr    error
+		generateErr      error
+		expectedErr      error
+		expectedSafeCode string
+	}{
+		{
+			name:             "generate request rejected",
+			generateErr:      &ProviderError{Code: ErrRequestRejected, Message: "content filter", UpstreamStatus: 400, RequestID: "req-rej-1"},
+			expectedErr:      ErrBlueprintProviderRejected,
+			expectedSafeCode: "provider_request_rejected",
+		},
+		{
+			name:             "generate payload too large",
+			generateErr:      &ProviderError{Code: ErrPayloadTooLarge, Message: "max tokens exceeded", UpstreamStatus: 413, RequestID: "req-large-1"},
+			expectedErr:      ErrBlueprintProviderPayloadSize,
+			expectedSafeCode: "provider_payload_too_large",
+		},
+		{
+			name:             "resolution request rejected",
+			resolutionErr:    &ProviderError{Code: ErrRequestRejected, Message: "account blocked", UpstreamStatus: 403, RequestID: "req-res-rej"},
+			expectedErr:      ErrBlueprintProviderRejected,
+			expectedSafeCode: "provider_request_rejected",
+		},
+		{
+			name:             "resolution payload too large",
+			resolutionErr:    &ProviderError{Code: ErrPayloadTooLarge, Message: "init config too large", UpstreamStatus: 413, RequestID: "req-res-large"},
+			expectedErr:      ErrBlueprintProviderPayloadSize,
+			expectedSafeCode: "provider_payload_too_large",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			companyID := uuid.New()
+			blueprintID := uuid.New()
+
+			repo := &fakePipelineRepo{
+				claimNextFn: func(ctx context.Context, cID, bID uuid.UUID, now time.Time, staleAfter time.Duration) (*repository.BlueprintSectionClaim, error) {
+					return makeBaseClaim(companyID, blueprintID, domain.BlueprintSectionJourney), nil
+				},
+			}
+			prov := &fakeAIProvider{
+				generateFn: func(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+					if tc.generateErr != nil {
+						return GenerateResult{}, tc.generateErr
+					}
+					return GenerateResult{Text: validJourneyPayload()}, nil
+				},
+			}
+			provSource := &fakeProviderSource{
+				providerFn: func(ctx context.Context, cID uuid.UUID) (AIProvider, string, string, error) {
+					if tc.resolutionErr != nil {
+						return nil, "mock-provider", "mock-model", tc.resolutionErr
+					}
+					return prov, "mock-provider", "mock-model", nil
+				},
+			}
+
+			pipeline := NewBlueprintPipeline(repo, provSource, &fakePromptBuilder{}, NewBlueprintSectionValidator(), NewProductionBlueprintCrossValidator())
+
+			res, err := pipeline.Continue(context.Background(), companyID, blueprintID)
+			assert.Nil(t, res)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tc.expectedErr)
+
+			assert.Equal(t, 1, repo.failCalls)
+			require.Len(t, repo.failParams, 1)
+			assert.Equal(t, tc.expectedSafeCode, repo.failParams[0].SafeErrorCode)
+		})
+	}
+}
+
+func TestLogBlueprintProviderFailure(t *testing.T) {
+	t.Run("logs all diagnostic fields safely without sensitive data", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		oldLogger := slog.Default()
+		slog.SetDefault(logger)
+		defer slog.SetDefault(oldLogger)
+
+		claim := makeBaseClaim(uuid.New(), uuid.New(), domain.BlueprintSectionArchitecture)
+		claim.Attempt = 2
+		provErr := &ProviderError{
+			Code:           ErrRequestRejected,
+			Message:        "sensitive message with key secret123",
+			UpstreamStatus: 400,
+			RequestID:      "req-diag-999",
+			Retryable:      false,
+		}
+
+		logBlueprintProviderFailure(
+			claim,
+			"openai",
+			"gpt-4o",
+			"provider_request_rejected",
+			1024,
+			150*time.Millisecond,
+			provErr,
+		)
+
+		logOutput := buf.String()
+		assert.Contains(t, logOutput, claim.BlueprintID.String())
+		assert.Contains(t, logOutput, claim.RevisionID.String())
+		assert.Contains(t, logOutput, "architecture")
+		assert.Contains(t, logOutput, claim.CompanyID.String())
+		assert.Contains(t, logOutput, "openai")
+		assert.Contains(t, logOutput, "gpt-4o")
+		assert.Contains(t, logOutput, "provider_request_rejected")
+		assert.Contains(t, logOutput, "req-diag-999")
+		assert.Contains(t, logOutput, "400")
+
+		// Assert no sensitive information or message body in log attributes
+		assert.NotContains(t, logOutput, "secret123")
+	})
+
+	t.Run("handles nil claim and nil providerErr gracefully", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		oldLogger := slog.Default()
+		slog.SetDefault(logger)
+		defer slog.SetDefault(oldLogger)
+
+		assert.NotPanics(t, func() {
+			logBlueprintProviderFailure(
+				nil,
+				"unknown",
+				"unknown",
+				"provider_unavailable",
+				0,
+				10*time.Millisecond,
+				nil,
+			)
+		})
+
+		logOutput := buf.String()
+		assert.Contains(t, logOutput, "provider_unavailable")
+	})
 }
 
