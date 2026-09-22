@@ -944,6 +944,36 @@ func TestGenerate_ProviderGenericFailure_MappedToGenerationFailed(t *testing.T) 
 	assertPendingRevision(t, pool, fx.companyID, fx.key)
 }
 
+func TestGenerate_ProviderRequestRejected_MappedToGenerationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{err: &service.ProviderError{Code: service.ErrRequestRejected, Message: "400 rejected"}},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "generation_failed")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
+func TestGenerate_ProviderPayloadTooLarge_MappedToGenerationFailed(t *testing.T) {
+	pool := getTestPool(t)
+	fx := seedPipelineFixtures(t, pool)
+
+	mock := &scriptedAIProvider{steps: []scriptedStep{
+		{err: &service.ProviderError{Code: service.ErrPayloadTooLarge, Message: "413 too large"}},
+	}}
+	svc, _ := newSvc(pool, mock)
+
+	qid, err := svc.Generate(context.Background(), fx.companyID, nil, fx.request())
+	assertGenerationCode(t, err, "generation_failed")
+	assert.NotEqual(t, uuid.Nil, qid)
+	assertPendingRevision(t, pool, fx.companyID, fx.key)
+}
+
 func validSubscriptionSaaSInput() domain.SubscriptionSaaSInput {
 	return domain.SubscriptionSaaSInput{
 		ProductName:       "Subscription AI Percetakan",

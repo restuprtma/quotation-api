@@ -155,6 +155,8 @@ func mapProviderError(err error) *GenerationError {
 			return newGenerationError(ErrCodeProviderRateLimited, "AI provider is rate limited")
 		case ErrTimeout:
 			return newGenerationError(ErrCodeProviderTimeout, "AI provider timed out")
+		case ErrRequestRejected, ErrPayloadTooLarge:
+			return newGenerationError(ErrCodeGenerationFailed, "AI provider rejected the request")
 		default:
 			return newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
 		}

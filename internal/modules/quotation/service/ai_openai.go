@@ -39,7 +39,11 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		},
 	})
 	if err != nil {
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to marshal request"}
+		return GenerateResult{}, &ProviderError{
+			Code:      ErrProviderUnavailable,
+			Message:   "failed to marshal request",
+			Retryable: false,
+		}
 	}
 
 	timeout := p.cfg.Timeout
@@ -50,7 +54,11 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	client := &http.Client{Timeout: timeout}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to create request"}
+		return GenerateResult{}, &ProviderError{
+			Code:      ErrProviderUnavailable,
+			Message:   "failed to create request",
+			Retryable: false,
+		}
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -62,25 +70,38 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return GenerateResult{}, &ProviderError{Code: ErrTimeout, Message: "request timed out"}
+			return GenerateResult{}, &ProviderError{
+				Code:      ErrTimeout,
+				Message:   "request timed out",
+				Retryable: true,
+			}
 		}
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "provider request failed"}
+		return GenerateResult{}, &ProviderError{
+			Code:      ErrProviderUnavailable,
+			Message:   "provider request failed",
+			Retryable: true,
+		}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		mappedErr := mapOpenAIError(resp.StatusCode)
-		if perr, ok := mappedErr.(*ProviderError); ok {
-			perr.Message += " | " + string(errBody)
-			return GenerateResult{}, perr
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		reqID := resp.Header.Get("x-request-id")
+		if reqID == "" {
+			reqID = resp.Header.Get("request-id")
 		}
-		return GenerateResult{}, mappedErr
+		perr := mapOpenAIError(resp.StatusCode)
+		perr.RequestID = reqID
+		return GenerateResult{}, perr
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to read response"}
+		return GenerateResult{}, &ProviderError{
+			Code:      ErrProviderUnavailable,
+			Message:   "failed to read response",
+			Retryable: true,
+		}
 	}
 
 	var response struct {
@@ -92,23 +113,81 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	}
 
 	if err := json.Unmarshal(data, &response); err != nil || len(response.Choices) == 0 {
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "invalid response format"}
+		return GenerateResult{}, &ProviderError{
+			Code:      ErrProviderUnavailable,
+			Message:   "invalid response format",
+			Retryable: false,
+		}
 	}
 
 	return GenerateResult{Text: response.Choices[0].Message.Content}, nil
 }
 
-func mapOpenAIError(statusCode int) error {
+func mapOpenAIError(statusCode int) *ProviderError {
 	switch statusCode {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return &ProviderError{
+			Code:           ErrRequestRejected,
+			Message:        "provider rejected request",
+			UpstreamStatus: statusCode,
+			Retryable:      false,
+		}
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return &ProviderError{Code: ErrInvalidCredential, Message: "invalid provider credential"}
+		return &ProviderError{
+			Code:           ErrInvalidCredential,
+			Message:        "invalid provider credential",
+			UpstreamStatus: statusCode,
+			Retryable:      false,
+		}
 	case http.StatusNotFound:
-		return &ProviderError{Code: ErrUnsupportedModel, Message: "unsupported model"}
+		return &ProviderError{
+			Code:           ErrUnsupportedModel,
+			Message:        "unsupported model",
+			UpstreamStatus: statusCode,
+			Retryable:      false,
+		}
+	case http.StatusRequestEntityTooLarge:
+		return &ProviderError{
+			Code:           ErrPayloadTooLarge,
+			Message:        "provider payload too large",
+			UpstreamStatus: statusCode,
+			Retryable:      false,
+		}
 	case http.StatusTooManyRequests:
-		return &ProviderError{Code: ErrRateLimited, Message: "provider rate limited"}
-	case http.StatusGatewayTimeout, http.StatusServiceUnavailable:
-		return &ProviderError{Code: ErrTimeout, Message: "provider timed out"}
+		return &ProviderError{
+			Code:           ErrRateLimited,
+			Message:        "provider rate limited",
+			UpstreamStatus: statusCode,
+			Retryable:      true,
+		}
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		return &ProviderError{
+			Code:           ErrTimeout,
+			Message:        "provider timed out",
+			UpstreamStatus: statusCode,
+			Retryable:      true,
+		}
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		return &ProviderError{
+			Code:           ErrProviderUnavailable,
+			Message:        "provider unavailable",
+			UpstreamStatus: statusCode,
+			Retryable:      true,
+		}
 	default:
-		return &ProviderError{Code: ErrProviderUnavailable, Message: "provider unavailable"}
+		if statusCode >= 500 {
+			return &ProviderError{
+				Code:           ErrProviderUnavailable,
+				Message:        "provider unavailable",
+				UpstreamStatus: statusCode,
+				Retryable:      true,
+			}
+		}
+		return &ProviderError{
+			Code:           ErrRequestRejected,
+			Message:        "provider rejected request",
+			UpstreamStatus: statusCode,
+			Retryable:      false,
+		}
 	}
 }

@@ -12,15 +12,26 @@ const (
 	ErrRateLimited             = "rate_limited"
 	ErrTimeout                 = "timeout"
 	ErrProviderUnavailable     = "provider_unavailable"
+	ErrRequestRejected         = "request_rejected"
+	ErrPayloadTooLarge         = "payload_too_large"
 )
 
 type ProviderError struct {
-	Code    string
-	Message string
+	Code           string
+	Message        string
+	UpstreamStatus int
+	RequestID      string
+	Retryable      bool
 }
 
 func (e *ProviderError) Error() string {
-	return e.Code + ": " + e.Message
+	if e.Code != "" && e.Message != "" {
+		return e.Code + ": " + e.Message
+	}
+	if e.Code != "" {
+		return e.Code
+	}
+	return e.Message
 }
 
 type GenerateRequest struct {
