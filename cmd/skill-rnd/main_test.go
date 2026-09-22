@@ -169,7 +169,9 @@ func TestRunBlueprintSuccessfulPath(t *testing.T) {
 	oldConfig := configLoader
 	oldProvider := providerFactory
 	oldBlueprintRunner := blueprintRunnerFactory
-	t.Cleanup(func() { configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner })
+	t.Cleanup(func() {
+		configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner
+	})
 
 	configLoader = func() *config.Config {
 		return &config.Config{AI: config.AIConfig{Provider: "mock", Timeout: time.Second}}
@@ -205,7 +207,9 @@ func TestRunBlueprintFailedPath(t *testing.T) {
 	oldConfig := configLoader
 	oldProvider := providerFactory
 	oldBlueprintRunner := blueprintRunnerFactory
-	t.Cleanup(func() { configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner })
+	t.Cleanup(func() {
+		configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner
+	})
 
 	configLoader = func() *config.Config {
 		return &config.Config{AI: config.AIConfig{Provider: "mock", Timeout: time.Second}}
@@ -235,7 +239,9 @@ func TestRunBlueprintRunnerInitFailed(t *testing.T) {
 	oldConfig := configLoader
 	oldProvider := providerFactory
 	oldBlueprintRunner := blueprintRunnerFactory
-	t.Cleanup(func() { configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner })
+	t.Cleanup(func() {
+		configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner
+	})
 
 	configLoader = func() *config.Config {
 		return &config.Config{AI: config.AIConfig{Provider: "mock", Timeout: time.Second}}
@@ -265,7 +271,9 @@ func TestRunBlueprintExecutionError(t *testing.T) {
 	oldConfig := configLoader
 	oldProvider := providerFactory
 	oldBlueprintRunner := blueprintRunnerFactory
-	t.Cleanup(func() { configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner })
+	t.Cleanup(func() {
+		configLoader, providerFactory, blueprintRunnerFactory = oldConfig, oldProvider, oldBlueprintRunner
+	})
 
 	configLoader = func() *config.Config {
 		return &config.Config{AI: config.AIConfig{Provider: "mock", Timeout: time.Second}}

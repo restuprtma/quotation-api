@@ -546,4 +546,3 @@ func TestRateAllocator_Calculate_RoleAliases(t *testing.T) {
 	assert.Equal(t, int64(34_650_000), enriched.Resources[0].LineTotal)
 	assert.Equal(t, int64(34_650_000), enriched.Resources[1].LineTotal)
 }
-

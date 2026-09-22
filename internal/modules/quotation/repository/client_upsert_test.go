@@ -33,7 +33,7 @@ func TestClientAutoUpsert(t *testing.T) {
 
 	t.Run("Exact match reuse", func(t *testing.T) {
 		cleanupClientsByName(t, pool, "PT Venturo")
-		
+
 		createdByID := uuid.New()
 		existingClientIDStr, err := clientRepo.CreateClientByName(ctx, pool, "PT Venturo", &createdByID)
 		if err != nil {

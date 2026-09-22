@@ -56,18 +56,18 @@ type CreateRateCardItemRequest struct {
 }
 
 type UpdateRateCardItemRequest struct {
-	AmountPerMonth *int64  `json:"amount_per_month"`
-	BaseSalary     *int64  `json:"base_salary"`
-	TechLeadFee    *int64  `json:"tech_lead_fee"`
-	AiRndFee       *int64  `json:"ai_rnd_fee"`
-	WorkspaceFee   *int64  `json:"workspace_fee"`
-	ManagementFee  *int64  `json:"management_fee"`
-	PublishedRate  *int64  `json:"published_rate"`
-	MaxDiscountPct *int    `json:"max_discount_pct"`
-	FloorRate      *int64  `json:"floor_rate"`
-	KickoffFee     *int64  `json:"kickoff_fee"`
-	RecruitmentFee *int64  `json:"recruitment_fee"`
-	OnboardingFee  *int64  `json:"onboarding_fee"`
+	AmountPerMonth *int64 `json:"amount_per_month"`
+	BaseSalary     *int64 `json:"base_salary"`
+	TechLeadFee    *int64 `json:"tech_lead_fee"`
+	AiRndFee       *int64 `json:"ai_rnd_fee"`
+	WorkspaceFee   *int64 `json:"workspace_fee"`
+	ManagementFee  *int64 `json:"management_fee"`
+	PublishedRate  *int64 `json:"published_rate"`
+	MaxDiscountPct *int   `json:"max_discount_pct"`
+	FloorRate      *int64 `json:"floor_rate"`
+	KickoffFee     *int64 `json:"kickoff_fee"`
+	RecruitmentFee *int64 `json:"recruitment_fee"`
+	OnboardingFee  *int64 `json:"onboarding_fee"`
 }
 
 // ── Response DTOs ───────────────────────────────────────────

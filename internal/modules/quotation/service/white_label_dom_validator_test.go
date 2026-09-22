@@ -458,4 +458,3 @@ func TestCheckWhiteLabel_SanitizationStripsMaliciousScript(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, rightsMod)
 }
-

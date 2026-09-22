@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -97,6 +99,8 @@ type RedisConfig struct {
 }
 
 func Load() *Config {
+	_ = godotenv.Load(".env", "../.env", "../../.env")
+
 	cfg := &Config{
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),

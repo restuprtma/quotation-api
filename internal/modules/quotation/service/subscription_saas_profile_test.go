@@ -64,7 +64,6 @@ func validDevelopmentMaintenanceInput() domain.SubscriptionSaaSInput {
 	}
 }
 
-
 func TestResolveSubscriptionSaaSProfile(t *testing.T) {
 	t.Run("subscription_development with ownership, auto-renewal, and partnership", func(t *testing.T) {
 		input := validSubscriptionDevelopmentInput()

@@ -76,4 +76,3 @@ func TestOvertimeRateConfig(t *testing.T) {
 	assert.Equal(t, int64(1775892), cfg.CalculateHolidayOvertime(9))
 	assert.Equal(t, int64(2149764), cfg.CalculateHolidayOvertime(10))
 }
-

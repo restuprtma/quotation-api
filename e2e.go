@@ -9,23 +9,30 @@ import (
 )
 
 const baseURL = "http://localhost:8080"
+
 var token string
 var companyID string
 var clientID string
 
 func main() {
 	fmt.Println("=== E2E Test Runner ===")
-	
+
 	// 1. Auth
-	if !login() { return }
+	if !login() {
+		return
+	}
 
 	// 2. Create Quotation
 	qID := createQuotation()
-	if qID == "" { return }
-	
+	if qID == "" {
+		return
+	}
+
 	// 3. Test Revision
 	newQID := createRevision(qID)
-	if newQID == "" { return }
+	if newQID == "" {
+		return
+	}
 
 	// Legacy steps 3 (AI), 4 (Share/Artifacts), 7 (Public Sign) were removed in Phase 1.
 	// We'll bring them back using the new domain architecture in Phase 11.
@@ -75,16 +82,16 @@ func login() bool {
 	fmt.Println("Body:", string(body))
 	var res map[string]interface{}
 	json.Unmarshal(body, &res)
-	
+
 	data := res["data"].(map[string]interface{})
 	token = data["access_token"].(string)
-	
+
 	comp := data["company"].(map[string]interface{})
 	companyID = comp["id"].(string)
-	
+
 	client := data["client"].(map[string]interface{})
 	clientID = client["id"].(string)
-	
+
 	fmt.Println("✔ Logged in, got token and companyID:", companyID, "clientID:", clientID)
 	return true
 }
@@ -92,10 +99,10 @@ func login() bool {
 func createQuotation() string {
 	fmt.Println("\n[2] Creating Product Quotation...")
 	payload := map[string]interface{}{
-		"client_id": clientID,
+		"client_id":    clientID,
 		"project_type": "product_based",
-		"subject": "Test Phase 1 Subject",
-		"budget": 100000,
+		"subject":      "Test Phase 1 Subject",
+		"budget":       100000,
 	}
 	body, err := doReq("POST", "/quotation/v1/quotations", payload, true)
 	if err != nil {
@@ -122,4 +129,3 @@ func createRevision(id string) string {
 	fmt.Println("✔ Revision Created, New ID:", newId)
 	return newId
 }
-

@@ -1428,4 +1428,3 @@ func TestBlueprintSession01Schema(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, idxSecExists, "expected index idx_blueprint_section_runs_company_revision on blueprint_section_runs to exist")
 }
-

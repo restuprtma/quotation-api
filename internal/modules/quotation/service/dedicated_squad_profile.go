@@ -14,14 +14,14 @@ const PhaseDevelopment PhaseCode = "development"
 // quotation choices. It intentionally contains no client-supplied money or
 // legal copy.
 type ResolvedQuotationProfile struct {
-	PreparationKind        PreparationKind             `json:"preparation_kind"`
-	PreparationDiscountBPS int32                       `json:"preparation_discount_bps"`
-	MaintenanceMode        domain.MaintenanceMode      `json:"maintenance_mode"`
-	TimelineMode           domain.ScopeTimelineMode    `json:"scope_timeline_mode"`
-	IncludedPhases         []PhaseCode                 `json:"included_phases"`
-	PaymentMode            domain.PaymentMode          `json:"payment_mode"`
-	PaymentRows            []domain.PaymentRowInput    `json:"payment_rows,omitempty"`
-	DocumentOptions        ResolvedDocumentOptions    `json:"document_options"`
+	PreparationKind        PreparationKind          `json:"preparation_kind"`
+	PreparationDiscountBPS int32                    `json:"preparation_discount_bps"`
+	MaintenanceMode        domain.MaintenanceMode   `json:"maintenance_mode"`
+	TimelineMode           domain.ScopeTimelineMode `json:"scope_timeline_mode"`
+	IncludedPhases         []PhaseCode              `json:"included_phases"`
+	PaymentMode            domain.PaymentMode       `json:"payment_mode"`
+	PaymentRows            []domain.PaymentRowInput `json:"payment_rows,omitempty"`
+	DocumentOptions        ResolvedDocumentOptions  `json:"document_options"`
 
 	// UsesLegacyDefaults permits the timeline generator to retain the exact
 	// established 1A-1D presentation while profile-present requests use the

@@ -99,12 +99,12 @@ func ParseLegalTemplateMarkdown(filepath string) (*domain.LegalTemplate, error) 
 		return nil, errors.New("html block not found")
 	}
 	htmlStart += len("```html")
-	
+
 	htmlEnd := strings.Index(content[htmlStart:], "```")
 	if htmlEnd == -1 {
 		return nil, errors.New("end of html block not found")
 	}
-	
+
 	htmlContent := strings.TrimSpace(content[htmlStart : htmlStart+htmlEnd])
 
 	lt := &domain.LegalTemplate{

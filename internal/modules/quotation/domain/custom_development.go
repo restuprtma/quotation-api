@@ -9,9 +9,9 @@ import (
 
 const (
 	MaxCustomDevelopmentMoney                 = int64(9_000_000_000_000_000)
-	MaxCustomDevelopmentShortTextRunes         = 200
-	MaxCustomDevelopmentLongTextRunes          = 4_000
-	MaxCustomDevelopmentPeriodRunes            = 50
+	MaxCustomDevelopmentShortTextRunes        = 200
+	MaxCustomDevelopmentLongTextRunes         = 4_000
+	MaxCustomDevelopmentPeriodRunes           = 50
 	MaxCustomDevelopmentGroups                = 30
 	MaxCustomDevelopmentItemsPerGroup         = 100
 	MaxCustomDevelopmentHeadcount             = 100
@@ -106,7 +106,7 @@ type CustomDevelopmentInput struct {
 	QuotationDate         time.Time                           `json:"quotation_date"`
 	DevelopmentTableMode  CustomDevelopmentTableMode          `json:"development_table_mode"`
 	TaxTreatment          CustomDevelopmentTaxTreatment       `json:"tax_treatment"`
-	DevelopmentGroups     []CustomDevelopmentCostGroupInput    `json:"development_groups"`
+	DevelopmentGroups     []CustomDevelopmentCostGroupInput   `json:"development_groups"`
 	DiscountLabel         string                              `json:"discount_label"`
 	DiscountAmount        int64                               `json:"discount_amount"`
 	ShowDiscountRow       bool                                `json:"show_discount_row"`
@@ -500,13 +500,13 @@ type CustomDevelopmentCostGroupCalculation struct {
 
 type CustomDevelopmentCalculation struct {
 	DevelopmentGroups       []CustomDevelopmentCostGroupCalculation   `json:"development_groups"`
-	DevelopmentSubtotal     int64                                    `json:"development_subtotal"`
-	DiscountAmount          int64                                    `json:"discount_amount"`
-	TotalInvestment         int64                                    `json:"total_investment"`
+	DevelopmentSubtotal     int64                                     `json:"development_subtotal"`
+	DiscountAmount          int64                                     `json:"discount_amount"`
+	TotalInvestment         int64                                     `json:"total_investment"`
 	MonthlyLines            []CustomDevelopmentMonthlyLineCalculation `json:"monthly_lines"`
-	MonthlyTotal            int64                                    `json:"monthly_total"`
-	DevelopmentPaymentTotal int64                                    `json:"development_payment_total"`
-	MonthlyPaymentRows      int32                                    `json:"monthly_payment_rows"`
+	MonthlyTotal            int64                                     `json:"monthly_total"`
+	DevelopmentPaymentTotal int64                                     `json:"development_payment_total"`
+	MonthlyPaymentRows      int32                                     `json:"monthly_payment_rows"`
 }
 
 type ResolvedCustomDevelopmentProfile struct {

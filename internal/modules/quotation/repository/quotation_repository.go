@@ -213,22 +213,22 @@ func (r *Repository) FindClientByName(ctx context.Context, q Execer, name string
 
 func (r *Repository) CreateClientByName(ctx context.Context, q Execer, name string, createdBy *uuid.UUID) (string, error) {
 	newID := uuid.New()
-	
+
 	reg := regexp.MustCompile(`[^a-z0-9]+`)
 	base := reg.ReplaceAllString(strings.ToLower(name), "-")
 	base = strings.Trim(base, "-")
-	
+
 	suffix := newID.String()[:8]
 	if base == "" {
 		base = "client"
 	}
-	
+
 	maxBaseLen := 63 - 1 - len(suffix)
 	if len(base) > maxBaseLen {
 		base = base[:maxBaseLen]
 		base = strings.TrimRight(base, "-")
 	}
-	
+
 	slug := base + "-" + suffix
 
 	_, err := q.Exec(ctx,
