@@ -5,6 +5,7 @@ package service_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -2076,3 +2077,115 @@ func TestSaveDraftDedicatedModern_RejectsDuplicateMarker(t *testing.T) {
 	require.Error(t, err)
 	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
 }
+
+func replaceFieldMetadataValue(t *testing.T, htmlStr, field, newValue string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(data-field="` + regexp.QuoteMeta(field) + `"[^>]*>[\s\S]*?<span data-role="metadata-value">)([^<]*)(</span>)`)
+	require.True(t, re.MatchString(htmlStr), "field %q must exist in html", field)
+	return re.ReplaceAllString(htmlStr, `${1}`+newValue+`${3}`)
+}
+
+func TestSaveDraftDedicatedModern_PreservesEditedMetadataHeader(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+	require.Equal(t, 1, snap.version)
+	require.NotEmpty(t, snap.html)
+	require.Contains(t, snap.html, "/logo/venturo-logo.png")
+	require.Contains(t, snap.html, `data-role="quotation-brand"`)
+
+	// Capture initial hash and audit flags
+	var initialHash *string
+	err := pool.QueryRow(context.Background(), `SELECT content_hash FROM quotation_revisions WHERE quotation_id = $1`, qid).Scan(&initialHash)
+	require.NoError(t, err)
+
+	// Perform edits on metadata fields
+	modified := snap.html
+	modified = replaceFieldMetadataValue(t, modified, "quotation_number", "VEN-MODERN-2026-EDITED-001")
+	modified = replaceFieldMetadataValue(t, modified, "subject", "Pengembangan Platform Enterprise Modern")
+	modified = replaceFieldMetadataValue(t, modified, "client_pic", "Bpk. Rahmat Hidayat")
+	modified = replaceFieldMetadataValue(t, modified, "client_company", "PT Sinergi Mandiri Solusi")
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	userID := uuid.New()
+
+	res, err := svc.SaveDraft(context.Background(), companyID, qid, &userID, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, qid, res.QuotationID)
+	assert.Equal(t, 2, res.ContentVersion)
+	assert.False(t, res.LegalContentModified, "metadata edits must not mark legal content as modified")
+	assert.False(t, res.CommercialContentModified, "metadata edits must not mark commercial content as modified")
+
+	// Verify DB state and audit flags
+	snapAfter := captureSnapshot(t, pool, qid)
+	assert.Equal(t, 2, snapAfter.version)
+	assert.Contains(t, snapAfter.html, "/logo/venturo-logo.png")
+	assert.Contains(t, snapAfter.html, `data-role="quotation-brand"`)
+	assert.Contains(t, snapAfter.html, `data-role="metadata-layout"`)
+	assert.Contains(t, snapAfter.html, `data-role="metadata-facts"`)
+	assert.Contains(t, snapAfter.html, `data-role="metadata-recipient"`)
+	assert.Contains(t, snapAfter.html, `data-role="recipient-heading"`)
+	assert.Contains(t, snapAfter.html, `data-field="quotation_number"`)
+	assert.Contains(t, snapAfter.html, `VEN-MODERN-2026-EDITED-001`)
+	assert.Contains(t, snapAfter.html, `data-field="subject"`)
+	assert.Contains(t, snapAfter.html, `Pengembangan Platform Enterprise Modern`)
+	assert.Contains(t, snapAfter.html, `data-field="client_pic"`)
+	assert.Contains(t, snapAfter.html, `Bpk. Rahmat Hidayat`)
+	assert.Contains(t, snapAfter.html, `data-field="client_company"`)
+	assert.Contains(t, snapAfter.html, `PT Sinergi Mandiri Solusi`)
+
+	var legalMod, commMod bool
+	err = pool.QueryRow(context.Background(), `
+		SELECT legal_content_modified, commercial_content_modified
+		FROM quotation_revisions WHERE quotation_id = $1
+	`, qid).Scan(&legalMod, &commMod)
+	require.NoError(t, err)
+	assert.False(t, legalMod)
+	assert.False(t, commMod)
+}
+
+func TestSaveDraftDedicatedModern_RejectsDuplicateHeaderField(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	// Inject duplicate client_pic row inside metadata block
+	dupField := `<div data-role="recipient-line" data-field="client_pic"><span data-role="metadata-value">Duplicate PIC</span></div>`
+	modified := strings.Replace(snap.html, `</div></div></section>`, dupField+`</div></div></section>`, 1)
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+}
+
+func TestSaveDraftDedicatedModern_RejectsDuplicateMetadataBlock(t *testing.T) {
+	pool := getTestPool(t)
+	qid, companyID := generateDedicatedSquadModernDraft(t, pool)
+	snap := captureSnapshot(t, pool, qid)
+
+	// Duplicate the entire metadata section
+	metadataEnd := strings.Index(snap.html, `</section>`)
+	require.True(t, metadataEnd > 0)
+	metaBlock := snap.html[:metadataEnd+len("</section>")]
+	articleStart := `<article class="quotation-document">`
+	modified := strings.Replace(snap.html, articleStart, articleStart+metaBlock, 1)
+	require.NotEqual(t, snap.html, modified)
+
+	svc, _ := newSvc(pool, &scriptedAIProvider{})
+	_, err := svc.SaveDraft(context.Background(), companyID, qid, nil, dto.SaveDraftRequest{
+		ContentHTML:    modified,
+		ContentVersion: snap.version,
+	})
+	require.Error(t, err)
+	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
+}
+
