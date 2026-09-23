@@ -33,6 +33,10 @@ func buildStrictQuotationPolicy() *bluemonday.Policy {
 		"span", "div", "section", "article", "header",
 	)
 
+	p.AllowElements("img")
+	p.AllowAttrs("src").Matching(regexp.MustCompile(`^/logo/venturo-logo\.png$`)).OnElements("img")
+	p.AllowAttrs("alt").Matching(regexp.MustCompile(`^Venturo — Expert Programmers$`)).OnElements("img")
+
 	p.AllowElements("a")
 	// Keep a bare narrative anchor as a semantic tag, but reject every URL
 	// attribute in generated content. Dedicated documents never need links;

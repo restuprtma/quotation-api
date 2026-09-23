@@ -25,6 +25,9 @@ func ValidateWhiteLabelIntegrity(document string, expected WhiteLabelIntegrityEx
 	if err != nil {
 		return fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
 	}
+	if err := validateOfficialHeaderFields(root); err != nil {
+		return err
+	}
 	nodes := collectNodes(root)
 
 	requiredBlocks := []string{"metadata", "opening", "commercial", "payment", "legal", "signature"}

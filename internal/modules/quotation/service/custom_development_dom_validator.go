@@ -22,6 +22,9 @@ func ValidateCustomDevelopmentIntegrity(document string, expected CustomDevelopm
 	if err != nil {
 		return fmt.Errorf("%w: failed to parse document: %v", ErrUnsafeHTML, err)
 	}
+	if err := validateOfficialHeaderFields(root); err != nil {
+		return err
+	}
 	nodes := collectNodes(root)
 
 	requiredSections := []string{

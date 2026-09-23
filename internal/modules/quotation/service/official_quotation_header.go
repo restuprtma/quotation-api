@@ -48,6 +48,16 @@ const (
 	OfficialHeaderRecipientPrefixYth   = "Yth. "
 )
 
+// RenderOfficialQuotationHeader renders the canonical editable quotation metadata
+// header with brand logo, centered title, facts column, and recipient column.
+func RenderOfficialQuotationHeader(
+	title string,
+	m QuotationMetadata,
+	optionalRows ...officialHeaderRow,
+) string {
+	return renderOfficialQuotationHeader(title, m, optionalRows...)
+}
+
 // renderOfficialQuotationHeader renders the canonical editable quotation metadata
 // header with brand logo, centered title, facts column, and recipient column.
 func renderOfficialQuotationHeader(

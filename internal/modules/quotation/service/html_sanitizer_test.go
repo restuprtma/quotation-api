@@ -539,3 +539,66 @@ func TestHTMLSanitizerPreservesCloudInfrastructureMarkersAndStripsScript(t *test
 	assert.Contains(t, out, `data-cloud-package-field="name"`)
 	assert.NotContains(t, out, `<script`)
 }
+
+func TestSanitize_PreservesCanonicalQuotationHeader(t *testing.T) {
+	s := newSanitizerUnderTest()
+	headerHTML := service.RenderOfficialQuotationHeader("PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD", service.QuotationMetadata{
+		QuotationNumber:   "VEN/0826/007",
+		Subject:           "Dedicated Squad",
+		IssueDate:         "23 September 2026",
+		ClientName:        "John Doe",
+		ClientCompanyName: "Acme Corp",
+	})
+	out, err := s.Sanitize(headerHTML)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, `data-role="quotation-brand"`)
+	assert.Contains(t, out, `src="/logo/venturo-logo.png"`)
+	assert.Contains(t, out, `alt="Venturo — Expert Programmers"`)
+	assert.Contains(t, out, `data-role="metadata-layout"`)
+	assert.Contains(t, out, `data-role="metadata-facts"`)
+	assert.Contains(t, out, `data-role="metadata-recipient"`)
+	assert.Contains(t, out, `data-role="metadata-row"`)
+	assert.Contains(t, out, `data-role="metadata-label"`)
+	assert.Contains(t, out, `data-role="metadata-separator"`)
+	assert.Contains(t, out, `data-role="metadata-value"`)
+	assert.Contains(t, out, `data-role="recipient-heading"`)
+	assert.Contains(t, out, `data-role="recipient-line"`)
+	assert.Contains(t, out, `data-role="recipient-prefix"`)
+}
+
+func TestSanitize_RejectsUnapprovedHeaderImages(t *testing.T) {
+	s := newSanitizerUnderTest()
+	tests := []struct {
+		name      string
+		input     string
+		forbidden []string
+	}{
+		{
+			name:      "external image url stripped",
+			input:     `<img src="https://attacker.example/logo.png" alt="x">`,
+			forbidden: []string{`https://attacker.example/logo.png`, `src="https://attacker.example`},
+		},
+		{
+			name:      "unapproved local path and onerror stripped",
+			input:     `<img src="/logo/other.png" onerror="alert(1)">`,
+			forbidden: []string{`/logo/other.png`, `onerror`, `alert(1)`},
+		},
+		{
+			name:      "data URI stripped",
+			input:     `<img src="data:image/svg+xml;base64,AAAA">`,
+			forbidden: []string{`data:image/svg+xml;base64,AAAA`, `data:`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := s.Sanitize(tt.input)
+			require.NoError(t, err)
+			for _, f := range tt.forbidden {
+				assert.NotContains(t, out, f)
+			}
+		})
+	}
+}
+

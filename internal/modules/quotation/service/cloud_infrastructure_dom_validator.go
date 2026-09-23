@@ -41,6 +41,9 @@ func ValidateCloudInfrastructureIntegrity(documentHTML string, expected CloudInf
 	if err != nil {
 		return fmt.Errorf("document parse: %w", err)
 	}
+	if err := validateOfficialHeaderFields(root); err != nil {
+		return err
+	}
 	nodes := cloudNodes(root)
 	article := cloudExactly(nodes, "class", "quotation-document quotation-document--cloud-infrastructure")
 	if article == nil {
@@ -114,6 +117,9 @@ func ValidateCloudInfrastructureStructureForDraft(documentHTML string, expected 
 	root, err := html.Parse(strings.NewReader(documentHTML))
 	if err != nil {
 		return fmt.Errorf("document parse: %w", err)
+	}
+	if err := validateOfficialHeaderFields(root); err != nil {
+		return err
 	}
 	nodes := cloudNodes(root)
 	if cloudExactly(nodes, "class", "quotation-document quotation-document--cloud-infrastructure") == nil {

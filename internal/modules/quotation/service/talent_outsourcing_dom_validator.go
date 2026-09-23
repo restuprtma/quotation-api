@@ -107,6 +107,9 @@ func ValidateTalentOutsourcingIntegrity(document string, e TalentOutsourcingInte
 	if err != nil {
 		return fmt.Errorf("%w: parse: %v", ErrUnsafeHTML, err)
 	}
+	if err := validateOfficialHeaderFields(root); err != nil {
+		return err
+	}
 	var nodes []*html.Node
 	talentNodes(root, &nodes)
 	var article *html.Node
