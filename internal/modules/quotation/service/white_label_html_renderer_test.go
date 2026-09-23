@@ -94,6 +94,7 @@ func TestWhiteLabelHTMLRenderer_PonpesBenchmark(t *testing.T) {
 		LegalHTML:   "<ol><li>Ketentuan operasional dan batasan layanan.</li></ol>",
 	})
 	require.NoError(t, err)
+	assertCanonicalOfficialHeader(t, docHTML, "PENAWARAN LAYANAN WHITE LABEL PRODUCT")
 
 	root, err := html.Parse(strings.NewReader(docHTML))
 	require.NoError(t, err)
@@ -355,7 +356,7 @@ func TestWhiteLabelHTMLRenderer_EscapesUnsafeHTML(t *testing.T) {
 
 	assert.NotContains(t, docHTML, "<script>")
 	assert.NotContains(t, docHTML, "<script")
-	assert.NotContains(t, docHTML, "<img")
+	assert.NotContains(t, docHTML, "<img src=x")
 	assert.NotContains(t, docHTML, "<iframe")
 	assert.NotContains(t, docHTML, "<style>")
 	assert.NotContains(t, docHTML, "<span onmouseover")

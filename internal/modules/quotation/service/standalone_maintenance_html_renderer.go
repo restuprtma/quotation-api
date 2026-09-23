@@ -90,18 +90,8 @@ func renderStandaloneMaintenanceHeader(m QuotationMetadata, qDate time.Time) str
 		dateStr = indonesianDate(qDate)
 	}
 
-	var b strings.Builder
-	b.WriteString(`<header data-block-type="metadata">`)
-	b.WriteString(`<h1>PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT</h1>`)
-	b.WriteString(`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + htmlEscape(m.QuotationNumber) + `</span></p>`)
-	b.WriteString(`<p><strong>Perihal:</strong> <span data-field="subject">` + htmlEscape(m.Subject) + `</span></p>`)
-	b.WriteString(`<p><strong>Tanggal:</strong> <span data-field="issue_date_header">` + htmlEscape(dateStr) + `</span></p>`)
-	b.WriteString(`<p><strong>Ditujukan kepada:</strong> <span data-field="client_pic">` + htmlEscape(m.ClientName) + `</span></p>`)
-	if m.ClientCompanyName != "" {
-		b.WriteString(`<p data-field="client_company">` + htmlEscape(m.ClientCompanyName) + `</p>`)
-	}
-	b.WriteString(`</header>`)
-	return b.String()
+	m.IssueDate = dateStr
+	return renderOfficialQuotationHeader("PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT", m)
 }
 
 func renderStandaloneMaintenanceRetainerCost(section domain.DocumentSection, items []domain.MaintenanceRetainerLineCalculation, calc domain.StandaloneMaintenanceCalculation, showDiscountRow bool) string {

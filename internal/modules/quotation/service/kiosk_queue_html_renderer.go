@@ -124,21 +124,19 @@ func renderKioskQueueHeader(b *strings.Builder, m QuotationMetadata, input domai
 		dateStr = indonesianDate(input.QuotationDate)
 	}
 
-	b.WriteString(`<header data-block-type="metadata">`)
-	b.WriteString(`<h1>PENAWARAN LAYANAN KIOSK &amp; SISTEM ANTRIAN</h1>`)
-	b.WriteString(`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + htmlEscape(docNum) + `</span></p>`)
-	b.WriteString(`<p><strong>Perihal:</strong> <span data-field="subject">` + htmlEscape(m.Subject) + `</span></p>`)
-	if dateStr != "" {
-		b.WriteString(`<p><strong>Tanggal:</strong> <span data-field="issue_date_header">` + htmlEscape(dateStr) + `</span></p>`)
+	m.QuotationNumber = docNum
+	m.IssueDate = dateStr
+
+	rows := []officialHeaderRow{}
+	if systemName := strings.TrimSpace(input.SystemName); systemName != "" &&
+		!strings.EqualFold(systemName, strings.TrimSpace(m.Subject)) {
+		rows = append(rows, officialHeaderRow{
+			Field: "system_name",
+			Label: "Sistem",
+			Value: systemName,
+		})
 	}
-	b.WriteString(`<p><strong>Ditujukan kepada:</strong> <span data-field="client_pic">` + htmlEscape(m.ClientName) + `</span></p>`)
-	if m.ClientCompanyName != "" {
-		b.WriteString(`<p data-field="client_company">` + htmlEscape(m.ClientCompanyName) + `</p>`)
-	}
-	if input.SystemName != "" {
-		b.WriteString(`<p><strong>Sistem:</strong> <span data-field="system_name">` + htmlEscape(input.SystemName) + `</span></p>`)
-	}
-	b.WriteString(`</header>`)
+	b.WriteString(renderOfficialQuotationHeader("PENAWARAN LAYANAN KIOSK & SISTEM ANTRIAN", m, rows...))
 }
 
 func renderGovernmentScope(b *strings.Builder, sec domain.DocumentSection, phases []domain.KioskQueueScopePhaseInput) {

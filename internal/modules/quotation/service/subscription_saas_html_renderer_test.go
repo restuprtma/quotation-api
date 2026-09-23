@@ -94,6 +94,7 @@ func TestSubscriptionSaaSHTMLRenderer_PercetakanFixture(t *testing.T) {
 		LegalHTML:     "<ol><li>Batasan resmi penawaran.</li></ol>",
 	})
 	require.NoError(t, err)
+	assertCanonicalOfficialHeader(t, docHTML, "PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS")
 
 	root, err := html.Parse(strings.NewReader(docHTML))
 	require.NoError(t, err)

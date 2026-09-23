@@ -54,7 +54,7 @@ func (r *talentOutsourcingRenderer) Render(raw TalentOutsourcingDocumentInput) (
 	}
 	var b strings.Builder
 	b.WriteString(`<article class="quotation-document talent-outsourcing-document" data-service="talent_outsourcing">`)
-	b.WriteString(`<header><h1>PENAWARAN LAYANAN TALENT OUTSOURCING</h1><p>` + html.EscapeString(in.DocumentNumber) + `</p><p>` + html.EscapeString(in.ServiceName) + `</p></header>`)
+	b.WriteString(renderOfficialQuotationHeader("PENAWARAN LAYANAN TALENT OUTSOURCING", raw.Metadata))
 	for _, s := range p.Sections {
 		switch s.Code {
 		case "development_cost":

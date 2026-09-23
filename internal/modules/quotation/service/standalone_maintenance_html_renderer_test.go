@@ -1,4 +1,4 @@
-package service_test
+package service
 
 import (
 	"strings"
@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
-	"venturo-skeleton-go/internal/modules/quotation/service"
 )
 
 func nexRetainerInputForRenderer() domain.StandaloneMaintenanceInput {
@@ -96,13 +95,13 @@ func liputan6HourlyInputForRenderer() domain.StandaloneMaintenanceInput {
 // Step 1: Retainer renderer tests
 func TestStandaloneMaintenanceHTMLRenderer_Retainer(t *testing.T) {
 	input := nexRetainerInputForRenderer()
-	calc, err := service.CalculateStandaloneMaintenance(input)
+	calc, err := CalculateStandaloneMaintenance(input)
 	require.NoError(t, err)
 
-	profile := service.ResolveStandaloneMaintenanceProfile(input)
-	renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+	profile := ResolveStandaloneMaintenanceProfile(input)
+	renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-	metadata := service.QuotationMetadata{
+	metadata := QuotationMetadata{
 		QuotationNumber:   "Q/2026/07/001",
 		Subject:           "Penawaran Maintenance Aplikasi Nex Health",
 		ClientName:        "dr. Budi Santoso",
@@ -110,7 +109,7 @@ func TestStandaloneMaintenanceHTMLRenderer_Retainer(t *testing.T) {
 		IssueDate:         "7 Juli 2026",
 	}
 
-	docInput := service.StandaloneMaintenanceDocumentInput{
+	docInput := StandaloneMaintenanceDocumentInput{
 		Metadata:    metadata,
 		Input:       input,
 		Calculation: calc,
@@ -120,6 +119,7 @@ func TestStandaloneMaintenanceHTMLRenderer_Retainer(t *testing.T) {
 
 	html, err := renderer.Render(docInput)
 	require.NoError(t, err)
+	assertCanonicalOfficialHeader(t, html, "PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT")
 
 	// Outer document
 	assert.Contains(t, html, `<article class="quotation-document">`)
@@ -127,18 +127,10 @@ func TestStandaloneMaintenanceHTMLRenderer_Retainer(t *testing.T) {
 	assert.True(t, strings.HasSuffix(html, `</article>`))
 
 	// Title
-	assert.Contains(t, html, `<h1>PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT</h1>`)
+	assert.Contains(t, html, `<h1>PENAWARAN LAYANAN STANDALONE MAINTENANCE &amp; SUPPORT</h1>`)
 
 	// Opening paragraph exact literal
-	assert.Contains(t, html, `<section data-block-type="opening"><p>`+service.StandaloneMaintenanceOpeningParagraph+`</p></section>`)
-
-	// Metadata
-	assert.Contains(t, html, `data-block-type="metadata"`)
-	assert.Contains(t, html, `<strong>Nomor:</strong> <span data-field="quotation_number">Q/2026/07/001</span>`)
-	assert.Contains(t, html, `<strong>Perihal:</strong> <span data-field="subject">Penawaran Maintenance Aplikasi Nex Health</span>`)
-	assert.Contains(t, html, `<strong>Tanggal:</strong> <span data-field="issue_date_header">7 Juli 2026</span>`)
-	assert.Contains(t, html, `<strong>Ditujukan kepada:</strong> <span data-field="client_pic">dr. Budi Santoso</span>`)
-	assert.Contains(t, html, `<p data-field="client_company">PT Nex Digital Health</p>`)
+	assert.Contains(t, html, `<section data-block-type="opening"><p>`+StandaloneMaintenanceOpeningParagraph+`</p></section>`)
 
 	// Section 1: Biaya Maintenance
 	assert.Contains(t, html, `<section data-block-type="commercial" data-section-number="1"><h2>1. Biaya Maintenance</h2>`)
@@ -202,20 +194,20 @@ func TestStandaloneMaintenanceHTMLRenderer_Retainer(t *testing.T) {
 // Step 2: Hourly renderer tests
 func TestStandaloneMaintenanceHTMLRenderer_Hourly(t *testing.T) {
 	input := liputan6HourlyInputForRenderer()
-	calc, err := service.CalculateStandaloneMaintenance(input)
+	calc, err := CalculateStandaloneMaintenance(input)
 	require.NoError(t, err)
 
-	profile := service.ResolveStandaloneMaintenanceProfile(input)
-	renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+	profile := ResolveStandaloneMaintenanceProfile(input)
+	renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-	metadata := service.QuotationMetadata{
+	metadata := QuotationMetadata{
 		QuotationNumber: "Q/2026/07/002",
 		Subject:         "Penawaran Support Liputan6",
 		ClientName:      "Ahmad Fauzi",
 		IssueDate:       "10 Juli 2026",
 	}
 
-	docInput := service.StandaloneMaintenanceDocumentInput{
+	docInput := StandaloneMaintenanceDocumentInput{
 		Metadata:    metadata,
 		Input:       input,
 		Calculation: calc,
@@ -225,6 +217,7 @@ func TestStandaloneMaintenanceHTMLRenderer_Hourly(t *testing.T) {
 
 	html, err := renderer.Render(docInput)
 	require.NoError(t, err)
+	assertCanonicalOfficialHeader(t, html, "PENAWARAN LAYANAN STANDALONE MAINTENANCE & SUPPORT")
 
 	// Section 1: Biaya Development
 	assert.Contains(t, html, `<section data-block-type="commercial" data-section-number="1"><h2>1. Biaya Development</h2>`)
@@ -283,13 +276,13 @@ func TestStandaloneMaintenanceHTMLRenderer_EscapeAndOptionalContent(t *testing.T
 		input.DefectGroups[0].Items[0].Improvement = "Fixed & Tested <script>"
 		input.DefectGroups[0].Items[0].Reference = "Ref & <tag>"
 
-		calc, err := service.CalculateStandaloneMaintenance(input)
+		calc, err := CalculateStandaloneMaintenance(input)
 		require.NoError(t, err)
 
-		profile := service.ResolveStandaloneMaintenanceProfile(input)
-		renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+		profile := ResolveStandaloneMaintenanceProfile(input)
+		renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-		metadata := service.QuotationMetadata{
+		metadata := QuotationMetadata{
 			QuotationNumber:   "Q-001 <bad>",
 			Subject:           "Subject <script>alert(1)</script> & Details",
 			ClientName:        "Client & Partner <script>",
@@ -297,7 +290,7 @@ func TestStandaloneMaintenanceHTMLRenderer_EscapeAndOptionalContent(t *testing.T
 			IssueDate:         "7 Juli 2026",
 		}
 
-		docInput := service.StandaloneMaintenanceDocumentInput{
+		docInput := StandaloneMaintenanceDocumentInput{
 			Metadata:    metadata,
 			Input:       input,
 			Calculation: calc,
@@ -327,14 +320,14 @@ func TestStandaloneMaintenanceHTMLRenderer_EscapeAndOptionalContent(t *testing.T
 	t.Run("blank reference renders empty cell", func(t *testing.T) {
 		input := nexRetainerInputForRenderer()
 		input.DefectGroups[0].Items[0].Reference = ""
-		calc, err := service.CalculateStandaloneMaintenance(input)
+		calc, err := CalculateStandaloneMaintenance(input)
 		require.NoError(t, err)
 
-		profile := service.ResolveStandaloneMaintenanceProfile(input)
-		renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+		profile := ResolveStandaloneMaintenanceProfile(input)
+		renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-		docInput := service.StandaloneMaintenanceDocumentInput{
-			Metadata:    service.QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
+		docInput := StandaloneMaintenanceDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
 			Input:       input,
 			Calculation: calc,
 			Profile:     profile,
@@ -350,14 +343,14 @@ func TestStandaloneMaintenanceHTMLRenderer_EscapeAndOptionalContent(t *testing.T
 	t.Run("not_stated tax treatment omits tax paragraph", func(t *testing.T) {
 		input := nexRetainerInputForRenderer()
 		input.TaxTreatment = domain.StandaloneTaxNotStated
-		calc, err := service.CalculateStandaloneMaintenance(input)
+		calc, err := CalculateStandaloneMaintenance(input)
 		require.NoError(t, err)
 
-		profile := service.ResolveStandaloneMaintenanceProfile(input)
-		renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+		profile := ResolveStandaloneMaintenanceProfile(input)
+		renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-		docInput := service.StandaloneMaintenanceDocumentInput{
-			Metadata:    service.QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
+		docInput := StandaloneMaintenanceDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
 			Input:       input,
 			Calculation: calc,
 			Profile:     profile,
@@ -374,14 +367,14 @@ func TestStandaloneMaintenanceHTMLRenderer_EscapeAndOptionalContent(t *testing.T
 	t.Run("empty rights statements omits rights section", func(t *testing.T) {
 		input := nexRetainerInputForRenderer()
 		input.RightsStatements = nil
-		calc, err := service.CalculateStandaloneMaintenance(input)
+		calc, err := CalculateStandaloneMaintenance(input)
 		require.NoError(t, err)
 
-		profile := service.ResolveStandaloneMaintenanceProfile(input)
-		renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+		profile := ResolveStandaloneMaintenanceProfile(input)
+		renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-		docInput := service.StandaloneMaintenanceDocumentInput{
-			Metadata:    service.QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
+		docInput := StandaloneMaintenanceDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
 			Input:       input,
 			Calculation: calc,
 			Profile:     profile,
@@ -400,14 +393,14 @@ func TestStandaloneMaintenanceHTMLRenderer_EscapeAndOptionalContent(t *testing.T
 			"Venturo berhak melakukan audit teknis berkala.",
 			"Klien berhak menerima laporan bulanan.",
 		}
-		calc, err := service.CalculateStandaloneMaintenance(input)
+		calc, err := CalculateStandaloneMaintenance(input)
 		require.NoError(t, err)
 
-		profile := service.ResolveStandaloneMaintenanceProfile(input)
-		renderer := service.NewStandaloneMaintenanceHTMLRenderer()
+		profile := ResolveStandaloneMaintenanceProfile(input)
+		renderer := NewStandaloneMaintenanceHTMLRenderer()
 
-		docInput := service.StandaloneMaintenanceDocumentInput{
-			Metadata:    service.QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
+		docInput := StandaloneMaintenanceDocumentInput{
+			Metadata:    QuotationMetadata{QuotationNumber: "Q-001", Subject: "S", ClientName: "C", IssueDate: "7 Juli 2026"},
 			Input:       input,
 			Calculation: calc,
 			Profile:     profile,

@@ -49,8 +49,12 @@ func ValidateKioskQueueIntegrity(
 	if err != nil || numNode == nil {
 		return fmt.Errorf("%w: quotation_number is missing in metadata", ErrUnsafeHTML)
 	}
-	if nodeText(numNode) != input.DocumentNumber {
-		return fmt.Errorf("%w: document number mismatch: got %q, want %q", ErrUnsafeHTML, nodeText(numNode), input.DocumentNumber)
+	numVal := nodeText(numNode)
+	if valNode, valErr := findExactlyOne(collectNodes(numNode), "data-role", "metadata-value"); valErr == nil && valNode != nil {
+		numVal = nodeText(valNode)
+	}
+	if numVal != input.DocumentNumber {
+		return fmt.Errorf("%w: document number mismatch: got %q, want %q", ErrUnsafeHTML, numVal, input.DocumentNumber)
 	}
 
 	// 3. Opening block
@@ -440,7 +444,14 @@ func CheckKioskQueueCommercialModified(
 
 	// 1. Document number in header
 	numNode, err := findExactlyOne(nodes, "data-field", "quotation_number")
-	if err != nil || numNode == nil || nodeText(numNode) != input.DocumentNumber {
+	if err != nil || numNode == nil {
+		return true, nil
+	}
+	numVal := nodeText(numNode)
+	if valNode, valErr := findExactlyOne(collectNodes(numNode), "data-role", "metadata-value"); valErr == nil && valNode != nil {
+		numVal = nodeText(valNode)
+	}
+	if numVal != input.DocumentNumber {
 		return true, nil
 	}
 

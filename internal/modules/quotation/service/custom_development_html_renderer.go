@@ -97,17 +97,7 @@ func (r *customDevelopmentRenderer) Render(in CustomDevelopmentDocumentInput) (s
 }
 
 func renderCustomDevelopmentHeader(m QuotationMetadata) string {
-	var b strings.Builder
-	b.WriteString(`<header data-block-type="metadata">`)
-	b.WriteString(`<h1>PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT</h1>`)
-	b.WriteString(`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + html.EscapeString(m.QuotationNumber) + `</span></p>`)
-	b.WriteString(`<p><strong>Perihal:</strong> <span data-field="subject">` + html.EscapeString(m.Subject) + `</span></p>`)
-	b.WriteString(`<p><strong>Ditujukan kepada:</strong> <span data-field="client_pic">` + html.EscapeString(m.ClientName) + `</span></p>`)
-	if m.ClientCompanyName != "" {
-		b.WriteString(`<p data-field="client_company">` + html.EscapeString(m.ClientCompanyName) + `</p>`)
-	}
-	b.WriteString(`</header>`)
-	return b.String()
+	return renderOfficialQuotationHeader("PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT", m)
 }
 
 func renderCustomDevelopmentCommercial(section domain.DocumentSection, in domain.CustomDevelopmentInput, calc domain.CustomDevelopmentCalculation, profile domain.ResolvedCustomDevelopmentProfile) string {

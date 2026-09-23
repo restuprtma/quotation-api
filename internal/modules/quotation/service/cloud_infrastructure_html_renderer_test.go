@@ -22,6 +22,7 @@ func TestCloudInfrastructureHTMLRendererCanonicalAuthen(t *testing.T) {
 	require.NoError(t, err)
 	doc, err := NewCloudInfrastructureRenderer().Render(CloudInfrastructureDocumentInput{Metadata: QuotationMetadata{QuotationNumber: in.DocumentNumber, ClientName: "Authen", IssueDate: "24 Juni 2026"}, Input: in, Calculation: calc, Profile: profile, LegalHTML: `<p>Ketentuan legal</p>`})
 	require.NoError(t, err)
+	assertCanonicalOfficialHeader(t, doc, "PENAWARAN LAYANAN CLOUD INFRASTRUCTURE")
 	assert.Contains(t, doc, `class="quotation-document quotation-document--cloud-infrastructure"`)
 	assert.Contains(t, doc, `data-section-code="cloud_cost"`)
 	assert.Contains(t, doc, `<th>Nama Paket</th><th>VCPU</th><th>RAM</th><th>Disk / Storage</th><th>Unit</th><th>Total</th>`)

@@ -156,6 +156,7 @@ func TestCustomDevelopmentHTMLRenderer_ExactSectionMarkers(t *testing.T) {
 
 	htmlOut, err := renderer.Render(docIn)
 	require.NoError(t, err)
+	assertCanonicalOfficialHeader(t, htmlOut, "PENAWARAN LAYANAN CUSTOM SOFTWARE DEVELOPMENT")
 
 	// Assert the 9 required section markers
 	assert.Contains(t, htmlOut, `<section data-quotation-section="commercial-development"`)

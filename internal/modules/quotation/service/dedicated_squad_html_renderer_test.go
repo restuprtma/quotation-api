@@ -29,6 +29,7 @@ func TestDedicatedSquadHTMLRendererModels(t *testing.T) {
 			in := dedicatedRenderFixture(domain.SquadModel(tt.model), tt.rules)
 			got, err := NewDedicatedSquadHTMLRenderer().Render(in)
 			require.NoError(t, err)
+			assertCanonicalOfficialHeader(t, got, "PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD")
 			root, err := html.Parse(strings.NewReader(got))
 			require.NoError(t, err)
 			nodes := collectNodes(root)

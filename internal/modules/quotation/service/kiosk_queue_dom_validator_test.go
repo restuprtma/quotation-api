@@ -186,7 +186,7 @@ func TestCheckKioskQueueCommercialModified(t *testing.T) {
 	assert.True(t, modified)
 
 	// 5. Mutate document number
-	mutatedNum := strings.Replace(html, `data-field="quotation_number">LANDA/MPP-Antrian/0726/003`, `data-field="quotation_number">LANDA/MPP-Antrian/0726/999`, 1)
+	mutatedNum := strings.Replace(html, "LANDA/MPP-Antrian/0726/003", "LANDA/MPP-Antrian/0726/999", 1)
 	modified, err = service.CheckKioskQueueCommercialModified(mutatedNum, docIn.Input, docIn.Calculation, docIn.Profile)
 	require.NoError(t, err)
 	assert.True(t, modified)

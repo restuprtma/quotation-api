@@ -51,7 +51,7 @@ func (r *cloudInfrastructureRenderer) Render(document CloudInfrastructureDocumen
 	}
 	var b strings.Builder
 	b.WriteString(`<article class="quotation-document quotation-document--cloud-infrastructure">`)
-	b.WriteString(`<header data-block-type="metadata"><h1>PENAWARAN LAYANAN CLOUD INFRASTRUCTURE</h1><p><strong>Nomor:</strong> ` + html.EscapeString(document.Metadata.QuotationNumber) + `</p><p><strong>Layanan:</strong> ` + html.EscapeString(in.ServiceName) + `</p></header>`)
+	b.WriteString(renderOfficialQuotationHeader("PENAWARAN LAYANAN CLOUD INFRASTRUCTURE", document.Metadata))
 	b.WriteString(`<section data-block-type="opening"><p>` + cloudInfrastructureOpeningParagraph + `</p></section>`)
 	for _, sec := range profile.Sections {
 		switch sec.Code {

@@ -69,17 +69,7 @@ func (r *subscriptionSaaSHTMLRenderer) Render(in SubscriptionSaaSDocumentInput) 
 }
 
 func renderSubscriptionHeader(m QuotationMetadata) string {
-	var b strings.Builder
-	b.WriteString(`<header data-block-type="metadata">`)
-	b.WriteString(`<h1>PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS</h1>`)
-	b.WriteString(`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + htmlEscape(m.QuotationNumber) + `</span></p>`)
-	b.WriteString(`<p><strong>Perihal:</strong> <span data-field="subject">` + htmlEscape(m.Subject) + `</span></p>`)
-	b.WriteString(`<p><strong>Ditujukan kepada:</strong> <span data-field="client_pic">` + htmlEscape(m.ClientName) + `</span></p>`)
-	if m.ClientCompanyName != "" {
-		b.WriteString(`<p data-field="client_company">` + htmlEscape(m.ClientCompanyName) + `</p>`)
-	}
-	b.WriteString(`</header>`)
-	return b.String()
+	return renderOfficialQuotationHeader("PENAWARAN LAYANAN SOFTWARE SUBSCRIPTION / SAAS", m)
 }
 
 func renderSubscriptionCommercial(section domain.DocumentSection, layout domain.SubscriptionSectionLayout, calc domain.SubscriptionSaaSCalculation) string {

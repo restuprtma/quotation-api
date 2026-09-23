@@ -41,6 +41,9 @@ func talentFieldValues(document string) (map[string]string, error) {
 	found := map[string]string{}
 	for _, n := range nodes {
 		if f := talentAttr(n, "data-field"); f != "" {
+			if isOfficialQuotationHeaderField(f) {
+				continue
+			}
 			if _, ok := found[f]; ok {
 				return nil, fmt.Errorf("%w: duplicate data-field %s", ErrUnsafeHTML, f)
 			}
@@ -52,6 +55,15 @@ func talentFieldValues(document string) (map[string]string, error) {
 		}
 	}
 	return found, nil
+}
+
+func isOfficialQuotationHeaderField(field string) bool {
+	switch field {
+	case "quotation_number", "subject", "issue_date_header", "client_pic", "client_company":
+		return true
+	default:
+		return false
+	}
 }
 func talentExpectedFields(in domain.TalentOutsourcingInput, c domain.TalentOutsourcingCalculation) map[string]int64 {
 	m := map[string]int64{"total_before_tax": c.TotalBeforeTax, "grand_total": c.GrandTotal, "payment_total": c.PaymentTotal}

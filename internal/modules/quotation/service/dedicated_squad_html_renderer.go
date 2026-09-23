@@ -69,11 +69,8 @@ func renderDedicatedHeader(m QuotationMetadata, prefix string) string {
 	if prefix != "" {
 		displayNumber = prefix + "/" + displayNumber
 	}
-	return `<header data-block-type="metadata"><h1>PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD</h1>` +
-		`<p><strong>Nomor:</strong> <span data-field="quotation_number">` + htmlEscape(displayNumber) + `</span></p>` +
-		`<p><strong>Perihal:</strong> <span data-field="subject">` + htmlEscape(m.Subject) + `</span></p>` +
-		`<p><strong>Ditujukan kepada:</strong> <span data-field="client_pic">` + htmlEscape(m.ClientName) + `</span></p>` +
-		`<p data-field="client_company">` + htmlEscape(m.ClientCompanyName) + `</p></header>`
+	m.QuotationNumber = displayNumber
+	return renderOfficialQuotationHeader("PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD", m)
 }
 
 func renderDedicatedCostSection(section domain.DocumentSection, lines []domain.SquadLineCalculation, calc domain.DedicatedSquadCalculation, daily, maintenanceEmbedded bool) string {
