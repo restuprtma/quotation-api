@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/internal/shared/response"
 	jwtpkg "venturo-skeleton-go/pkg/jwt"
 )
 
@@ -19,12 +21,16 @@ type promptCreatorStub struct {
 	called  bool
 	result  *dto.MeetingDraftResponse
 	errCode string
+	err     error
 }
 
 func (s *promptCreatorStub) CreateFromMeeting(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ dto.CreateFromMeetingRequest) (*dto.MeetingDraftResponse, error) {
 	s.called = true
+	if s.err != nil {
+		return nil, s.err
+	}
 	if s.errCode != "" {
-		return nil, promptHandlerError{s.errCode}
+		return nil, promptHandlerError{code: s.errCode}
 	}
 	if s.result != nil {
 		return s.result, nil
@@ -32,9 +38,18 @@ func (s *promptCreatorStub) CreateFromMeeting(_ context.Context, _ uuid.UUID, _ 
 	return &dto.MeetingDraftResponse{Readiness: "incomplete"}, nil
 }
 
-type promptHandlerError struct{ code string }
+type promptHandlerError struct {
+	code   string
+	secret string
+}
 
-func (e promptHandlerError) Error() string    { return e.code }
+func (e promptHandlerError) Error() string {
+	if e.secret != "" {
+		return e.secret
+	}
+	return e.code
+}
+
 func (e promptHandlerError) SafeCode() string { return e.code }
 
 func TestPromptQuotationHandler_MissingMeetingNotesReturnsBadRequest(t *testing.T) {
@@ -68,15 +83,49 @@ func TestPromptQuotationHandler_RequiresTenantContext(t *testing.T) {
 
 func TestPromptQuotationHandler_InvalidExtractionReturns422(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewPromptQuotationHandler(&promptCreatorStub{errCode: "invalid_extraction"})
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	// companyUUID reads the normal middleware claims; use a valid claim object.
-	setPromptTestClaims(c)
-	h.CreateFromMeeting(c)
 
-	assert.Equal(t, http.StatusUnprocessableEntity, c.Writer.Status())
+	t.Run("safe error code preserved and does not leak raw output", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h := NewPromptQuotationHandler(&promptCreatorStub{
+			err: promptHandlerError{
+				code:   "invalid_extraction.unsupported_evidence",
+				secret: "raw-model-output-secret",
+			},
+		})
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		// companyUUID reads the normal middleware claims; use a valid claim object.
+		setPromptTestClaims(c)
+		h.CreateFromMeeting(c)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, c.Writer.Status())
+		assert.Contains(t, rec.Body.String(), "invalid_extraction.unsupported_evidence")
+		assert.NotContains(t, rec.Body.String(), "raw-model-output-secret")
+
+		var resp response.Response
+		err := json.Unmarshal(rec.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"invalid_extraction.unsupported_evidence"}, resp.Errors["detail"])
+	})
+
+	t.Run("generic invalid_extraction code preserved", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		h := NewPromptQuotationHandler(&promptCreatorStub{errCode: "invalid_extraction"})
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		setPromptTestClaims(c)
+		h.CreateFromMeeting(c)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, c.Writer.Status())
+		assert.Contains(t, rec.Body.String(), "invalid_extraction")
+
+		var resp response.Response
+		err := json.Unmarshal(rec.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"invalid_extraction"}, resp.Errors["detail"])
+	})
 }
 
 func TestPromptQuotationHandler_PriceableDraftReturns201(t *testing.T) {
