@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -290,6 +291,24 @@ func TestPromptDraftService_PreservesSafeExtractionReason(t *testing.T) {
 	t.Run("unrecognized reason falls back to invalid_extraction", func(t *testing.T) {
 		extractor := promptExtractionErrorStub{
 			err: &MeetingExtractionError{Reason: "provider response: secret"},
+		}
+		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+
+		_, err := svc.CreateFromMeeting(context.Background(), companyID, nil, dto.CreateFromMeetingRequest{
+			ClientName:     stringPtr("PT Arunika"),
+			MeetingNotes:   "Catatan meeting untuk quotation",
+			IdempotencyKey: uuid.New().String(),
+		})
+		require.Error(t, err)
+
+		var safe interface{ SafeCode() string }
+		require.ErrorAs(t, err, &safe)
+		assert.Equal(t, "invalid_extraction", safe.SafeCode())
+	})
+
+	t.Run("generic non-extraction error falls back to invalid_extraction", func(t *testing.T) {
+		extractor := promptExtractionErrorStub{
+			err: errors.New("database connection failed"),
 		}
 		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
 
