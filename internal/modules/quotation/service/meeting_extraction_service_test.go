@@ -65,6 +65,32 @@ func TestMeetingExtractionCapturesPromptAndResolvesCatalogRole(t *testing.T) {
 	assert.True(t, strings.Index(provider.prompt, "<catalog>") < strings.Index(provider.prompt, "<meeting_notes>"))
 }
 
+func TestBuildMeetingExtractionPromptIncludesEmbeddedOutputSchema(t *testing.T) {
+	prompt, err := buildMeetingExtractionPrompt("Catatan kebutuhan inventori.", CatalogContext{
+		RateCardCode: domain.DefaultPromptRateCardCode,
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "<output_schema>")
+	assert.Contains(t, prompt, `"schema_version"`)
+	assert.Contains(t, prompt, `"additionalProperties": false`)
+	assert.NotContains(t, prompt, "{{OUTPUT_SCHEMA}}")
+	assert.NotContains(t, prompt, "{{CATALOG_JSON}}")
+	assert.NotContains(t, prompt, "{{MEETING_NOTES}}")
+}
+
+func TestBuildMeetingExtractionPromptFailsWhenEmbeddedSchemaIsInvalid(t *testing.T) {
+	original := meetingExtractionSchema
+	t.Cleanup(func() { meetingExtractionSchema = original })
+	meetingExtractionSchema = func() string { return "{" }
+
+	_, err := buildMeetingExtractionPrompt("Catatan kebutuhan inventori.", CatalogContext{
+		RateCardCode: domain.DefaultPromptRateCardCode,
+	})
+
+	require.Error(t, err)
+}
+
 func TestMeetingExtractionRejectsNonStandardRateCard(t *testing.T) {
 	provider := &meetingProviderFake{result: GenerateResult{Text: meetingOutput("meeting notes", "backend_programmer")}}
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
@@ -140,6 +166,27 @@ func TestMeetingExtractionRejectsUnsafeOrMalformedOutput(t *testing.T) {
 			_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
 			assert.ErrorIs(t, err, ErrMeetingExtractionInvalidOutput)
 			assert.NotContains(t, err.Error(), tc.output)
+		})
+	}
+}
+
+func TestDecodeMeetingExtractionClassifiesFailuresWithoutLeakingRawOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"malformed", "{", "malformed_json"},
+		{"unknown field", `{"schema_version":"prompt_quotation_v1","meeting_notes":"x","scope":[],"team":[],"issues":[],"readiness":"incomplete","total":1}`, "unknown_field"},
+		{"trailing content", `{"schema_version":"prompt_quotation_v1","meeting_notes":"x","scope":[],"team":[],"issues":[],"readiness":"incomplete"} trailing`, "trailing_content"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := decodeMeetingExtraction(tc.raw, "Catatan aman")
+			var extractionErr *MeetingExtractionError
+			require.ErrorAs(t, err, &extractionErr)
+			assert.Equal(t, tc.want, extractionErr.Reason)
+			assert.NotContains(t, err.Error(), tc.raw)
 		})
 	}
 }
