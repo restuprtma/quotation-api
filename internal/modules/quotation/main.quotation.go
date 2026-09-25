@@ -12,10 +12,13 @@ import (
 )
 
 type Module struct {
-	Handler          *handler.Handler
-	GenHandler       *handler.QuotationGenerationHandler
-	BlueprintHandler *handler.BlueprintGenerationHandler
-	Service          *service.Service
+	Handler                   *handler.Handler
+	GenHandler                *handler.QuotationGenerationHandler
+	PromptHandler             *handler.PromptQuotationHandler
+	PromptRevisionHandler     *handler.PromptRevisionHandler
+	BlueprintHandler          *handler.BlueprintGenerationHandler
+	ClientOrganizationHandler *handler.ClientOrganizationHandler
+	Service                   *service.Service
 }
 
 // Initialize wires the quotation module. The AI provider is instantiated via
@@ -49,6 +52,20 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	providerSource := service.NewDBCredentialProviderSource(credentialRepo, aiFactory, cfg.AI.CredentialEncryptionKey)
 	genSvc := service.NewQuotationGenerationService(genRepo, providerSource)
 	previewCalculator := service.NewDedicatedSquadCalculator(rcRepo)
+	promptCatalog := service.NewPromptCatalogService(rcRepo)
+	promptExtractor := service.NewMeetingExtractionService(providerSource)
+	promptDraftSvc := service.NewPromptDraftService(
+		genRepo,
+		promptCatalog,
+		promptExtractor,
+		previewCalculator,
+		service.NewDedicatedSquadHTMLRenderer(),
+		service.NewHTMLSanitizer(),
+	)
+	promptRevisionSvc := service.NewPromptRevisionService(genRepo, service.NewHTMLSanitizer(), nil)
+	promptNarrativeSvc := service.NewPromptNarrativeRevisionService(genRepo, service.NewHTMLSanitizer())
+	promptIntentSvc := service.NewPromptRevisionIntentService(providerSource)
+	promptSectionRevisionSvc := service.NewPromptSectionRevisionService(genRepo, promptIntentSvc, promptNarrativeSvc, promptRevisionSvc)
 
 	// Blueprint pipeline stack (Fase 8)
 	bpGenRepo := repository.NewBlueprintGenerationRepository(db)
@@ -64,11 +81,18 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	bpDraftSvc := service.NewBlueprintDraftService(bpGenRepo, bpValidator, bpCrossValidator, providerSource)
 	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline, bpDraftSvc)
 
+	clientOrgRepo := repository.NewClientOrganizationRepository(db)
+	clientOrgSvc := service.NewClientOrganizationService(clientOrgRepo)
+	clientOrgHandler := handler.NewClientOrganizationHandler(clientOrgSvc)
+
 	return &Module{
-		Handler:          hdlr,
-		GenHandler:       handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
-		BlueprintHandler: bpHandler,
-		Service:          svc,
+		Handler:                   hdlr,
+		GenHandler:                handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
+		PromptHandler:             handler.NewPromptQuotationHandler(promptDraftSvc),
+		PromptRevisionHandler:     handler.NewPromptRevisionHandler(promptRevisionSvc, promptSectionRevisionSvc),
+		BlueprintHandler:          bpHandler,
+		ClientOrganizationHandler: clientOrgHandler,
+		Service:                   svc,
 	}
 }
 
@@ -88,6 +112,10 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.POST("/preview/kiosk-queue-system", m.GenHandler.PreviewKioskQueueSystem)
 		quotations.POST("/preview/talent-outsourcing", m.GenHandler.PreviewTalentOutsourcing)
 		quotations.POST("/preview/cloud-infrastructure", m.GenHandler.PreviewCloudInfrastructure)
+		// Register the additive prompt-first route before the /:id wildcard.
+		quotations.POST("/from-meeting", m.PromptHandler.CreateFromMeeting)
+		quotations.PATCH("/:id/prompt-state", m.PromptRevisionHandler.PatchPromptState)
+		quotations.POST("/:id/revise-section", m.PromptRevisionHandler.ReviseSection)
 		// AI-first detail (Fase 6 Session 5): menggantikan target stub yang
 		// sebelumnya selalu "not implemented"; kontrak response bertambah,
 		// tidak ada perilaku lama yang hilang.
@@ -148,6 +176,13 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		blueprints.PUT("/:id/sections/:section/manual", m.BlueprintHandler.ManualCompleteSection)
 		blueprints.PUT("/:id/sections/:section/draft", m.BlueprintHandler.SaveDraftSection)
 		blueprints.GET("", m.BlueprintHandler.List)
+	}
+
+	clientOrganizations := router.Group("/client-organizations")
+	clientOrganizations.Use(middleware.JWTAuth(), middleware.CompanyContext())
+	{
+		clientOrganizations.GET("", m.ClientOrganizationHandler.List)
+		clientOrganizations.POST("", m.ClientOrganizationHandler.Create)
 	}
 }
 
