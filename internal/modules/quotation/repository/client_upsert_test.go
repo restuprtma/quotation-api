@@ -5,18 +5,21 @@ package repository_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
 )
 
-func cleanupClientsByName(t *testing.T, pool *pgxpool.Pool, names ...string) {
+func cleanupClientOrgsByName(t *testing.T, pool *pgxpool.Pool, names ...string) {
 	t.Helper()
 	t.Cleanup(func() {
 		ctx := context.Background()
 		for _, name := range names {
+			pool.Exec(ctx, `DELETE FROM quotation_client_organizations WHERE name = $1`, name)
 			pool.Exec(ctx, `DELETE FROM core.clients WHERE name = $1`, name)
 		}
 	})
@@ -26,20 +29,27 @@ func TestClientAutoUpsert(t *testing.T) {
 	pool := getTestPool(t)
 	ctx := context.Background()
 	genRepo := repository.NewGenerationRepository(pool)
-	clientRepo := repository.NewRepository(pool)
+	orgRepo := repository.NewClientOrganizationRepository(pool)
 
 	companyID := uuid.New()
 	cleanupCompanies(t, pool, companyID)
 
 	t.Run("Exact match reuse", func(t *testing.T) {
-		cleanupClientsByName(t, pool, "PT Venturo")
+		cleanupClientOrgsByName(t, pool, "PT Venturo")
 
 		createdByID := uuid.New()
-		existingClientIDStr, err := clientRepo.CreateClientByName(ctx, pool, "PT Venturo", &createdByID)
-		if err != nil {
-			t.Fatalf("failed to create initial client: %v", err)
+		existingOrg := &domain.ClientOrganization{
+			CompanyID:      companyID,
+			ID:             uuid.New(),
+			Name:           "PT Venturo",
+			NormalizedName: "pt venturo",
+			CreatedBy:      &createdByID,
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
 		}
-		existingClientID := uuid.MustParse(existingClientIDStr)
+		if err := orgRepo.Create(ctx, existingOrg); err != nil {
+			t.Fatalf("failed to create initial organization: %v", err)
+		}
 
 		params := validDraftParams(companyID)
 		params.ClientID = nil
@@ -58,14 +68,14 @@ func TestClientAutoUpsert(t *testing.T) {
 			t.Fatalf("failed to query quotation client_id: %v", err)
 		}
 
-		if actualClientID != existingClientID {
-			t.Errorf("expected client ID %v, got %v", existingClientID, actualClientID)
+		if actualClientID != existingOrg.ID {
+			t.Errorf("expected client ID %v, got %v", existingOrg.ID, actualClientID)
 		}
 	})
 
 	t.Run("Create new", func(t *testing.T) {
 		newClientName := "New Client XYZ"
-		cleanupClientsByName(t, pool, newClientName)
+		cleanupClientOrgsByName(t, pool, newClientName)
 
 		params := validDraftParams(companyID)
 		params.ClientID = nil
@@ -84,21 +94,31 @@ func TestClientAutoUpsert(t *testing.T) {
 			t.Fatalf("failed to query quotation client_id: %v", err)
 		}
 
-		// Verify client was created in DB
+		// Verify organization was created in quotation_client_organizations
 		var dbName string
-		err = pool.QueryRow(ctx, `SELECT name FROM core.clients WHERE id = $1`, actualClientID).Scan(&dbName)
+		err = pool.QueryRow(ctx, `SELECT name FROM quotation_client_organizations WHERE id = $1 AND company_id = $2`, actualClientID, companyID).Scan(&dbName)
 		if err != nil {
-			t.Fatalf("failed to query created client: %v", err)
+			t.Fatalf("failed to query created organization: %v", err)
 		}
 
 		if dbName != newClientName {
 			t.Errorf("expected client name %q, got %q", newClientName, dbName)
 		}
+
+		// Verify that core.clients was NOT inserted
+		var coreCount int
+		err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM core.clients WHERE name = $1`, newClientName).Scan(&coreCount)
+		if err != nil {
+			t.Fatalf("failed to query core.clients count: %v", err)
+		}
+		if coreCount != 0 {
+			t.Errorf("expected 0 core.clients named %q, found %d", newClientName, coreCount)
+		}
 	})
 
 	t.Run("Transaction rollback", func(t *testing.T) {
 		rollbackClientName := "New Client Rollback"
-		cleanupClientsByName(t, pool, rollbackClientName)
+		cleanupClientOrgsByName(t, pool, rollbackClientName)
 
 		params := validDraftParams(companyID)
 		params.ClientID = nil
@@ -115,15 +135,15 @@ func TestClientAutoUpsert(t *testing.T) {
 			t.Fatal("expected error when budget_maximum is negative, got nil")
 		}
 
-		// Verify that the client was NOT saved to the DB
+		// Verify that the organization was NOT saved to the DB
 		var count int
-		err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM core.clients WHERE name = $1`, rollbackClientName).Scan(&count)
+		err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM quotation_client_organizations WHERE name = $1 AND company_id = $2`, rollbackClientName, companyID).Scan(&count)
 		if err != nil {
-			t.Fatalf("failed to query client count: %v", err)
+			t.Fatalf("failed to query organization count: %v", err)
 		}
 
 		if count != 0 {
-			t.Errorf("expected 0 clients named %q due to rollback, found %d", rollbackClientName, count)
+			t.Errorf("expected 0 organizations named %q due to rollback, found %d", rollbackClientName, count)
 		}
 	})
 }

@@ -194,21 +194,68 @@ func (r *GenerationRepository) tryCreateDraft(ctx context.Context, params Create
 
 	var clientID uuid.UUID
 	if params.ClientID != nil && *params.ClientID != uuid.Nil {
-		clientID = *params.ClientID
-	} else if params.ClientName != "" {
-		repo := NewRepository(r.db)
-		idStr, err := repo.FindClientByName(ctx, tx, params.ClientName)
+		var resolved uuid.UUID
+		err = tx.QueryRow(ctx, `
+			SELECT id
+			FROM quotation_client_organizations
+			WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
+		`, *params.ClientID, params.CompanyID).Scan(&resolved)
 		if err != nil {
-			return nil, err
-		}
-		if idStr != nil {
-			clientID = uuid.MustParse(*idStr)
-		} else {
-			newIDStr, err := repo.CreateClientByName(ctx, tx, params.ClientName, params.CreatedBy)
-			if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				err = tx.QueryRow(ctx, `
+					SELECT c.id
+					FROM core.clients c
+					JOIN core.companies co ON co.client_id = c.id
+					WHERE c.id = $1 AND co.id = $2
+					  AND c.is_active = true AND c.deleted_at IS NULL AND co.deleted_at IS NULL
+				`, *params.ClientID, params.CompanyID).Scan(&resolved)
+				if err != nil {
+					if errors.Is(err, pgx.ErrNoRows) {
+						return nil, ErrNotFound
+					}
+					return nil, err
+				}
+			} else {
 				return nil, err
 			}
-			clientID = uuid.MustParse(newIDStr)
+		}
+		clientID = resolved
+	} else if params.ClientName != "" {
+		displayName, normalizedName := domain.NormalizeClientOrganizationName(params.ClientName)
+		var resolvedID uuid.UUID
+		err = tx.QueryRow(ctx, `
+			SELECT id FROM quotation_client_organizations
+			WHERE company_id = $1 AND normalized_name = $2 AND deleted_at IS NULL
+			LIMIT 1
+		`, params.CompanyID, normalizedName).Scan(&resolvedID)
+		if err == nil {
+			clientID = resolvedID
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			newOrgID := uuid.New()
+			now := time.Now().UTC()
+			err = tx.QueryRow(ctx, `
+				INSERT INTO quotation_client_organizations (
+					company_id, id, name, normalized_name, created_by, created_at, updated_at
+				) VALUES ($1, $2, $3, $4, $5, $6, $7)
+				RETURNING id
+			`, params.CompanyID, newOrgID, displayName, normalizedName, params.CreatedBy, now, now).Scan(&clientID)
+			if err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && (pgErr.Code == "23505" || strings.Contains(pgErr.ConstraintName, "uq_quotation_client_org_active_name")) {
+					err = tx.QueryRow(ctx, `
+						SELECT id FROM quotation_client_organizations
+						WHERE company_id = $1 AND normalized_name = $2 AND deleted_at IS NULL
+						LIMIT 1
+					`, params.CompanyID, normalizedName).Scan(&clientID)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					return nil, err
+				}
+			}
+		} else {
+			return nil, err
 		}
 	}
 
@@ -346,6 +393,7 @@ func (r *GenerationRepository) FindByIdempotencyKey(ctx context.Context, company
 		SELECT
 			id, company_id, quotation_id, revision_number, idempotency_key, publication_status, generation_status,
 			generation_input, budget_maximum, allocation_snapshot, rate_card_snapshot, legal_template_snapshot,
+			prompt_state, prompt_state_version, prompt_section_hashes,
 			content_html, content_version::text AS content_version, content_hash, ai_provider, ai_model,
 			skill_snapshot, safety_envelope_version,
 			legal_content_modified, legal_modified_by, legal_modified_at, commercial_content_modified,
@@ -530,6 +578,9 @@ type DraftRevision struct {
 	TimelineSnapshot        json.RawMessage
 	RateCardSnapshot        json.RawMessage
 	LegalTemplateSnapshot   json.RawMessage
+	PromptState             json.RawMessage
+	PromptStateVersion      int64
+	PromptSectionHashes     json.RawMessage
 }
 
 // LoadDraftRevisionForRegeneration resolves the current revision of a
@@ -545,7 +596,8 @@ func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Cont
 		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
 		               COALESCE(r.module_snapshot, '[]'::jsonb), COALESCE(r.timeline_snapshot, '[]'::jsonb),
 		               COALESCE(r.rate_card_snapshot, 'null'::jsonb),
-		               COALESCE(r.legal_template_snapshot, '{}'::jsonb)
+		               COALESCE(r.legal_template_snapshot, '{}'::jsonb),
+		               r.prompt_state, r.prompt_state_version, r.prompt_section_hashes
 		FROM quotation_revisions r
 		JOIN quotations q ON q.id = r.quotation_id
 		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
@@ -554,7 +606,7 @@ func (r *GenerationRepository) LoadDraftRevisionForRegeneration(ctx context.Cont
 		&d.RevisionID, &d.QuotationID, &d.QuotationNumber, &d.CommercialScheme,
 		&d.PublicationStatus, &d.GenerationStatus, &d.GenerationInput,
 		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot, &d.TimelineSnapshot, &d.RateCardSnapshot,
-		&d.LegalTemplateSnapshot,
+		&d.LegalTemplateSnapshot, &d.PromptState, &d.PromptStateVersion, &d.PromptSectionHashes,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -672,6 +724,9 @@ type DraftRevisionForSave struct {
 	ResolvedProfileSnapshot   json.RawMessage
 	CalculationSnapshot       json.RawMessage
 	ModuleSnapshot            json.RawMessage
+	PromptState               json.RawMessage
+	PromptStateVersion        int64
+	PromptSectionHashes       json.RawMessage
 	GenerationInput           json.RawMessage
 	LegalContentModified      bool
 	CommercialContentModified bool
@@ -712,6 +767,7 @@ func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, com
 		       COALESCE(r.resolved_profile_snapshot, 'null'::jsonb),
 		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
 		       COALESCE(r.module_snapshot, '[]'::jsonb),
+		       r.prompt_state, r.prompt_state_version, r.prompt_section_hashes,
 		       r.generation_input,
 		       r.legal_content_modified, r.commercial_content_modified
 		FROM quotation_revisions r
@@ -722,6 +778,7 @@ func (r *GenerationRepository) LoadDraftRevisionForSave(ctx context.Context, com
 		&d.RevisionID, &d.QuotationID, &d.CommercialScheme, &d.RevisionNumber, &d.PublicationStatus, &d.GenerationStatus,
 		&d.ContentVersion, &d.BudgetMaximum, &d.AllocationSnapshot, &d.RateCardSnapshot, &d.LegalTemplateSnapshot,
 		&d.ResolvedProfileSnapshot, &d.CalculationSnapshot, &d.ModuleSnapshot,
+		&d.PromptState, &d.PromptStateVersion, &d.PromptSectionHashes,
 		&d.GenerationInput,
 		&d.LegalContentModified, &d.CommercialContentModified,
 	)
@@ -835,6 +892,9 @@ type QuotationGenerationDetail struct {
 	Status                    string          `json:"status"`
 	RevisionID                uuid.UUID       `json:"revision_id"`
 	LegalTemplateSnapshot     json.RawMessage `json:"legal_template_snapshot,omitempty"`
+	PromptState               json.RawMessage `json:"prompt_state,omitempty"`
+	PromptStateVersion        int64           `json:"prompt_state_version,omitempty"`
+	PromptSectionHashes       json.RawMessage `json:"prompt_section_hashes,omitempty"`
 	LegalContentModified      bool            `json:"legal_content_modified"`
 	CommercialContentModified bool            `json:"commercial_content_modified"`
 	CreatedAt                 time.Time       `json:"created_at"`
@@ -853,6 +913,7 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 		       COALESCE(q.subject, ''), q.status, q.created_at, q.updated_at,
 		       r.id, r.generation_status, r.content_version, COALESCE(r.content_html, ''),
 		       COALESCE(r.legal_template_snapshot, '{}'::jsonb),
+		       r.prompt_state, r.prompt_state_version, r.prompt_section_hashes,
 		       r.legal_content_modified, r.commercial_content_modified,
 		       r.generated_at, r.updated_at
 		FROM quotations q
@@ -863,6 +924,7 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 		&d.Subject, &d.Status, &d.CreatedAt, &d.UpdatedAt,
 		&d.RevisionID, &d.GenerationStatus, &d.ContentVersion, &d.ContentHTML,
 		&d.LegalTemplateSnapshot,
+		&d.PromptState, &d.PromptStateVersion, &d.PromptSectionHashes,
 		&d.LegalContentModified, &d.CommercialContentModified,
 		&d.GeneratedAt, &d.UpdatedAt,
 	)
@@ -875,15 +937,14 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 	return &d, nil
 }
 
-// GetClientName resolves the display name of a platform-global client.
-// core.clients is not company-scoped (tenant authorization for client
-// selection belongs to the API layer), so a miss is a normal outcome and is
-// reported as ("", nil).
+// GetClientName resolves the display name of a client organization, with read-only fallback to core.clients.
 func (r *GenerationRepository) GetClientName(ctx context.Context, clientID uuid.UUID) (string, error) {
-	var name string
+	var name *string
 	err := r.db.QueryRow(ctx, `
-		SELECT name FROM core.clients
-		WHERE id = $1 AND is_active = true AND deleted_at IS NULL
+		SELECT COALESCE(
+			(SELECT qco.name FROM quotation_client_organizations qco WHERE qco.id = $1 AND qco.deleted_at IS NULL LIMIT 1),
+			(SELECT name FROM core.clients WHERE id = $1 AND is_active = true AND deleted_at IS NULL LIMIT 1)
+		)
 	`, clientID).Scan(&name)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -891,7 +952,33 @@ func (r *GenerationRepository) GetClientName(ctx context.Context, clientID uuid.
 		}
 		return "", err
 	}
-	return name, nil
+	if name == nil {
+		return "", nil
+	}
+	return *name, nil
+}
+
+// GetClientNameForCompany is the tenant-scoped replacement for the legacy
+// global client lookup, checking quotation_client_organizations first, with a
+// read-only fallback to core.clients for historical records.
+func (r *GenerationRepository) GetClientNameForCompany(ctx context.Context, companyID, clientID uuid.UUID) (string, error) {
+	var name *string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(
+			(SELECT qco.name FROM quotation_client_organizations qco WHERE qco.company_id = $1 AND qco.id = $2 AND qco.deleted_at IS NULL),
+			(SELECT c.name FROM core.clients c JOIN core.companies co ON co.client_id = c.id WHERE co.id = $1 AND c.id = $2 AND c.is_active = true AND c.deleted_at IS NULL AND co.deleted_at IS NULL)
+		)
+	`, companyID, clientID).Scan(&name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if name == nil {
+		return "", nil
+	}
+	return *name, nil
 }
 
 // GetSkillForGeneration loads the active, non-deleted skill scoped to the

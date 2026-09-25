@@ -48,7 +48,11 @@ func (r *Repository) Begin(ctx context.Context) (pgx.Tx, error) {
 func (r *Repository) ClientExists(ctx context.Context, q Execer, clientID string) (bool, error) {
 	var exists bool
 	err := q.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM core.clients WHERE id = $1 AND deleted_at IS NULL)`,
+		`SELECT EXISTS(
+			SELECT 1 FROM quotation_client_organizations WHERE id = $1::uuid AND deleted_at IS NULL
+			UNION ALL
+			SELECT 1 FROM core.clients WHERE id = $1::uuid AND deleted_at IS NULL
+		)`,
 		clientID,
 	).Scan(&exists)
 	return exists, err
@@ -81,10 +85,12 @@ func (r *Repository) GetQuotationByID(ctx context.Context, id, companyID string)
 			q.solution_type, q.commercial_scheme, q.status, q.current_revision,
 			q.public_token, q.active_published_revision_id, q.created_by,
 			q.created_at, q.updated_at, q.deleted_at,
-			c.name as client_name,
+			COALESCE(qco.name, legacy_client.name) as client_name,
 			qr.budget_maximum
 		FROM quotations q
-		LEFT JOIN core.clients c ON q.client_id = c.id
+		LEFT JOIN quotation_client_organizations qco
+		  ON qco.company_id = q.company_id AND qco.id = q.client_id AND qco.deleted_at IS NULL
+		LEFT JOIN core.clients legacy_client ON legacy_client.id = q.client_id
 		LEFT JOIN quotation_revisions qr ON qr.quotation_id = q.id AND qr.revision_number = q.current_revision
 		WHERE q.id = $1 AND q.company_id = $2 AND q.deleted_at IS NULL
 	`
@@ -98,7 +104,9 @@ func (r *Repository) ListQuotations(
 ) ([]domain.Quotation, int64, error) {
 	baseQuery := `
 		FROM quotations q
-		LEFT JOIN core.clients c ON q.client_id = c.id
+		LEFT JOIN quotation_client_organizations qco
+		  ON qco.company_id = q.company_id AND qco.id = q.client_id AND qco.deleted_at IS NULL
+		LEFT JOIN core.clients legacy_client ON legacy_client.id = q.client_id
 		LEFT JOIN quotation_revisions qr ON qr.quotation_id = q.id AND qr.revision_number = q.current_revision
 		WHERE q.company_id = $1 AND q.deleted_at IS NULL
 	`
@@ -106,7 +114,7 @@ func (r *Repository) ListQuotations(
 	argIdx := 2
 
 	if search != "" {
-		baseQuery += fmt.Sprintf(` AND (q.quotation_number ILIKE $%d OR c.name ILIKE $%d)`, argIdx, argIdx)
+		baseQuery += fmt.Sprintf(` AND (q.quotation_number ILIKE $%d OR COALESCE(qco.name, legacy_client.name) ILIKE $%d)`, argIdx, argIdx)
 		args = append(args, "%"+search+"%")
 		argIdx++
 	}
@@ -129,7 +137,7 @@ func (r *Repository) ListQuotations(
 			q.solution_type, q.commercial_scheme, q.status, q.current_revision,
 			q.public_token, q.active_published_revision_id, q.created_by,
 			q.created_at, q.updated_at, q.deleted_at,
-			c.name as client_name,
+			COALESCE(qco.name, legacy_client.name) as client_name,
 			qr.budget_maximum
 	` + baseQuery + fmt.Sprintf(` ORDER BY q.created_at DESC LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
 	args = append(args, limit, offset)
@@ -202,6 +210,28 @@ func (r *Repository) FindClientByName(ctx context.Context, q Execer, name string
 		`SELECT id::text FROM core.clients WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND deleted_at IS NULL LIMIT 1`,
 		name,
 	).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &id, nil
+}
+
+// FindClientByNameForCompany resolves a client only when it is linked to the
+// requesting company. The older FindClientByName is retained for legacy
+// callers, but prompt-first flows must use this tenant-scoped variant.
+func (r *Repository) FindClientByNameForCompany(ctx context.Context, q Execer, companyID uuid.UUID, name string) (*string, error) {
+	var id string
+	err := q.QueryRow(ctx, `
+		SELECT c.id::text
+		FROM core.clients c
+		JOIN core.companies co ON co.client_id = c.id
+		WHERE co.id = $1 AND LOWER(TRIM(c.name)) = LOWER(TRIM($2))
+		  AND c.is_active = true AND c.deleted_at IS NULL AND co.deleted_at IS NULL
+		LIMIT 1
+	`, companyID, name).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
