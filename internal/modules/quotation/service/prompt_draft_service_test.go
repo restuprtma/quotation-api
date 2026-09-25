@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
@@ -56,6 +57,12 @@ type promptExtractorStub struct{ state domain.PromptQuotationState }
 
 func (e promptExtractorStub) Extract(context.Context, uuid.UUID, dto.MeetingExtractionRequest, CatalogContext) (domain.PromptQuotationState, error) {
 	return e.state, nil
+}
+
+type promptExtractionErrorStub struct{ err error }
+
+func (e promptExtractionErrorStub) Extract(context.Context, uuid.UUID, dto.MeetingExtractionRequest, CatalogContext) (domain.PromptQuotationState, error) {
+	return domain.PromptQuotationState{}, e.err
 }
 
 type promptCatalogStub struct {
@@ -257,3 +264,45 @@ func TestNormalizeMeetingIdentityCompatibility(t *testing.T) {
 		})
 	}
 }
+
+func TestPromptDraftService_PreservesSafeExtractionReason(t *testing.T) {
+	companyID := uuid.New()
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+
+	t.Run("allowlisted reason preserved", func(t *testing.T) {
+		extractor := promptExtractionErrorStub{
+			err: &MeetingExtractionError{Reason: "unsupported_evidence"},
+		}
+		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+
+		_, err := svc.CreateFromMeeting(context.Background(), companyID, nil, dto.CreateFromMeetingRequest{
+			ClientName:     stringPtr("PT Arunika"),
+			MeetingNotes:   "Catatan meeting untuk quotation",
+			IdempotencyKey: uuid.New().String(),
+		})
+		require.Error(t, err)
+
+		var safe interface{ SafeCode() string }
+		require.ErrorAs(t, err, &safe)
+		assert.Equal(t, "invalid_extraction.unsupported_evidence", safe.SafeCode())
+	})
+
+	t.Run("unrecognized reason falls back to invalid_extraction", func(t *testing.T) {
+		extractor := promptExtractionErrorStub{
+			err: &MeetingExtractionError{Reason: "provider response: secret"},
+		}
+		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+
+		_, err := svc.CreateFromMeeting(context.Background(), companyID, nil, dto.CreateFromMeetingRequest{
+			ClientName:     stringPtr("PT Arunika"),
+			MeetingNotes:   "Catatan meeting untuk quotation",
+			IdempotencyKey: uuid.New().String(),
+		})
+		require.Error(t, err)
+
+		var safe interface{ SafeCode() string }
+		require.ErrorAs(t, err, &safe)
+		assert.Equal(t, "invalid_extraction", safe.SafeCode())
+	})
+}
+

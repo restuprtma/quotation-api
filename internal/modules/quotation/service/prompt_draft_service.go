@@ -128,7 +128,7 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 	}
 	state, err := s.extractor.Extract(ctx, companyID, dto.MeetingExtractionRequest{MeetingNotes: notes}, catalogContext)
 	if err != nil {
-		return nil, promptError("invalid_extraction", ErrPromptInvalidExtraction)
+		return nil, promptError(promptExtractionErrorCode(err), ErrPromptInvalidExtraction)
 	}
 	if ident.Organization != "" {
 		state.ClientCompany = userFact(ident.Organization)
@@ -298,6 +298,20 @@ func (s *PromptDraftService) loadResponse(ctx context.Context, companyID, quotat
 }
 
 func promptError(code string, err error) error { return &PromptDraftError{Code: code, err: err} }
+
+func promptExtractionErrorCode(err error) string {
+	var extractionErr *MeetingExtractionError
+	if !errors.As(err, &extractionErr) {
+		return "invalid_extraction"
+	}
+	switch extractionErr.Reason {
+	case "malformed_json", "trailing_content", "missing_required_field",
+		"unknown_field", "schema_version", "unsupported_evidence", "state_validation":
+		return "invalid_extraction." + extractionErr.Reason
+	default:
+		return "invalid_extraction"
+	}
+}
 
 func normalizeMeetingIdentity(req dto.CreateFromMeetingRequest, resolvedOrganizationName string) MeetingIdentity {
 	var ident MeetingIdentity
