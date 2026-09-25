@@ -73,7 +73,11 @@ type BlueprintListItemResponse struct {
 }
 
 type BlueprintListResponse struct {
-	Items []BlueprintListItemResponse `json:"items"`
+	Items      []BlueprintListItemResponse `json:"items"`
+	Total      int                         `json:"total"`
+	Page       int                         `json:"page"`
+	Limit      int                         `json:"limit"`
+	TotalPages int                         `json:"total_pages"`
 }
 
 func (r BlueprintListResponse) MarshalJSON() ([]byte, error) {

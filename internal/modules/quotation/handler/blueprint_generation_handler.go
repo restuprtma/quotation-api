@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -34,7 +35,7 @@ type BlueprintCreator interface {
 type BlueprintReader interface {
 	GetStatus(ctx context.Context, companyID, blueprintID uuid.UUID) (*dto.BlueprintStatusResponse, error)
 	GetDetail(ctx context.Context, companyID, blueprintID uuid.UUID) (*dto.BlueprintDetailResponse, error)
-	List(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error)
+	List(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error)
 }
 
 // BlueprintPipelineRunner encapsulates stage execution and manual edits for blueprints.
@@ -354,11 +355,33 @@ func (h *BlueprintGenerationHandler) SaveDraftSection(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Blueprint draft saved successfully", detail)
 }
 
-// List returns tenant-filtered blueprint items.
+// List returns tenant-filtered and paginated blueprint items.
 func (h *BlueprintGenerationHandler) List(c *gin.Context) {
 	companyID, ok := getCompanyID(c)
 	if !ok {
 		return
+	}
+
+	page := 1
+	rawPage := strings.TrimSpace(c.Query("page"))
+	if rawPage != "" {
+		p, err := strconv.Atoi(rawPage)
+		if err != nil || p < 1 {
+			response.Error(c, http.StatusBadRequest, "Invalid page query parameter", "blueprint_invalid_input")
+			return
+		}
+		page = p
+	}
+
+	limit := 20
+	rawLimit := strings.TrimSpace(c.Query("limit"))
+	if rawLimit != "" {
+		l, err := strconv.Atoi(rawLimit)
+		if err != nil || l < 1 || l > 100 {
+			response.Error(c, http.StatusBadRequest, "Invalid limit query parameter", "blueprint_invalid_input")
+			return
+		}
+		limit = l
 	}
 
 	var qFilter *uuid.UUID
@@ -372,7 +395,31 @@ func (h *BlueprintGenerationHandler) List(c *gin.Context) {
 		qFilter = &qid
 	}
 
-	list, err := h.reader.List(c.Request.Context(), companyID, qFilter)
+	var statuses []string
+	rawStatus := strings.TrimSpace(c.Query("generation_status"))
+	if rawStatus != "" {
+		seen := make(map[string]bool)
+		for _, part := range strings.Split(rawStatus, ",") {
+			status := strings.TrimSpace(part)
+			if !isValidGenerationStatus(status) {
+				response.Error(c, http.StatusBadRequest, "Invalid generation_status query parameter", "blueprint_invalid_input")
+				return
+			}
+			if !seen[status] {
+				seen[status] = true
+				statuses = append(statuses, status)
+			}
+		}
+	}
+
+	params := repository.BlueprintListParams{
+		QuotationID:        qFilter,
+		GenerationStatuses: statuses,
+		Page:               page,
+		Limit:              limit,
+	}
+
+	list, err := h.reader.List(c.Request.Context(), companyID, params)
 	if err != nil {
 		MapBlueprintError(c, err)
 		return
@@ -382,6 +429,19 @@ func (h *BlueprintGenerationHandler) List(c *gin.Context) {
 }
 
 // --- Internal Utilities ---
+
+func isValidGenerationStatus(status string) bool {
+	switch domain.BlueprintGenerationStatus(status) {
+	case domain.BlueprintGenerationPending,
+		domain.BlueprintGenerationInProgress,
+		domain.BlueprintGenerationPartialFailed,
+		domain.BlueprintGenerationCompleted,
+		domain.BlueprintGenerationFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 func getCompanyID(c *gin.Context) (uuid.UUID, bool) {
 	raw := middleware.GetCompanyID(c)

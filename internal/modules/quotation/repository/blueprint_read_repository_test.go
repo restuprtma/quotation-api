@@ -14,7 +14,7 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/repository"
 )
 
-func TestBlueprintReadRepository_ListBlueprintsTenantIsolationAndProjection(t *testing.T) {
+func TestBlueprintReadRepository_BlueprintList_TenantIsolationAndProjection(t *testing.T) {
 	pool := getTestPool(t)
 
 	// Seed tenant A with 2 blueprints
@@ -54,9 +54,10 @@ func TestBlueprintReadRepository_ListBlueprintsTenantIsolationAndProjection(t *t
 	resB, err := genRepo.CreateBlueprintGeneration(ctx, paramsB)
 	require.NoError(t, err)
 
-	// 1. List for Tenant A -> returns exactly 2 items
-	listA, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, nil)
+	// 1. List for Tenant A -> returns exactly 2 items with total 2
+	listA, totalA, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{Page: 1, Limit: 20})
 	require.NoError(t, err)
+	assert.Equal(t, 2, totalA)
 	require.Len(t, listA, 2)
 
 	titlesA := []string{listA[0].Title, listA[1].Title}
@@ -71,45 +72,102 @@ func TestBlueprintReadRepository_ListBlueprintsTenantIsolationAndProjection(t *t
 		assert.False(t, item.UpdatedAt.IsZero())
 	}
 
-	// 2. List for Tenant B -> returns exactly 1 item
-	listB, err := readRepo.ListBlueprints(ctx, fB.CompanyID, nil)
+	// 2. List for Tenant B -> returns exactly 1 item with total 1
+	listB, totalB, err := readRepo.ListBlueprints(ctx, fB.CompanyID, repository.BlueprintListParams{Page: 1, Limit: 20})
 	require.NoError(t, err)
+	assert.Equal(t, 1, totalB)
 	require.Len(t, listB, 1)
 	assert.Equal(t, resB.Blueprint.ID, listB[0].BlueprintID)
 	assert.Equal(t, "Tenant B Blueprint", listB[0].Title)
 
 	// 3. Filter by quotationID for Tenant A (matching quotation 1)
-	filteredA1, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, &fA1.QuotationID)
+	filteredA1, totalFilteredA1, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		QuotationID: &fA1.QuotationID,
+		Page:        1,
+		Limit:       20,
+	})
 	require.NoError(t, err)
+	assert.Equal(t, 1, totalFilteredA1)
 	require.Len(t, filteredA1, 1)
 	assert.Equal(t, resA1.Blueprint.ID, filteredA1[0].BlueprintID)
 
-	// 4. Filter by foreign quotationID (Tenant B's quotation queried by Tenant A) -> returns empty slice []
-	foreignFilter, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, &fB.QuotationID)
+	// 4. Filter by GenerationStatuses: status "pending" matches both
+	pendingList, totalPending, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		GenerationStatuses: []string{"pending"},
+		Page:               1,
+		Limit:              20,
+	})
 	require.NoError(t, err)
+	assert.Equal(t, 2, totalPending)
+	require.Len(t, pendingList, 2)
+
+	// Filter by GenerationStatuses: status "completed" matches none
+	completedList, totalCompleted, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		GenerationStatuses: []string{"completed"},
+		Page:               1,
+		Limit:              20,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, totalCompleted)
+	assert.Empty(t, completedList)
+
+	// 5. Pagination: Page 1 Limit 1 -> 1 item, Total 2
+	p1List, p1Total, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		Page:  1,
+		Limit: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, p1Total)
+	require.Len(t, p1List, 1)
+
+	// Page 2 Limit 1 -> 1 item, Total 2, different item from Page 1
+	p2List, p2Total, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		Page:  2,
+		Limit: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, p2Total)
+	require.Len(t, p2List, 1)
+	assert.NotEqual(t, p1List[0].BlueprintID, p2List[0].BlueprintID)
+
+	// 6. Filter by foreign quotationID (Tenant B's quotation queried by Tenant A) -> returns empty slice []
+	foreignFilter, totalForeign, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		QuotationID: &fB.QuotationID,
+		Page:        1,
+		Limit:       20,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, totalForeign)
 	assert.NotNil(t, foreignFilter)
 	assert.Empty(t, foreignFilter)
 
-	// 5. Filter by non-existent quotationID -> returns empty slice []
+	// 7. Filter by non-existent quotationID -> returns empty slice []
 	randomQID := uuid.New()
-	missingFilter, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, &randomQID)
+	missingFilter, totalMissing, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{
+		QuotationID: &randomQID,
+		Page:        1,
+		Limit:       20,
+	})
 	require.NoError(t, err)
+	assert.Equal(t, 0, totalMissing)
 	assert.NotNil(t, missingFilter)
 	assert.Empty(t, missingFilter)
 
-	// 6. List for unknown company -> returns empty slice []
+	// 8. List for unknown company -> returns empty slice []
 	randomCompany := uuid.New()
-	emptyList, err := readRepo.ListBlueprints(ctx, randomCompany, nil)
+	emptyList, totalUnknown, err := readRepo.ListBlueprints(ctx, randomCompany, repository.BlueprintListParams{Page: 1, Limit: 20})
 	require.NoError(t, err)
+	assert.Equal(t, 0, totalUnknown)
 	assert.NotNil(t, emptyList)
 	assert.Empty(t, emptyList)
 
-	// 7. Soft delete one blueprint -> excluded from list
+	// 9. Soft delete one blueprint -> excluded from list
 	_, err = pool.Exec(ctx, `UPDATE blueprints SET deleted_at = NOW() WHERE id = $1`, resA2.Blueprint.ID)
 	require.NoError(t, err)
 
-	listAAfterDelete, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, nil)
+	listAAfterDelete, totalAfterDelete, err := readRepo.ListBlueprints(ctx, fA1.CompanyID, repository.BlueprintListParams{Page: 1, Limit: 20})
 	require.NoError(t, err)
+	assert.Equal(t, 1, totalAfterDelete)
 	require.Len(t, listAAfterDelete, 1)
 	assert.Equal(t, resA1.Blueprint.ID, listAAfterDelete[0].BlueprintID)
 }

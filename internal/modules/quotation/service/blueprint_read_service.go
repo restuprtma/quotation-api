@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ type BlueprintGenerationReader interface {
 
 // BlueprintListReader loads projection items for tenant blueprint lists.
 type BlueprintListReader interface {
-	ListBlueprints(ctx context.Context, companyID uuid.UUID, quotationID *uuid.UUID) ([]dto.BlueprintListItemResponse, error)
+	ListBlueprints(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) ([]dto.BlueprintListItemResponse, int, error)
 }
 
 // BlueprintReadService coordinates read-only operations for blueprints.
@@ -135,15 +136,30 @@ func (s *BlueprintReadService) GetDetail(ctx context.Context, companyID, bluepri
 	}, nil
 }
 
-// List returns tenant-filtered blueprint items.
-func (s *BlueprintReadService) List(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error) {
+// List returns tenant-filtered and paginated blueprint items.
+func (s *BlueprintReadService) List(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := params.Limit
+	if limit < 1 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
+	}
+
 	if companyID == uuid.Nil {
 		return &dto.BlueprintListResponse{
-			Items: make([]dto.BlueprintListItemResponse, 0),
+			Items:      make([]dto.BlueprintListItemResponse, 0),
+			Total:      0,
+			Page:       page,
+			Limit:      limit,
+			TotalPages: 0,
 		}, nil
 	}
 
-	items, err := s.listReader.ListBlueprints(ctx, companyID, quotationIDFilter)
+	items, total, err := s.listReader.ListBlueprints(ctx, companyID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -151,8 +167,17 @@ func (s *BlueprintReadService) List(ctx context.Context, companyID uuid.UUID, qu
 		items = make([]dto.BlueprintListItemResponse, 0)
 	}
 
+	totalPages := 0
+	if total > 0 {
+		totalPages = int(math.Ceil(float64(total) / float64(limit)))
+	}
+
 	return &dto.BlueprintListResponse{
-		Items: items,
+		Items:      items,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
 	}, nil
 }
 

@@ -103,19 +103,27 @@ func TestBlueprintStatusResponseOmitsSensitiveFields(t *testing.T) {
 
 func TestBlueprintListResponseSerializesEmptySlice(t *testing.T) {
 	resp := BlueprintListResponse{
-		Items: []BlueprintListItemResponse{},
+		Items:      []BlueprintListItemResponse{},
+		Total:      0,
+		Page:       1,
+		Limit:      20,
+		TotalPages: 0,
 	}
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"items":[]}`, string(b))
+	assert.JSONEq(t, `{"items":[],"total":0,"page":1,"limit":20,"total_pages":0}`, string(b))
 
 	// Also when Items is nil, MarshalJSON should enforce []
 	respNil := BlueprintListResponse{
-		Items: nil,
+		Items:      nil,
+		Total:      6,
+		Page:       1,
+		Limit:      5,
+		TotalPages: 2,
 	}
 	bNil, err := json.Marshal(respNil)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"items":[]}`, string(bNil))
+	assert.JSONEq(t, `{"items":[],"total":6,"page":1,"limit":5,"total_pages":2}`, string(bNil))
 }
 
 func TestBlueprintDetailResponseJSONContract(t *testing.T) {

@@ -35,15 +35,20 @@ func (f *fakeBlueprintGenerationReader) GetBlueprintGeneration(_ context.Context
 }
 
 type fakeBlueprintListReader struct {
-	items []dto.BlueprintListItemResponse
-	err   error
+	items      []dto.BlueprintListItemResponse
+	total      int
+	err        error
+	lastParams repository.BlueprintListParams
+	lastCompID uuid.UUID
 }
 
-func (f *fakeBlueprintListReader) ListBlueprints(_ context.Context, companyID uuid.UUID, quotationID *uuid.UUID) ([]dto.BlueprintListItemResponse, error) {
+func (f *fakeBlueprintListReader) ListBlueprints(_ context.Context, companyID uuid.UUID, params repository.BlueprintListParams) ([]dto.BlueprintListItemResponse, int, error) {
+	f.lastCompID = companyID
+	f.lastParams = params
 	if f.err != nil {
-		return nil, f.err
+		return nil, 0, f.err
 	}
-	return f.items, nil
+	return f.items, f.total, nil
 }
 
 func makeSampleBlueprintResult(companyID uuid.UUID) *repository.CreateBlueprintGenerationResult {
@@ -188,23 +193,187 @@ func TestBlueprintReadService_MissingOrForeignTenantReturnsErrNotFound(t *testin
 	assert.ErrorIs(t, err, repository.ErrBlueprintNotFound)
 }
 
-func TestBlueprintReadService_ListReturnsEmptySliceWhenNoItems(t *testing.T) {
+func TestBlueprintReadService_BlueprintList_EmptySliceWhenNoItems(t *testing.T) {
 	companyID := uuid.New()
 	genReader := &fakeBlueprintGenerationReader{}
-	listReader := &fakeBlueprintListReader{items: nil} // nil slice from repo
+	listReader := &fakeBlueprintListReader{items: nil, total: 0}
 	svc := NewBlueprintReadService(genReader, listReader)
 
 	ctx := context.Background()
-	resp, err := svc.List(ctx, companyID, nil)
+	params := repository.BlueprintListParams{Page: 1, Limit: 20}
+	resp, err := svc.List(ctx, companyID, params)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Items)
 	assert.Empty(t, resp.Items)
+	assert.Equal(t, 0, resp.Total)
+	assert.Equal(t, 1, resp.Page)
+	assert.Equal(t, 20, resp.Limit)
+	assert.Equal(t, 0, resp.TotalPages)
 
 	// Verify JSON serialization produces items: []
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"items":[]}`, string(b))
+	assert.JSONEq(t, `{"items":[],"total":0,"page":1,"limit":20,"total_pages":0}`, string(b))
+}
+
+func TestBlueprintReadService_BlueprintList_PaginationCalculations(t *testing.T) {
+	tests := []struct {
+		name               string
+		total              int
+		limit              int
+		page               int
+		expectedTotalPages int
+		expectedPage       int
+		expectedLimit      int
+	}{
+		{
+			name:               "total 0 yields total_pages 0",
+			total:              0,
+			limit:              10,
+			page:               1,
+			expectedTotalPages: 0,
+			expectedPage:       1,
+			expectedLimit:      10,
+		},
+		{
+			name:               "total 1 with limit 10 yields total_pages 1",
+			total:              1,
+			limit:              10,
+			page:               1,
+			expectedTotalPages: 1,
+			expectedPage:       1,
+			expectedLimit:      10,
+		},
+		{
+			name:               "exact multiple total 10 with limit 10 yields total_pages 1",
+			total:              10,
+			limit:              10,
+			page:               1,
+			expectedTotalPages: 1,
+			expectedPage:       1,
+			expectedLimit:      10,
+		},
+		{
+			name:               "total 11 with limit 10 yields total_pages 2 (ceil)",
+			total:              11,
+			limit:              10,
+			page:               2,
+			expectedTotalPages: 2,
+			expectedPage:       2,
+			expectedLimit:      10,
+		},
+		{
+			name:               "total 25 with limit 10 yields total_pages 3",
+			total:              25,
+			limit:              10,
+			page:               1,
+			expectedTotalPages: 3,
+			expectedPage:       1,
+			expectedLimit:      10,
+		},
+		{
+			name:               "total 6 with limit 5 yields total_pages 2",
+			total:              6,
+			limit:              5,
+			page:               1,
+			expectedTotalPages: 2,
+			expectedPage:       1,
+			expectedLimit:      5,
+		},
+		{
+			name:               "clamps default page < 1 to 1, limit < 1 to 20",
+			total:              50,
+			limit:              0,
+			page:               0,
+			expectedTotalPages: 3,
+			expectedPage:       1,
+			expectedLimit:      20,
+		},
+		{
+			name:               "clamps limit > 100 to 100",
+			total:              250,
+			limit:              150,
+			page:               1,
+			expectedTotalPages: 3,
+			expectedPage:       1,
+			expectedLimit:      100,
+		},
+	}
+
+	companyID := uuid.New()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			listReader := &fakeBlueprintListReader{
+				items: make([]dto.BlueprintListItemResponse, 0),
+				total: tc.total,
+			}
+			svc := NewBlueprintReadService(&fakeBlueprintGenerationReader{}, listReader)
+
+			resp, err := svc.List(context.Background(), companyID, repository.BlueprintListParams{
+				Page:  tc.page,
+				Limit: tc.limit,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, tc.total, resp.Total)
+			assert.Equal(t, tc.expectedPage, resp.Page)
+			assert.Equal(t, tc.expectedLimit, resp.Limit)
+			assert.Equal(t, tc.expectedTotalPages, resp.TotalPages)
+		})
+	}
+}
+
+func TestBlueprintReadService_BlueprintList_ForwardsParamsAndHandlesNilCompany(t *testing.T) {
+	companyID := uuid.New()
+	qID := uuid.New()
+	statuses := []string{"pending", "in_progress", "partial_failed", "failed"}
+
+	listReader := &fakeBlueprintListReader{
+		items: []dto.BlueprintListItemResponse{
+			{BlueprintID: uuid.New(), QuotationID: qID, Title: "Test BP", GenerationStatus: "pending", UpdatedAt: time.Now()},
+		},
+		total: 1,
+	}
+	svc := NewBlueprintReadService(&fakeBlueprintGenerationReader{}, listReader)
+
+	params := repository.BlueprintListParams{
+		QuotationID:        &qID,
+		GenerationStatuses: statuses,
+		Page:               2,
+		Limit:              5,
+	}
+
+	resp, err := svc.List(context.Background(), companyID, params)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 1, resp.Total)
+	assert.Equal(t, 2, resp.Page)
+	assert.Equal(t, 5, resp.Limit)
+	assert.Equal(t, 1, resp.TotalPages)
+	require.Len(t, resp.Items, 1)
+
+	// Verify params forwarded to reader
+	assert.Equal(t, companyID, listReader.lastCompID)
+	assert.Equal(t, &qID, listReader.lastParams.QuotationID)
+	assert.Equal(t, statuses, listReader.lastParams.GenerationStatuses)
+	assert.Equal(t, 2, listReader.lastParams.Page)
+	assert.Equal(t, 5, listReader.lastParams.Limit)
+
+	// Test nil company ID
+	nilCompanyResp, err := svc.List(context.Background(), uuid.Nil, params)
+	require.NoError(t, err)
+	require.NotNil(t, nilCompanyResp)
+	assert.Empty(t, nilCompanyResp.Items)
+	assert.Equal(t, 0, nilCompanyResp.Total)
+	assert.Equal(t, 0, nilCompanyResp.TotalPages)
+
+	// Test error from reader
+	listReaderErr := errors.New("db connection failure")
+	errReader := &fakeBlueprintListReader{err: listReaderErr}
+	errSvc := NewBlueprintReadService(&fakeBlueprintGenerationReader{}, errReader)
+	_, err = errSvc.List(context.Background(), companyID, params)
+	assert.ErrorIs(t, err, listReaderErr)
 }
 
 func TestBlueprintReadService_RedactionOfSensitiveFields(t *testing.T) {

@@ -80,7 +80,7 @@ func (m *mockReader) GetDetail(ctx context.Context, companyID, blueprintID uuid.
 	}, nil
 }
 
-func (m *mockReader) List(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error) {
+func (m *mockReader) List(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
 	m.listCalled = true
 	return &dto.BlueprintListResponse{
 		Items: []dto.BlueprintListItemResponse{
@@ -91,6 +91,10 @@ func (m *mockReader) List(ctx context.Context, companyID uuid.UUID, quotationIDF
 				UpdatedAt:   time.Now(),
 			},
 		},
+		Total:      1,
+		Page:       1,
+		Limit:      20,
+		TotalPages: 1,
 	}, nil
 }
 

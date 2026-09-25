@@ -50,13 +50,13 @@ func (m *mockBlueprintCreator) CreateBlueprint(ctx context.Context, companyID, c
 type mockBlueprintReader struct {
 	getStatusFunc func(ctx context.Context, companyID, blueprintID uuid.UUID) (*dto.BlueprintStatusResponse, error)
 	getDetailFunc func(ctx context.Context, companyID, blueprintID uuid.UUID) (*dto.BlueprintDetailResponse, error)
-	listFunc      func(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error)
+	listFunc      func(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error)
 	statusCalls   int
 	detailCalls   int
 	listCalls     int
 	lastCompID    uuid.UUID
 	lastBpID      uuid.UUID
-	lastQFilter   *uuid.UUID
+	lastParams    repository.BlueprintListParams
 }
 
 func (m *mockBlueprintReader) GetStatus(ctx context.Context, companyID, blueprintID uuid.UUID) (*dto.BlueprintStatusResponse, error) {
@@ -79,12 +79,12 @@ func (m *mockBlueprintReader) GetDetail(ctx context.Context, companyID, blueprin
 	return nil, errors.New("unimplemented mock get detail")
 }
 
-func (m *mockBlueprintReader) List(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error) {
+func (m *mockBlueprintReader) List(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
 	m.listCalls++
 	m.lastCompID = companyID
-	m.lastQFilter = quotationIDFilter
+	m.lastParams = params
 	if m.listFunc != nil {
-		return m.listFunc(ctx, companyID, quotationIDFilter)
+		return m.listFunc(ctx, companyID, params)
 	}
 	return nil, errors.New("unimplemented mock list")
 }
@@ -585,14 +585,18 @@ func TestBlueprintHandler_ManualCompleteSection_Success_Returns200OK(t *testing.
 	}
 }
 
-func TestBlueprintHandler_List_WithoutAndWithQuotationFilter(t *testing.T) {
-	t.Run("list all without filter", func(t *testing.T) {
+func TestBlueprintHandler_BlueprintList_WithoutAndWithQuotationFilter(t *testing.T) {
+	t.Run("list all without filter uses defaults page 1 and limit 20", func(t *testing.T) {
 		rig := setupBlueprintTestRig()
 		bpID := uuid.New()
 		qID := uuid.New()
 
-		rig.reader.listFunc = func(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error) {
-			assert.Nil(t, quotationIDFilter)
+		rig.reader.listFunc = func(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
+			assert.Nil(t, params.QuotationID)
+			assert.Empty(t, params.GenerationStatuses)
+			assert.Equal(t, 1, params.Page)
+			assert.Equal(t, 20, params.Limit)
+
 			return &dto.BlueprintListResponse{
 				Items: []dto.BlueprintListItemResponse{
 					{
@@ -603,6 +607,10 @@ func TestBlueprintHandler_List_WithoutAndWithQuotationFilter(t *testing.T) {
 						UpdatedAt:        time.Now(),
 					},
 				},
+				Total:      1,
+				Page:       1,
+				Limit:      20,
+				TotalPages: 1,
 			}, nil
 		}
 
@@ -610,22 +618,34 @@ func TestBlueprintHandler_List_WithoutAndWithQuotationFilter(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		assert.Equal(t, 1, rig.reader.listCalls)
 		assert.Equal(t, rig.companyID, rig.reader.lastCompID)
+		assert.Equal(t, 1, rig.reader.lastParams.Page)
+		assert.Equal(t, 20, rig.reader.lastParams.Limit)
+		assert.Nil(t, rig.reader.lastParams.QuotationID)
+		assert.Empty(t, rig.reader.lastParams.GenerationStatuses)
 
 		var listResp dto.BlueprintListResponse
 		env := parseEnvelope(t, w)
 		require.NoError(t, json.Unmarshal(env.Data, &listResp))
 		assert.Len(t, listResp.Items, 1)
 		assert.Equal(t, bpID, listResp.Items[0].BlueprintID)
+		assert.Equal(t, 1, listResp.Total)
+		assert.Equal(t, 1, listResp.Page)
+		assert.Equal(t, 20, listResp.Limit)
+		assert.Equal(t, 1, listResp.TotalPages)
 	})
 
-	t.Run("list with quotation_id filter", func(t *testing.T) {
+	t.Run("list with quotation_id, page, limit, and generation_status filters", func(t *testing.T) {
 		rig := setupBlueprintTestRig()
 		filterQID := uuid.New()
 		bpID := uuid.New()
 
-		rig.reader.listFunc = func(ctx context.Context, companyID uuid.UUID, quotationIDFilter *uuid.UUID) (*dto.BlueprintListResponse, error) {
-			require.NotNil(t, quotationIDFilter)
-			assert.Equal(t, filterQID, *quotationIDFilter)
+		rig.reader.listFunc = func(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
+			require.NotNil(t, params.QuotationID)
+			assert.Equal(t, filterQID, *params.QuotationID)
+			assert.Equal(t, 2, params.Page)
+			assert.Equal(t, 5, params.Limit)
+			assert.Equal(t, []string{"pending", "in_progress", "partial_failed", "failed"}, params.GenerationStatuses)
+
 			return &dto.BlueprintListResponse{
 				Items: []dto.BlueprintListItemResponse{
 					{
@@ -636,14 +656,75 @@ func TestBlueprintHandler_List_WithoutAndWithQuotationFilter(t *testing.T) {
 						UpdatedAt:        time.Now(),
 					},
 				},
+				Total:      6,
+				Page:       2,
+				Limit:      5,
+				TotalPages: 2,
 			}, nil
 		}
 
-		w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?quotation_id="+filterQID.String(), nil, nil)
+		path := fmt.Sprintf("/quotation/v1/blueprints?page=2&limit=5&generation_status=pending,in_progress,partial_failed,failed&quotation_id=%s", filterQID.String())
+		w := execRequest(rig.router, http.MethodGet, path, nil, nil)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		assert.Equal(t, 1, rig.reader.listCalls)
-		assert.NotNil(t, rig.reader.lastQFilter)
-		assert.Equal(t, filterQID, *rig.reader.lastQFilter)
+		require.NotNil(t, rig.reader.lastParams.QuotationID)
+		assert.Equal(t, filterQID, *rig.reader.lastParams.QuotationID)
+		assert.Equal(t, 2, rig.reader.lastParams.Page)
+		assert.Equal(t, 5, rig.reader.lastParams.Limit)
+		assert.Equal(t, []string{"pending", "in_progress", "partial_failed", "failed"}, rig.reader.lastParams.GenerationStatuses)
+
+		var listResp dto.BlueprintListResponse
+		env := parseEnvelope(t, w)
+		require.NoError(t, json.Unmarshal(env.Data, &listResp))
+		assert.Equal(t, 6, listResp.Total)
+		assert.Equal(t, 2, listResp.Page)
+		assert.Equal(t, 5, listResp.Limit)
+		assert.Equal(t, 2, listResp.TotalPages)
+		require.Len(t, listResp.Items, 1)
+	})
+
+	t.Run("list trims whitespace and deduplicates generation_status query param", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		rig.reader.listFunc = func(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
+			assert.Equal(t, []string{"pending", "in_progress", "completed"}, params.GenerationStatuses)
+			return &dto.BlueprintListResponse{
+				Items:      []dto.BlueprintListItemResponse{},
+				Total:      0,
+				Page:       1,
+				Limit:      20,
+				TotalPages: 0,
+			}, nil
+		}
+
+		w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?generation_status=%20pending%20,%20in_progress%20,%20pending%20,%20completed%20", nil, nil)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, 1, rig.reader.listCalls)
+		assert.Equal(t, []string{"pending", "in_progress", "completed"}, rig.reader.lastParams.GenerationStatuses)
+	})
+
+	t.Run("empty list returns valid JSON array items []", func(t *testing.T) {
+		rig := setupBlueprintTestRig()
+		rig.reader.listFunc = func(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) (*dto.BlueprintListResponse, error) {
+			return &dto.BlueprintListResponse{
+				Items:      nil, // nil items from service/repo
+				Total:      0,
+				Page:       1,
+				Limit:      20,
+				TotalPages: 0,
+			}, nil
+		}
+
+		w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints", nil, nil)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var raw map[string]json.RawMessage
+		env := parseEnvelope(t, w)
+		require.NoError(t, json.Unmarshal(env.Data, &raw))
+		assert.JSONEq(t, `[]`, string(raw["items"]))
+		assert.JSONEq(t, `0`, string(raw["total"]))
+		assert.JSONEq(t, `1`, string(raw["page"]))
+		assert.JSONEq(t, `20`, string(raw["limit"]))
+		assert.JSONEq(t, `0`, string(raw["total_pages"]))
 	})
 }
 
@@ -813,11 +894,64 @@ func TestBlueprintHandler_InvalidInputs_Returns400WithZeroServiceCalls(t *testin
 	})
 
 	t.Run("malformed UUID in query for list", func(t *testing.T) {
-		rig := setupBlueprintTestRig()
-		w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?quotation_id=bad-uuid-value", nil, nil)
-		require.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
-		assert.Equal(t, 0, rig.reader.listCalls)
+		invalidQIDs := []string{"bad-uuid-value", "12345", uuid.Nil.String()}
+		for _, qid := range invalidQIDs {
+			t.Run("qid_"+qid, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?quotation_id="+qid, nil, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.reader.listCalls)
+			})
+		}
+	})
+
+	t.Run("invalid page in query for list", func(t *testing.T) {
+		invalidPages := []string{"0", "-1", "-100", "abc", "1.5"}
+		for _, p := range invalidPages {
+			t.Run("page_"+p, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?page="+p, nil, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.reader.listCalls)
+			})
+		}
+	})
+
+	t.Run("invalid limit in query for list", func(t *testing.T) {
+		invalidLimits := []string{"0", "-1", "-50", "101", "500", "xyz", "20.5"}
+		for _, l := range invalidLimits {
+			t.Run("limit_"+l, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?limit="+l, nil, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.reader.listCalls)
+			})
+		}
+	})
+
+	t.Run("invalid generation_status in query for list", func(t *testing.T) {
+		invalidStatuses := []string{
+			"unknown",
+			"draft",
+			"active",
+			"pending,invalid_status",
+			"generating",
+			"validated",
+			",",
+			"pending,,completed",
+		}
+		for _, s := range invalidStatuses {
+			t.Run("status_"+s, func(t *testing.T) {
+				rig := setupBlueprintTestRig()
+				w := execRequest(rig.router, http.MethodGet, "/quotation/v1/blueprints?generation_status="+s, nil, nil)
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Equal(t, "blueprint_invalid_input", getDetailCode(t, w))
+				assert.Equal(t, 0, rig.reader.listCalls)
+			})
+		}
 	})
 
 	t.Run("invalid section param in retry", func(t *testing.T) {
