@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/shared/response"
@@ -126,6 +127,25 @@ func TestPromptQuotationHandler_InvalidExtractionReturns422(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, []string{"invalid_extraction"}, resp.Errors["detail"])
 	})
+}
+
+func TestPromptQuotationHandler_NoBusinessSignalReturns422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	h := NewPromptQuotationHandler(&promptCreatorStub{errCode: "meeting_notes_no_business_signal"})
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setPromptTestClaims(c)
+
+	h.CreateFromMeeting(c)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, c.Writer.Status())
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Nil(t, resp.Data)
+	assert.Equal(t, "Unable to create quotation draft", resp.Message)
+	assert.Equal(t, []string{"meeting_notes_no_business_signal"}, resp.Errors["detail"])
 }
 
 func TestPromptQuotationHandler_PriceableDraftReturns201(t *testing.T) {
