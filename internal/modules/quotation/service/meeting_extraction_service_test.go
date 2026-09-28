@@ -247,6 +247,20 @@ func TestMeetingExtractionRejectsUnsafeOrMalformedOutput(t *testing.T) {
 	}
 }
 
+func TestDecodeMeetingExtractionNormalizesFormattingOnly(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika membahas Arunika Inventory dan stok gudang. Durasi proyek: 3 bulan. Dua programmer intermediate. Pembayaran 50:50."
+	valid := meetingOutput(notes, "unknown")
+	output := strings.Replace(valid, "tiga bulan", "DURASI PROYEK 3 BULAN", 1)
+	_, err := decodeMeetingExtraction(output, notes)
+	require.NoError(t, err)
+
+	wrong := strings.Replace(valid, "tiga bulan", "enam bulan", 1)
+	_, err = decodeMeetingExtraction(wrong, notes)
+	var extractionErr *MeetingExtractionError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "unsupported_evidence", extractionErr.Reason)
+}
+
 func TestDecodeMeetingExtractionClassifiesFailuresWithoutLeakingRawOutput(t *testing.T) {
 	cases := []struct {
 		name string

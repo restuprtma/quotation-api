@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -232,9 +233,34 @@ func normalizeState(state *domain.PromptQuotationState) {
 	}
 }
 
+func normalizeEvidenceText(value string) string {
+	var out strings.Builder
+	spacePending := false
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || r == '%' {
+			if spacePending && out.Len() > 0 {
+				out.WriteByte(' ')
+			}
+			out.WriteRune(r)
+			spacePending = false
+		} else {
+			spacePending = out.Len() > 0
+		}
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func normalizedEvidenceIsInNotes(notes, evidence string) bool {
+	normalizedEvidence := normalizeEvidenceText(evidence)
+	if normalizedEvidence == "" {
+		return false
+	}
+	return strings.Contains(" "+normalizeEvidenceText(notes)+" ", " "+normalizedEvidence+" ")
+}
+
 func evidenceIsInNotes(state *domain.PromptQuotationState, notes string) bool {
 	check := func(source domain.ValueSource, evidence string) bool {
-		return source != domain.SourceMeeting || (strings.TrimSpace(evidence) != "" && strings.Contains(notes, evidence))
+		return source != domain.SourceMeeting || normalizedEvidenceIsInNotes(notes, evidence)
 	}
 	for _, f := range []*domain.Fact[string]{state.ClientName, state.ClientCompany, state.PICName, state.ProjectName, state.CommercialScheme, state.PaymentPattern} {
 		if f != nil && !check(f.Source, f.Evidence) {
