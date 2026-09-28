@@ -89,6 +89,17 @@ func TestMeetingExtractionRequestsJSONAndRetriesOneInvalidOutput(t *testing.T) {
 	assert.Equal(t, GenerateOutputJSON, provider.requests[1].OutputMode)
 }
 
+func TestMeetingExtractionRetriesUnsupportedEvidenceWithCorrectionPrompt(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika membahas Arunika Inventory dan stok gudang selama tiga bulan. Dua programmer intermediate. Pembayaran 50:50."
+	first := strings.Replace(meetingOutput(notes, "unknown"), "tiga bulan", "enam bulan", 1)
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: first}, {Text: meetingOutput(notes, "unknown")}}}
+	svc := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+	_, err := svc.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.NoError(t, err)
+	require.Len(t, provider.requests, 2)
+	assert.Contains(t, provider.requests[1].Prompt, "contiguous literal substring")
+}
+
 func TestMeetingExtractionStopsAfterSecondInvalidOutput(t *testing.T) {
 	provider := &meetingProviderFake{results: []GenerateResult{{Text: "{"}, {Text: "{"}}}
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})

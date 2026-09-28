@@ -93,9 +93,10 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 	}
 
 	var state *domain.PromptQuotationState
+	attemptPrompt := prompt
 	for attempt := 0; attempt < maxMeetingExtractionAttempts; attempt++ {
 		result, generateErr := provider.Generate(ctx, GenerateRequest{
-			Prompt: prompt, OutputMode: GenerateOutputJSON,
+			Prompt: attemptPrompt, OutputMode: GenerateOutputJSON,
 		})
 		if generateErr != nil {
 			var generationErr *GenerationError
@@ -113,6 +114,7 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 		if !errors.As(err, &extractionErr) || attempt == maxMeetingExtractionAttempts-1 {
 			return domain.PromptQuotationState{}, err
 		}
+		attemptPrompt = meetingExtractionRetryPrompt(prompt, extractionErr.Reason)
 	}
 	resolveCatalog(state, catalog)
 	state.Issues = state.ComputeIssues()
@@ -153,6 +155,17 @@ func buildMeetingExtractionPrompt(notes string, catalog CatalogContext) (string,
 		return "", errors.New("meeting extraction prompt has unresolved placeholder")
 	}
 	return prompt, nil
+}
+
+func meetingExtractionRetryPrompt(prompt, reason string) string {
+	if reason != "unsupported_evidence" {
+		return prompt
+	}
+	return prompt + "\n\n<validation_correction>\n" +
+		"The previous response was rejected because meeting-sourced evidence was not grounded in MEETING_NOTES. Return JSON only. " +
+		"For each fact with source meeting, evidence must be a non-empty contiguous literal substring copied from MEETING_NOTES. " +
+		"If unsupported, use source suggestion and omit evidence. Do not invent facts, prices, catalog IDs, or extra JSON fields.\n" +
+		"</validation_correction>"
 }
 
 func decodeMeetingExtraction(raw, notes string) (*domain.PromptQuotationState, error) {
