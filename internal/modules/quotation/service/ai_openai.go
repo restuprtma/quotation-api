@@ -29,7 +29,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	}
 	endpoint := baseURL + "/chat/completions"
 
-	body, err := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"model": p.cfg.Model,
 		"messages": []map[string]any{
 			{
@@ -37,7 +37,11 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 				"content": req.Prompt,
 			},
 		},
-	})
+	}
+	if req.OutputMode == GenerateOutputJSON {
+		bodyMap["response_format"] = map[string]any{"type": "json_object"}
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return GenerateResult{}, &ProviderError{
 			Code:      ErrProviderUnavailable,

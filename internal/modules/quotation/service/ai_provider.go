@@ -34,8 +34,13 @@ func (e *ProviderError) Error() string {
 	return e.Message
 }
 
+type GenerateOutputMode string
+
+const GenerateOutputJSON GenerateOutputMode = "json_object"
+
 type GenerateRequest struct {
-	Prompt string
+	Prompt     string
+	OutputMode GenerateOutputMode
 }
 
 type GenerateResult struct {

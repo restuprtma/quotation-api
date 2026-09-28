@@ -28,11 +28,15 @@ func NewOllamaProvider(cfg ProviderConfig) *OllamaProvider {
 func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
 	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/api/generate"
 
-	body, err := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"model":  p.cfg.Model,
 		"prompt": req.Prompt,
 		"stream": false,
-	})
+	}
+	if req.OutputMode == GenerateOutputJSON {
+		bodyMap["format"] = "json"
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to marshal request"}
 	}

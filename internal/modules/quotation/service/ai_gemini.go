@@ -30,7 +30,7 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	}
 	endpoint := baseURL + "/models/" + url.PathEscape(p.cfg.Model) + ":generateContent"
 
-	body, err := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"contents": []map[string]any{
 			{
 				"parts": []map[string]any{
@@ -38,7 +38,11 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 				},
 			},
 		},
-	})
+	}
+	if req.OutputMode == GenerateOutputJSON {
+		bodyMap["generationConfig"] = map[string]any{"responseMimeType": "application/json"}
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to marshal request"}
 	}
