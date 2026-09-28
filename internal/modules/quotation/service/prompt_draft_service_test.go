@@ -17,11 +17,14 @@ import (
 )
 
 type promptRepoStub struct {
-	companySeen uuid.UUID
-	clientName  string
-	nextNumber  string
-	draft       *repository.CreateDraftResult
-	record      *repository.PromptDraftRecord
+	companySeen        uuid.UUID
+	clientName         string
+	nextNumber         string
+	draft              *repository.CreateDraftResult
+	record             *repository.PromptDraftRecord
+	nextNumberCalls    int
+	createDraftCalls   int
+	completeDraftCalls int
 }
 
 func (r *promptRepoStub) FindByIdempotencyKey(context.Context, uuid.UUID, string) (*domain.QuotationRevision, error) {
@@ -35,18 +38,21 @@ func (r *promptRepoStub) GetClientNameForCompany(_ context.Context, companyID, _
 	return r.clientName, nil
 }
 func (r *promptRepoStub) NextQuotationNumber(context.Context, uuid.UUID) (string, error) {
+	r.nextNumberCalls++
 	if r.nextNumber == "" {
 		r.nextNumber = "Q-2026-001"
 	}
 	return r.nextNumber, nil
 }
 func (r *promptRepoStub) CreateDraftTransaction(_ context.Context, _ repository.CreateDraftParams) (*repository.CreateDraftResult, error) {
+	r.createDraftCalls++
 	if r.draft == nil {
 		r.draft = &repository.CreateDraftResult{QuotationID: uuid.New(), RevisionID: uuid.New()}
 	}
 	return r.draft, nil
 }
 func (r *promptRepoStub) CompletePromptDraft(_ context.Context, params repository.CompletePromptDraftParams) (*repository.PromptDraftSaveResult, error) {
+	r.completeDraftCalls++
 	r.record = &repository.PromptDraftRecord{QuotationID: params.QuotationID, RevisionID: params.RevisionID, QuotationNumber: r.nextNumber, ContentHTML: params.ContentHTML, ContentVersion: 1, StateVersion: 1, PromptState: json.RawMessage(params.PromptState), Calculation: params.CalculationSnapshot}
 	return &repository.PromptDraftSaveResult{RevisionID: params.RevisionID, ContentVersion: 1, StateVersion: 1}, nil
 }
@@ -118,6 +124,24 @@ func TestPromptDraftService_IncompleteDraftHasNoFictitiousCalculation(t *testing
 	require.Equal(t, domain.ReadinessIncomplete, result.Readiness)
 	require.Empty(t, result.Calculation)
 	require.Contains(t, result.ContentHTML, "information-missing")
+}
+
+func TestPromptDraftService_RejectsNoBusinessSignalBeforePersistence(t *testing.T) {
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+	svc := NewPromptDraftService(repo, nil, promptExtractorStub{state: domain.PromptQuotationState{}}, nil, nil, nil)
+
+	_, err := svc.CreateFromMeeting(context.Background(), uuid.New(), nil, dto.CreateFromMeetingRequest{
+		ClientName:     stringPtr("PT Arunika"),
+		MeetingNotes:   "Catatan hanya berisi identitas.",
+		IdempotencyKey: uuid.New().String(),
+	})
+
+	var safe *PromptDraftError
+	require.ErrorAs(t, err, &safe)
+	assert.Equal(t, "meeting_notes_no_business_signal", safe.SafeCode())
+	assert.Zero(t, repo.nextNumberCalls)
+	assert.Zero(t, repo.createDraftCalls)
+	assert.Zero(t, repo.completeDraftCalls)
 }
 
 func TestPromptDraftService_IdempotencyReplayLoadsSameDraft(t *testing.T) {
@@ -323,5 +347,22 @@ func TestPromptDraftService_PreservesSafeExtractionReason(t *testing.T) {
 		require.ErrorAs(t, err, &safe)
 		assert.Equal(t, "invalid_extraction", safe.SafeCode())
 	})
-}
 
+	t.Run("provider safe code is preserved", func(t *testing.T) {
+		extractor := promptExtractionErrorStub{
+			err: newGenerationError(ErrCodeProviderTimeout, "AI provider timed out"),
+		}
+		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+
+		_, err := svc.CreateFromMeeting(context.Background(), companyID, nil, dto.CreateFromMeetingRequest{
+			ClientName:     stringPtr("PT Arunika"),
+			MeetingNotes:   "Catatan meeting untuk quotation",
+			IdempotencyKey: uuid.New().String(),
+		})
+		require.Error(t, err)
+
+		var safe interface{ SafeCode() string }
+		require.ErrorAs(t, err, &safe)
+		assert.Equal(t, ErrCodeProviderTimeout, safe.SafeCode())
+	})
+}

@@ -24,6 +24,7 @@ var (
 	ErrPromptInvalidRequest    = errors.New("invalid prompt-first request")
 	ErrPromptInsufficientInfo  = errors.New("insufficient information")
 	ErrPromptInvalidExtraction = errors.New("invalid meeting extraction")
+	ErrPromptNoBusinessSignal  = errors.New("meeting notes contain no business signal")
 	ErrPromptClientNotFound    = errors.New("client is not available for company")
 	ErrPromptPersistence       = errors.New("prompt draft persistence failed")
 )
@@ -129,6 +130,9 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 	state, err := s.extractor.Extract(ctx, companyID, dto.MeetingExtractionRequest{MeetingNotes: notes}, catalogContext)
 	if err != nil {
 		return nil, promptError(promptExtractionErrorCode(err), ErrPromptInvalidExtraction)
+	}
+	if !hasMeetingBusinessSignal(state) {
+		return nil, promptError("meeting_notes_no_business_signal", ErrPromptNoBusinessSignal)
 	}
 	if ident.Organization != "" {
 		state.ClientCompany = userFact(ident.Organization)
@@ -300,6 +304,10 @@ func (s *PromptDraftService) loadResponse(ctx context.Context, companyID, quotat
 func promptError(code string, err error) error { return &PromptDraftError{Code: code, err: err} }
 
 func promptExtractionErrorCode(err error) string {
+	var generationErr *GenerationError
+	if errors.As(err, &generationErr) && strings.TrimSpace(generationErr.Code) != "" {
+		return generationErr.Code
+	}
 	var extractionErr *MeetingExtractionError
 	if !errors.As(err, &extractionErr) {
 		return "invalid_extraction"

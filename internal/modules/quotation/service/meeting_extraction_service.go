@@ -13,7 +13,10 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 )
 
-const maxMeetingModelOutput = 128 * 1024
+const (
+	maxMeetingModelOutput        = 128 * 1024
+	maxMeetingExtractionAttempts = 2
+)
 
 var (
 	ErrMeetingExtractionInvalidInput  = errors.New("meeting extraction invalid input")
@@ -77,16 +80,38 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 		return domain.PromptQuotationState{}, ErrMeetingExtractionInvalidInput
 	}
 	provider, _, _, err := s.providers.ProviderForCompany(ctx, companyID)
-	if err != nil || provider == nil {
-		return domain.PromptQuotationState{}, ErrMeetingExtractionProvider
-	}
-	result, err := provider.Generate(ctx, GenerateRequest{Prompt: prompt})
 	if err != nil {
-		return domain.PromptQuotationState{}, ErrMeetingExtractionProvider
+		var generationErr *GenerationError
+		if errors.As(err, &generationErr) {
+			return domain.PromptQuotationState{}, generationErr
+		}
+		return domain.PromptQuotationState{}, newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
 	}
-	state, err := decodeMeetingExtraction(result.Text, notes)
-	if err != nil {
-		return domain.PromptQuotationState{}, err
+	if provider == nil {
+		return domain.PromptQuotationState{}, newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
+	}
+
+	var state *domain.PromptQuotationState
+	for attempt := 0; attempt < maxMeetingExtractionAttempts; attempt++ {
+		result, generateErr := provider.Generate(ctx, GenerateRequest{
+			Prompt: prompt, OutputMode: GenerateOutputJSON,
+		})
+		if generateErr != nil {
+			var generationErr *GenerationError
+			if errors.As(generateErr, &generationErr) {
+				return domain.PromptQuotationState{}, generationErr
+			}
+			return domain.PromptQuotationState{}, mapProviderError(generateErr)
+		}
+
+		state, err = decodeMeetingExtraction(result.Text, notes)
+		if err == nil {
+			break
+		}
+		var extractionErr *MeetingExtractionError
+		if !errors.As(err, &extractionErr) || attempt == maxMeetingExtractionAttempts-1 {
+			return domain.PromptQuotationState{}, err
+		}
 	}
 	resolveCatalog(state, catalog)
 	state.Issues = state.ComputeIssues()

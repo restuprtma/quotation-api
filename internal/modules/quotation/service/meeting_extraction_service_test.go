@@ -15,13 +15,22 @@ import (
 )
 
 type meetingProviderFake struct {
-	result GenerateResult
-	err    error
-	prompt string
+	result   GenerateResult
+	err      error
+	results  []GenerateResult
+	errors   []error
+	requests []GenerateRequest
 }
 
 func (p *meetingProviderFake) Generate(_ context.Context, req GenerateRequest) (GenerateResult, error) {
-	p.prompt = req.Prompt
+	p.requests = append(p.requests, req)
+	index := len(p.requests) - 1
+	if index < len(p.errors) && p.errors[index] != nil {
+		return GenerateResult{}, p.errors[index]
+	}
+	if index < len(p.results) {
+		return p.results[index], nil
+	}
 	return p.result, p.err
 }
 
@@ -58,11 +67,77 @@ func TestMeetingExtractionCapturesPromptAndResolvesCatalogRole(t *testing.T) {
 	require.NotNil(t, state.Team[0].ResolvedRateItemID)
 	assert.Equal(t, rateID.String(), *state.Team[0].ResolvedRateItemID)
 	assert.Equal(t, domain.ReadinessPriceable, state.Readiness)
-	assert.Contains(t, provider.prompt, "<application_instructions>")
-	assert.Contains(t, provider.prompt, "<catalog>")
-	assert.Contains(t, provider.prompt, "<meeting_notes>")
-	assert.True(t, strings.Index(provider.prompt, "<application_instructions>") < strings.Index(provider.prompt, "<catalog>"))
-	assert.True(t, strings.Index(provider.prompt, "<catalog>") < strings.Index(provider.prompt, "<meeting_notes>"))
+	assert.Contains(t, provider.requests[0].Prompt, "<application_instructions>")
+	assert.Contains(t, provider.requests[0].Prompt, "<catalog>")
+	assert.Contains(t, provider.requests[0].Prompt, "<meeting_notes>")
+	assert.True(t, strings.Index(provider.requests[0].Prompt, "<application_instructions>") < strings.Index(provider.requests[0].Prompt, "<catalog>"))
+	assert.True(t, strings.Index(provider.requests[0].Prompt, "<catalog>") < strings.Index(provider.requests[0].Prompt, "<meeting_notes>"))
+}
+
+func TestMeetingExtractionRequestsJSONAndRetriesOneInvalidOutput(t *testing.T) {
+	notes := "stok gudang"
+	valid := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"stok gudang","source":"meeting","evidence":"stok gudang","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: "{"}, {Text: valid}}}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+	require.NoError(t, err)
+	assert.Len(t, state.Scope, 1)
+	require.Len(t, provider.requests, 2)
+	assert.Equal(t, GenerateOutputJSON, provider.requests[0].OutputMode)
+	assert.Equal(t, GenerateOutputJSON, provider.requests[1].OutputMode)
+}
+
+func TestMeetingExtractionStopsAfterSecondInvalidOutput(t *testing.T) {
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: "{"}, {Text: "{"}}}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+	var extractionErr *MeetingExtractionError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "malformed_json", extractionErr.Reason)
+	assert.Len(t, provider.requests, 2)
+}
+
+func TestMeetingExtractionDoesNotRetryProviderFailure(t *testing.T) {
+	t.Run("rate limited", func(t *testing.T) {
+		provider := &meetingProviderFake{errors: []error{&ProviderError{Code: ErrRateLimited, Message: "rate limited"}}}
+		service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+		_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+		var generationErr *GenerationError
+		require.ErrorAs(t, err, &generationErr)
+		assert.Equal(t, ErrCodeProviderRateLimited, generationErr.Code)
+		assert.Len(t, provider.requests, 1)
+	})
+
+	t.Run("deadline exceeded", func(t *testing.T) {
+		provider := &meetingProviderFake{errors: []error{context.DeadlineExceeded}}
+		service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+		_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+		var generationErr *GenerationError
+		require.ErrorAs(t, err, &generationErr)
+		assert.Equal(t, ErrCodeProviderTimeout, generationErr.Code)
+		assert.Len(t, provider.requests, 1)
+	})
+}
+
+func TestMeetingExtractionPreservesProviderSourceError(t *testing.T) {
+	sourceErr := newGenerationError(ErrCodeProviderTimeout, "AI provider timed out")
+	service := NewMeetingExtractionService(meetingProviderSourceFake{err: sourceErr})
+
+	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+	var generationErr *GenerationError
+	require.ErrorAs(t, err, &generationErr)
+	assert.Same(t, sourceErr, generationErr)
+	assert.Equal(t, ErrCodeProviderTimeout, generationErr.Code)
+	assert.NotContains(t, err.Error(), "AI provider timed out")
 }
 
 func TestBuildMeetingExtractionPromptIncludesEmbeddedOutputSchema(t *testing.T) {
@@ -98,7 +173,7 @@ func TestMeetingExtractionRejectsNonStandardRateCard(t *testing.T) {
 	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "meeting notes"}, CatalogContext{RateCardCode: "OTHER-CARD"})
 
 	assert.ErrorIs(t, err, ErrMeetingExtractionInvalidInput)
-	assert.Empty(t, provider.prompt)
+	assert.Empty(t, provider.requests)
 }
 
 func TestMeetingExtractionDoesNotResolveProgrammerTariff(t *testing.T) {
@@ -135,7 +210,9 @@ func TestMeetingExtractionHandlesNilProviderSafely(t *testing.T) {
 
 	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "meeting notes"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
 
-	assert.ErrorIs(t, err, ErrMeetingExtractionProvider)
+	var generationErr *GenerationError
+	require.ErrorAs(t, err, &generationErr)
+	assert.Equal(t, ErrCodeGenerationFailed, generationErr.Code)
 }
 
 func TestMeetingExtractionKeepsNotesAsData(t *testing.T) {
@@ -144,8 +221,8 @@ func TestMeetingExtractionKeepsNotesAsData(t *testing.T) {
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
 	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
 	require.NoError(t, err)
-	assert.Contains(t, provider.prompt, notes)
-	assert.NotContains(t, provider.prompt, `"amount_per_month"`)
+	assert.Contains(t, provider.requests[0].Prompt, notes)
+	assert.NotContains(t, provider.requests[0].Prompt, `"amount_per_month"`)
 }
 
 func TestMeetingExtractionRejectsUnsafeOrMalformedOutput(t *testing.T) {
@@ -217,14 +294,18 @@ func TestMeetingExtractionProviderTimeoutUsesSafeError(t *testing.T) {
 	provider := &meetingProviderFake{err: context.DeadlineExceeded}
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
 	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "meeting notes"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
-	assert.ErrorIs(t, err, ErrMeetingExtractionProvider)
+	var generationErr *GenerationError
+	require.ErrorAs(t, err, &generationErr)
+	assert.Equal(t, ErrCodeProviderTimeout, generationErr.Code)
 	assert.NotContains(t, err.Error(), "deadline exceeded")
 }
 
 func TestMeetingExtractionProviderSourceErrorUsesSafeError(t *testing.T) {
 	service := NewMeetingExtractionService(meetingProviderSourceFake{err: errors.New("credential secret")})
 	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "meeting notes"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
-	assert.ErrorIs(t, err, ErrMeetingExtractionProvider)
+	var generationErr *GenerationError
+	require.ErrorAs(t, err, &generationErr)
+	assert.Equal(t, ErrCodeGenerationFailed, generationErr.Code)
 	assert.NotContains(t, err.Error(), "credential secret")
 }
 
