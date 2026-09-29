@@ -232,9 +232,14 @@ type DedicatedSquadCalculation struct {
 	MaintenanceSubtotal int64                  `json:"maintenance_subtotal"`
 	Preparation         PreparationCalculation `json:"preparation"`
 	Total               int64                  `json:"total"`
-	Discount            int64                  `json:"discount"`
-	TotalInvestment     int64                  `json:"total_investment"`
-	Payments            []PaymentRow           `json:"payments"`
+	// Discount remains the historical preparation discount. Prompt-first
+	// commercial discounts are separate so old calculation snapshots retain
+	// their established meaning when decoded or rendered.
+	Discount            int64        `json:"discount"`
+	TotalBeforeDiscount int64        `json:"total_before_discount,omitempty"`
+	AdditionalDiscount  int64        `json:"additional_discount,omitempty"`
+	TotalInvestment     int64        `json:"total_investment"`
+	Payments            []PaymentRow `json:"payments"`
 }
 
 type DocumentSection struct {

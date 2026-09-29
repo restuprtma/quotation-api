@@ -295,6 +295,9 @@ func (s *PromptDraftService) loadResponse(ctx context.Context, companyID, quotat
 		return nil, promptError("generation_failed", ErrPromptPersistence)
 	}
 	result := &dto.MeetingDraftResponse{QuotationID: record.QuotationID, RevisionID: record.RevisionID, QuotationNumber: record.QuotationNumber, ContentHTML: record.ContentHTML, ContentVersion: record.ContentVersion, StateVersion: record.StateVersion, PromptState: state, Issues: state.Issues, Readiness: state.Readiness, IdempotentReplay: replay}
+	if _, items, snapshotErr := promptRateCardSnapshot(record.RateCardSnapshot); snapshotErr == nil {
+		result.CatalogRoles = PromptCatalogRoles(items)
+	}
 	if len(record.Calculation) > 0 && string(record.Calculation) != "null" && state.Readiness != domain.ReadinessIncomplete {
 		result.Calculation = record.Calculation
 	}
@@ -313,11 +316,25 @@ func promptExtractionErrorCode(err error) string {
 		return "invalid_extraction"
 	}
 	switch extractionErr.Reason {
+	case "unsupported_evidence":
+		if category := safeEvidenceCategory(extractionErr.Field); category != "" {
+			return "invalid_extraction.unsupported_evidence." + category
+		}
+		return "invalid_extraction.unsupported_evidence"
 	case "malformed_json", "trailing_content", "missing_required_field",
-		"unknown_field", "schema_version", "unsupported_evidence", "state_validation":
+		"unknown_field", "schema_version", "state_validation":
 		return "invalid_extraction." + extractionErr.Reason
 	default:
 		return "invalid_extraction"
+	}
+}
+
+func safeEvidenceCategory(field string) string {
+	switch field {
+	case "client_company", "project_name", "duration_months", "team", "scope", "payment_pattern", "commercial_scheme", "service_input":
+		return field
+	default:
+		return ""
 	}
 }
 

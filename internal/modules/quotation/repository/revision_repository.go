@@ -23,18 +23,21 @@ func (r *RevisionRepository) CreateRevision(ctx context.Context, q Execer, rev *
 		INSERT INTO quotation_revisions (
 			id, company_id, quotation_id, revision_number, idempotency_key, publication_status, generation_status,
 			generation_input, budget_maximum, allocation_snapshot, rate_card_snapshot, legal_template_snapshot,
+			prompt_state, prompt_state_version, prompt_section_hashes,
 			content_html, content_version, content_hash, ai_provider, ai_model, skill_snapshot, safety_envelope_version,
 			legal_content_modified, legal_modified_by, legal_modified_at, commercial_content_modified,
 			commercial_modified_by, commercial_modified_at, generated_at, published_at, signer_name, signer_email,
 			signature_data, signed_content_hash, signed_at, signed_ip, signed_user_agent, created_by
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-			$20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35
+			$20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
+			$38
 		) RETURNING created_at, updated_at
 	`
 	err := q.QueryRow(ctx, query,
 		rev.ID, rev.CompanyID, rev.QuotationID, rev.RevisionNumber, rev.IdempotencyKey, rev.PublicationStatus, rev.GenerationStatus,
 		rev.GenerationInput, rev.BudgetMaximum, rev.AllocationSnapshot, rev.RateCardSnapshot, rev.LegalTemplateSnapshot,
+		rev.PromptState, rev.PromptStateVersion, rev.PromptSectionHashes,
 		rev.ContentHTML, rev.ContentVersion, rev.ContentHash, rev.AiProvider, rev.AiModel, rev.SkillSnapshot, rev.SafetyEnvelopeVersion,
 		rev.LegalContentModified, rev.LegalModifiedBy, rev.LegalModifiedAt, rev.CommercialContentModified,
 		rev.CommercialModifiedBy, rev.CommercialModifiedAt, rev.GeneratedAt, rev.PublishedAt, rev.SignerName, rev.SignerEmail,
@@ -52,6 +55,7 @@ func (r *RevisionRepository) GetActiveRevision(ctx context.Context, quotationID,
 		SELECT
 			id, company_id, quotation_id, revision_number, idempotency_key, publication_status, generation_status,
 			generation_input, budget_maximum, allocation_snapshot, rate_card_snapshot, legal_template_snapshot,
+			prompt_state, prompt_state_version, prompt_section_hashes,
 			content_html, content_version, content_hash, ai_provider, ai_model, skill_snapshot, safety_envelope_version,
 			legal_content_modified, legal_modified_by, legal_modified_at, commercial_content_modified,
 			commercial_modified_by, commercial_modified_at, generated_at, published_at, signer_name, signer_email,
@@ -97,6 +101,7 @@ func (r *RevisionRepository) ListRevisionsByQuotationID(ctx context.Context, quo
 		SELECT
 			id, company_id, quotation_id, revision_number, idempotency_key, publication_status, generation_status,
 			generation_input, budget_maximum, allocation_snapshot, rate_card_snapshot, legal_template_snapshot,
+			prompt_state, prompt_state_version, prompt_section_hashes,
 			content_html, content_version, content_hash, ai_provider, ai_model, skill_snapshot, safety_envelope_version,
 			legal_content_modified, legal_modified_by, legal_modified_at, commercial_content_modified,
 			commercial_modified_by, commercial_modified_at, generated_at, published_at, signer_name, signer_email,
@@ -127,6 +132,7 @@ func (r *RevisionRepository) GetSignedRevision(ctx context.Context, quotationID,
 		SELECT
 			id, company_id, quotation_id, revision_number, idempotency_key, publication_status, generation_status,
 			generation_input, budget_maximum, allocation_snapshot, rate_card_snapshot, legal_template_snapshot,
+			prompt_state, prompt_state_version, prompt_section_hashes,
 			content_html, content_version, content_hash, ai_provider, ai_model, skill_snapshot, safety_envelope_version,
 			legal_content_modified, legal_modified_by, legal_modified_at, commercial_content_modified,
 			commercial_modified_by, commercial_modified_at, generated_at, published_at, signer_name, signer_email,
@@ -143,6 +149,7 @@ func scanRevisionRow(scanner rowScanner) (*domain.QuotationRevision, error) {
 	err := scanner.Scan(
 		&rev.ID, &rev.CompanyID, &rev.QuotationID, &rev.RevisionNumber, &rev.IdempotencyKey, &rev.PublicationStatus, &rev.GenerationStatus,
 		&rev.GenerationInput, &rev.BudgetMaximum, &rev.AllocationSnapshot, &rev.RateCardSnapshot, &rev.LegalTemplateSnapshot,
+		&rev.PromptState, &rev.PromptStateVersion, &rev.PromptSectionHashes,
 		&rev.ContentHTML, &rev.ContentVersion, &rev.ContentHash, &rev.AiProvider, &rev.AiModel, &rev.SkillSnapshot, &rev.SafetyEnvelopeVersion,
 		&rev.LegalContentModified, &rev.LegalModifiedBy, &rev.LegalModifiedAt, &rev.CommercialContentModified,
 		&rev.CommercialModifiedBy, &rev.CommercialModifiedAt, &rev.GeneratedAt, &rev.PublishedAt, &rev.SignerName, &rev.SignerEmail,

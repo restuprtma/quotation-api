@@ -61,7 +61,6 @@ func detectStageFromPrompt(prompt string) domain.BlueprintSectionType {
 	return domain.BlueprintSectionContext
 }
 
-
 type pipelineScriptedProviderSource struct {
 	mu         sync.Mutex
 	calls      int
@@ -1258,4 +1257,3 @@ func TestBlueprintPipelineManualJourneyToArchitectureStaleLeaseRecoveryIntegrati
 	assert.Nil(t, finalArchRun.SafeErrorCode)
 	assert.NotEmpty(t, finalArchRun.ContentJSON)
 }
-

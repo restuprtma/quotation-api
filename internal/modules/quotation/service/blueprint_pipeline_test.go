@@ -2031,4 +2031,3 @@ func TestLogBlueprintProviderFailure(t *testing.T) {
 		assert.Contains(t, logOutput, "provider_unavailable")
 	})
 }
-

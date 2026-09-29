@@ -157,6 +157,9 @@ func (s *Service) ListRevisions(ctx context.Context, companyID, id string) ([]dt
 			SignedAt:                r.SignedAt,
 			SignedBy:                r.SignerName,
 			SignedIP:                r.SignedIP,
+			PromptState:             r.PromptState,
+			PromptStateVersion:      r.PromptStateVersion,
+			PromptSectionHashes:     r.PromptSectionHashes,
 			BlueprintSourceMetadata: &meta,
 		})
 	}

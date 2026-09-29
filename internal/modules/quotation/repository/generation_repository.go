@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
+	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/pkg/logger"
 )
 
@@ -884,21 +885,23 @@ func (r *GenerationRepository) GetGenerationState(ctx context.Context, companyID
 // excluded from this API view, except for legal_template_snapshot which is
 // safely exposed to support the frontend "Restore Official Template" action.
 type QuotationGenerationDetail struct {
-	QuotationID               uuid.UUID       `json:"quotation_id"`
-	CompanyID                 uuid.UUID       `json:"company_id"`
-	ClientID                  uuid.UUID       `json:"client_id"`
-	QuotationNumber           string          `json:"quotation_number"`
-	Subject                   string          `json:"subject"`
-	Status                    string          `json:"status"`
-	RevisionID                uuid.UUID       `json:"revision_id"`
-	LegalTemplateSnapshot     json.RawMessage `json:"legal_template_snapshot,omitempty"`
-	PromptState               json.RawMessage `json:"prompt_state,omitempty"`
-	PromptStateVersion        int64           `json:"prompt_state_version,omitempty"`
-	PromptSectionHashes       json.RawMessage `json:"prompt_section_hashes,omitempty"`
-	LegalContentModified      bool            `json:"legal_content_modified"`
-	CommercialContentModified bool            `json:"commercial_content_modified"`
-	CreatedAt                 time.Time       `json:"created_at"`
-	UpdatedAt                 time.Time       `json:"updated_at"`
+	QuotationID               uuid.UUID               `json:"quotation_id"`
+	CompanyID                 uuid.UUID               `json:"company_id"`
+	ClientID                  uuid.UUID               `json:"client_id"`
+	QuotationNumber           string                  `json:"quotation_number"`
+	Subject                   string                  `json:"subject"`
+	Status                    string                  `json:"status"`
+	RevisionID                uuid.UUID               `json:"revision_id"`
+	CatalogRoles              []dto.PromptCatalogRole `json:"catalog_roles,omitempty"`
+	RateCardSnapshot          json.RawMessage         `json:"-"`
+	LegalTemplateSnapshot     json.RawMessage         `json:"legal_template_snapshot,omitempty"`
+	PromptState               json.RawMessage         `json:"prompt_state,omitempty"`
+	PromptStateVersion        int64                   `json:"prompt_state_version,omitempty"`
+	PromptSectionHashes       json.RawMessage         `json:"prompt_section_hashes,omitempty"`
+	LegalContentModified      bool                    `json:"legal_content_modified"`
+	CommercialContentModified bool                    `json:"commercial_content_modified"`
+	CreatedAt                 time.Time               `json:"created_at"`
+	UpdatedAt                 time.Time               `json:"updated_at"`
 
 	GenerationState
 }
@@ -912,7 +915,7 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 		SELECT q.id, q.company_id, q.client_id, q.quotation_number,
 		       COALESCE(q.subject, ''), q.status, q.created_at, q.updated_at,
 		       r.id, r.generation_status, r.content_version, COALESCE(r.content_html, ''),
-		       COALESCE(r.legal_template_snapshot, '{}'::jsonb),
+		       COALESCE(r.rate_card_snapshot, '{}'::jsonb), COALESCE(r.legal_template_snapshot, '{}'::jsonb),
 		       r.prompt_state, r.prompt_state_version, r.prompt_section_hashes,
 		       r.legal_content_modified, r.commercial_content_modified,
 		       r.generated_at, r.updated_at
@@ -923,7 +926,7 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 		&d.QuotationID, &d.CompanyID, &d.ClientID, &d.QuotationNumber,
 		&d.Subject, &d.Status, &d.CreatedAt, &d.UpdatedAt,
 		&d.RevisionID, &d.GenerationStatus, &d.ContentVersion, &d.ContentHTML,
-		&d.LegalTemplateSnapshot,
+		&d.RateCardSnapshot, &d.LegalTemplateSnapshot,
 		&d.PromptState, &d.PromptStateVersion, &d.PromptSectionHashes,
 		&d.LegalContentModified, &d.CommercialContentModified,
 		&d.GeneratedAt, &d.UpdatedAt,

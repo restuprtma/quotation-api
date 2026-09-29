@@ -2188,4 +2188,3 @@ func TestSaveDraftDedicatedModern_RejectsDuplicateMetadataBlock(t *testing.T) {
 	require.Error(t, err)
 	assertGenerationCode(t, err, service.ErrCodeUnsafeHTML)
 }
-

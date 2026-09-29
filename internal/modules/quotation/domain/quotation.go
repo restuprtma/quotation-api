@@ -59,6 +59,9 @@ type QuotationRevision struct {
 	ContentHTML           *string         `json:"content_html" db:"content_html"`
 	ContentVersion        *string         `json:"content_version" db:"content_version"`
 	ContentHash           *string         `json:"content_hash" db:"content_hash"`
+	PromptState           json.RawMessage `json:"prompt_state,omitempty" db:"prompt_state"`
+	PromptStateVersion    int64           `json:"prompt_state_version,omitempty" db:"prompt_state_version"`
+	PromptSectionHashes   json.RawMessage `json:"prompt_section_hashes,omitempty" db:"prompt_section_hashes"`
 
 	AiProvider            *string         `json:"ai_provider" db:"ai_provider"`
 	AiModel               *string         `json:"ai_model" db:"ai_model"`

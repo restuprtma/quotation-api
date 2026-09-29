@@ -487,6 +487,7 @@ func (h *QuotationGenerationHandler) GetByID(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, "Failed to load quotation", "")
 		return
 	}
+	detail.CatalogRoles = service.PromptCatalogRolesFromSnapshot(detail.RateCardSnapshot)
 	response.Success(c, http.StatusOK, "Quotation retrieved successfully", detail)
 }
 

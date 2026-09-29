@@ -53,7 +53,7 @@ func (r *promptRepoStub) CreateDraftTransaction(_ context.Context, _ repository.
 }
 func (r *promptRepoStub) CompletePromptDraft(_ context.Context, params repository.CompletePromptDraftParams) (*repository.PromptDraftSaveResult, error) {
 	r.completeDraftCalls++
-	r.record = &repository.PromptDraftRecord{QuotationID: params.QuotationID, RevisionID: params.RevisionID, QuotationNumber: r.nextNumber, ContentHTML: params.ContentHTML, ContentVersion: 1, StateVersion: 1, PromptState: json.RawMessage(params.PromptState), Calculation: params.CalculationSnapshot}
+	r.record = &repository.PromptDraftRecord{QuotationID: params.QuotationID, RevisionID: params.RevisionID, QuotationNumber: r.nextNumber, ContentHTML: params.ContentHTML, ContentVersion: 1, StateVersion: 1, PromptState: json.RawMessage(params.PromptState), Calculation: params.CalculationSnapshot, RateCardSnapshot: params.RateCardSnapshot}
 	return &repository.PromptDraftSaveResult{RevisionID: params.RevisionID, ContentVersion: 1, StateVersion: 1}, nil
 }
 func (r *promptRepoStub) LoadPromptDraft(context.Context, uuid.UUID, uuid.UUID) (*repository.PromptDraftRecord, error) {
@@ -175,6 +175,7 @@ func TestPromptDraftService_PriceableDraftIncludesBackendCalculation(t *testing.
 	require.Equal(t, domain.ReadinessPriceable, result.Readiness)
 	require.NotEmpty(t, result.Calculation)
 	require.Contains(t, result.ContentHTML, "data-quotation-section=\"commercial\"")
+	require.Equal(t, []dto.PromptCatalogRole{{RateItemID: itemID, Role: item.Role, DisplayName: item.DisplayName, Seniority: item.Seniority, TermType: item.TermType}}, result.CatalogRoles)
 }
 
 func TestPromptFirstSanitizerPreservesSectionMarkers(t *testing.T) {
@@ -296,7 +297,25 @@ func TestPromptDraftService_PreservesSafeExtractionReason(t *testing.T) {
 
 	t.Run("allowlisted reason preserved", func(t *testing.T) {
 		extractor := promptExtractionErrorStub{
-			err: &MeetingExtractionError{Reason: "unsupported_evidence"},
+			err: &MeetingExtractionError{Reason: "unsupported_evidence", Field: "duration_months"},
+		}
+		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+
+		_, err := svc.CreateFromMeeting(context.Background(), companyID, nil, dto.CreateFromMeetingRequest{
+			ClientName:     stringPtr("PT Arunika"),
+			MeetingNotes:   "Catatan meeting untuk quotation",
+			IdempotencyKey: uuid.New().String(),
+		})
+		require.Error(t, err)
+
+		var safe interface{ SafeCode() string }
+		require.ErrorAs(t, err, &safe)
+		assert.Equal(t, "invalid_extraction.unsupported_evidence.duration_months", safe.SafeCode())
+	})
+
+	t.Run("unsafe evidence field falls back to generic evidence code", func(t *testing.T) {
+		extractor := promptExtractionErrorStub{
+			err: &MeetingExtractionError{Reason: "unsupported_evidence", Field: "scope[0].evidence: secret"},
 		}
 		svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
 

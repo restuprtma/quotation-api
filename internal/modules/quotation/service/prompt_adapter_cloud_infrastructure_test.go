@@ -78,8 +78,8 @@ func validPromptCloudInfrastructureVPSState() domain.PromptQuotationState {
 				DueDateLabel:     domain.Fact[string]{Value: "14 Okt 2026", Source: domain.SourceMeeting, Evidence: "14 Okt 2026"},
 				Component:        domain.CloudPaymentMonthly,
 				Nominal: domain.MoneyInput{
-					Amount: ptrInt64(1_500_000),
-					Source: domain.SourceCatalog,
+					Amount:     ptrInt64(1_500_000),
+					Source:     domain.SourceCatalog,
 					CatalogRef: ptrString("venturo-infra-2026.vps.medium"),
 				},
 			},
@@ -90,8 +90,8 @@ func validPromptCloudInfrastructureVPSState() domain.PromptQuotationState {
 				DueDateLabel:     domain.Fact[string]{Value: "14 Nov 2026", Source: domain.SourceMeeting, Evidence: "14 Nov 2026"},
 				Component:        domain.CloudPaymentMonthly,
 				Nominal: domain.MoneyInput{
-					Amount: ptrInt64(1_500_000),
-					Source: domain.SourceCatalog,
+					Amount:     ptrInt64(1_500_000),
+					Source:     domain.SourceCatalog,
 					CatalogRef: ptrString("venturo-infra-2026.vps.medium"),
 				},
 			},

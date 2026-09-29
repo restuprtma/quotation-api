@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	maxMeetingModelOutput        = 128 * 1024
-	maxMeetingExtractionAttempts = 2
+	maxMeetingModelOutput                = 128 * 1024
+	maxMeetingExtractionAttempts         = 2
+	maxMeetingEvidenceExtractionAttempts = 3
 )
 
 var (
@@ -26,7 +27,14 @@ var (
 	meetingExtractionSchema           = GetMeetingExtractionSchema
 )
 
-type MeetingExtractionError struct{ Reason string }
+type MeetingExtractionError struct {
+	Reason string
+	Field  string
+}
+
+// EvidenceViolation contains only an allow-listed, coarse field category.
+// It must never carry raw model output or meeting-note content.
+type EvidenceViolation struct{ Field string }
 
 func (e *MeetingExtractionError) Error() string { return ErrMeetingExtractionInvalidOutput.Error() }
 
@@ -94,7 +102,8 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 
 	var state *domain.PromptQuotationState
 	attemptPrompt := prompt
-	for attempt := 0; attempt < maxMeetingExtractionAttempts; attempt++ {
+	maxAttempts := maxMeetingExtractionAttempts
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		result, generateErr := provider.Generate(ctx, GenerateRequest{
 			Prompt: attemptPrompt, OutputMode: GenerateOutputJSON,
 		})
@@ -111,10 +120,13 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 			break
 		}
 		var extractionErr *MeetingExtractionError
-		if !errors.As(err, &extractionErr) || attempt == maxMeetingExtractionAttempts-1 {
+		if !errors.As(err, &extractionErr) || attempt == maxAttempts-1 {
 			return domain.PromptQuotationState{}, err
 		}
-		attemptPrompt = meetingExtractionRetryPrompt(prompt, extractionErr.Reason)
+		if extractionErr.Reason == "unsupported_evidence" {
+			maxAttempts = maxMeetingEvidenceExtractionAttempts
+		}
+		attemptPrompt = meetingExtractionRetryPrompt(prompt, extractionErr.Reason, extractionErr.Field)
 	}
 	resolveCatalog(state, catalog)
 	state.Issues = state.ComputeIssues()
@@ -157,14 +169,23 @@ func buildMeetingExtractionPrompt(notes string, catalog CatalogContext) (string,
 	return prompt, nil
 }
 
-func meetingExtractionRetryPrompt(prompt, reason string) string {
-	if reason != "unsupported_evidence" {
+func meetingExtractionRetryPrompt(prompt, reason, field string) string {
+	var correction string
+	switch reason {
+	case "unsupported_evidence":
+		correction = "The previous JSON response was rejected because the meeting evidence for " + field +
+			" was not a literal substring of MEETING_NOTES. Regenerate the complete JSON object. " +
+			"For every source meeting fact, copy evidence as a non-empty literal contiguous substring (a contiguous literal substring) from MEETING_NOTES; " +
+			"do not paraphrase, summarize, translate, or combine separate bullets. Omit a fact that cannot be supported."
+	case "missing_required_field":
+		correction = "The previous response was rejected because it has missing required fields. " +
+			"Return all of these fields and never use null: schema_version, meeting_notes, scope, team, issues, readiness. " +
+			"Use empty arrays [] for scope, team, or issues when no value is available."
+	default:
 		return prompt
 	}
 	return prompt + "\n\n<validation_correction>\n" +
-		"The previous response was rejected because meeting-sourced evidence was not grounded in MEETING_NOTES. Return JSON only. " +
-		"For each fact with source meeting, evidence must be a non-empty contiguous literal substring copied from MEETING_NOTES. " +
-		"If unsupported, use source suggestion and omit evidence. Do not invent facts, prices, catalog IDs, or extra JSON fields.\n" +
+		correction + " Return JSON only. Do not invent facts, prices, catalog IDs, or extra JSON fields.\n" +
 		"</validation_correction>"
 }
 
@@ -208,8 +229,8 @@ func decodeMeetingExtraction(raw, notes string) (*domain.PromptQuotationState, e
 	if state.SchemaVersion != domain.SchemaPromptQuotationV1 {
 		return invalid("schema_version")
 	}
-	if !evidenceIsInNotes(&state, notes) {
-		return invalid("unsupported_evidence")
+	if violation := firstEvidenceViolation(&state, notes); violation != nil {
+		return nil, &MeetingExtractionError{Reason: "unsupported_evidence", Field: violation.Field}
 	}
 	if err := state.Validate(); err != nil {
 		return invalid("state_validation")
@@ -271,68 +292,86 @@ func normalizedEvidenceIsInNotes(notes, evidence string) bool {
 	return strings.Contains(" "+normalizeEvidenceText(notes)+" ", " "+normalizedEvidence+" ")
 }
 
-func evidenceIsInNotes(state *domain.PromptQuotationState, notes string) bool {
-	check := func(source domain.ValueSource, evidence string) bool {
-		return source != domain.SourceMeeting || normalizedEvidenceIsInNotes(notes, evidence)
+func firstEvidenceViolation(state *domain.PromptQuotationState, notes string) *EvidenceViolation {
+	var violation *EvidenceViolation
+	check := func(field string, source domain.ValueSource, evidence string) bool {
+		if violation != nil || source != domain.SourceMeeting || normalizedEvidenceIsInNotes(notes, evidence) {
+			return true
+		}
+		violation = &EvidenceViolation{Field: field}
+		return false
 	}
-	for _, f := range []*domain.Fact[string]{state.ClientName, state.ClientCompany, state.PICName, state.ProjectName, state.CommercialScheme, state.PaymentPattern} {
-		if f != nil && !check(f.Source, f.Evidence) {
-			return false
+	for _, fact := range []struct {
+		field string
+		fact  *domain.Fact[string]
+	}{
+		{"client_company", state.ClientName},
+		{"client_company", state.ClientCompany},
+		{"client_company", state.PICName},
+		{"project_name", state.ProjectName},
+		{"commercial_scheme", state.CommercialScheme},
+		{"payment_pattern", state.PaymentPattern},
+	} {
+		if fact.fact != nil && !check(fact.field, fact.fact.Source, fact.fact.Evidence) {
+			return violation
 		}
 	}
 	for i := range state.Scope {
-		if !check(state.Scope[i].Source, state.Scope[i].Evidence) {
-			return false
+		if !check("scope", state.Scope[i].Source, state.Scope[i].Evidence) {
+			return violation
 		}
 	}
-	if state.DurationMonths != nil && !check(state.DurationMonths.Source, state.DurationMonths.Evidence) {
-		return false
+	if state.DurationMonths != nil && !check("duration_months", state.DurationMonths.Source, state.DurationMonths.Evidence) {
+		return violation
 	}
 	for _, line := range state.Team {
-		if !check(line.Source, line.Evidence) {
-			return false
+		if !check("team", line.Source, line.Evidence) {
+			return violation
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeSubscriptionSaaS {
 		input, err := DecodePromptSubscriptionSaaSServiceInput(state.ServiceInput)
 		if err != nil || !subscriptionFactsAreInNotes(input, check) {
-			return false
+			return &EvidenceViolation{Field: "service_input"}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeWhiteLabel {
 		input, err := DecodePromptWhiteLabelServiceInput(state.ServiceInput)
 		if err != nil || !whiteLabelFactsAreInNotes(input, check) {
-			return false
+			return &EvidenceViolation{Field: "service_input"}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeStandaloneMaintenance {
 		input, err := DecodePromptStandaloneMaintenanceServiceInput(state.ServiceInput)
 		if err != nil || !standaloneMaintenanceFactsAreInNotes(input, check) {
-			return false
+			return &EvidenceViolation{Field: "service_input"}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeCustomDevelopment {
 		input, err := DecodePromptCustomDevelopmentServiceInput(state.ServiceInput)
 		if err != nil || !customDevelopmentFactsAreInNotes(input, check) {
-			return false
+			return &EvidenceViolation{Field: "service_input"}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeTalentOutsourcing {
 		input, err := DecodePromptTalentOutsourcingServiceInput(state.ServiceInput)
 		if err != nil || !talentOutsourcingFactsAreInNotes(input, check) {
-			return false
+			return &EvidenceViolation{Field: "service_input"}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeCloudInfrastructure {
 		input, err := DecodePromptCloudInfrastructureServiceInput(state.ServiceInput)
 		if err != nil || !cloudInfrastructureFactsAreInNotes(input, check) {
-			return false
+			return &EvidenceViolation{Field: "service_input"}
 		}
 	}
-	return true
+	return violation
 }
 
-func talentOutsourcingFactsAreInNotes(in PromptTalentOutsourcingServiceInput, check func(domain.ValueSource, string) bool) bool {
+func talentOutsourcingFactsAreInNotes(in PromptTalentOutsourcingServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
+	check := func(source domain.ValueSource, evidence string) bool {
+		return evidenceCheck("service_input", source, evidence)
+	}
 	if !check(in.EngagementMode.Source, in.EngagementMode.Evidence) ||
 		!check(in.DocumentNumber.Source, in.DocumentNumber.Evidence) ||
 		!check(in.ServiceName.Source, in.ServiceName.Evidence) ||
@@ -415,7 +454,10 @@ func talentOutsourcingFactsAreInNotes(in PromptTalentOutsourcingServiceInput, ch
 	return true
 }
 
-func cloudInfrastructureFactsAreInNotes(in PromptCloudInfrastructureServiceInput, check func(domain.ValueSource, string) bool) bool {
+func cloudInfrastructureFactsAreInNotes(in PromptCloudInfrastructureServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
+	check := func(source domain.ValueSource, evidence string) bool {
+		return evidenceCheck("service_input", source, evidence)
+	}
 	if !check(in.DocumentNumber.Source, in.DocumentNumber.Evidence) ||
 		!check(in.ServiceName.Source, in.ServiceName.Evidence) ||
 		!check(in.TaxTreatment.Source, in.TaxTreatment.Evidence) ||
@@ -500,7 +542,10 @@ func resolveCatalog(state *domain.PromptQuotationState, catalog CatalogContext) 
 	}
 }
 
-func subscriptionFactsAreInNotes(input PromptSubscriptionSaaSServiceInput, check func(domain.ValueSource, string) bool) bool {
+func subscriptionFactsAreInNotes(input PromptSubscriptionSaaSServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
+	check := func(source domain.ValueSource, evidence string) bool {
+		return evidenceCheck("service_input", source, evidence)
+	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
 	boolean := func(f domain.Fact[bool]) bool { return check(f.Source, f.Evidence) }
@@ -539,7 +584,10 @@ func subscriptionFactsAreInNotes(input PromptSubscriptionSaaSServiceInput, check
 	return true
 }
 
-func whiteLabelFactsAreInNotes(input PromptWhiteLabelServiceInput, check func(domain.ValueSource, string) bool) bool {
+func whiteLabelFactsAreInNotes(input PromptWhiteLabelServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
+	check := func(source domain.ValueSource, evidence string) bool {
+		return evidenceCheck("service_input", source, evidence)
+	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
 	if !text(input.ProductName) || !text(input.TaxTreatment) {
@@ -593,7 +641,10 @@ func whiteLabelFactsAreInNotes(input PromptWhiteLabelServiceInput, check func(do
 	return true
 }
 
-func standaloneMaintenanceFactsAreInNotes(input PromptStandaloneMaintenanceServiceInput, check func(domain.ValueSource, string) bool) bool {
+func standaloneMaintenanceFactsAreInNotes(input PromptStandaloneMaintenanceServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
+	check := func(source domain.ValueSource, evidence string) bool {
+		return evidenceCheck("service_input", source, evidence)
+	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
 	if !text(input.SystemName) || !text(input.Mode) || !text(input.TaxTreatment) {
@@ -640,7 +691,10 @@ func standaloneMaintenanceFactsAreInNotes(input PromptStandaloneMaintenanceServi
 	return true
 }
 
-func customDevelopmentFactsAreInNotes(input PromptCustomDevelopmentServiceInput, check func(domain.ValueSource, string) bool) bool {
+func customDevelopmentFactsAreInNotes(input PromptCustomDevelopmentServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
+	check := func(source domain.ValueSource, evidence string) bool {
+		return evidenceCheck("service_input", source, evidence)
+	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
 	if !text(input.SystemName) || !text(input.DevelopmentTableMode) || !text(input.TaxTreatment) {

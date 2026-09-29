@@ -64,6 +64,17 @@ func TestDedicatedSquadHTMLRendererModels(t *testing.T) {
 	}
 }
 
+func TestDedicatedSquadHTMLRenderer_PreservesHistoricalRoleSnapshot(t *testing.T) {
+	in := dedicatedRenderFixture(domain.ModelSOWSmall, DedicatedSquadRules{IncludeTimeline: true})
+	in.Calculation.Development[0].Role = "frontend_programmer"
+
+	got, err := NewDedicatedSquadHTMLRenderer().Render(in)
+
+	require.NoError(t, err)
+	assert.Contains(t, got, "Frontend Programmer")
+	assert.NotContains(t, got, "Backend Programmer")
+}
+
 func dedicatedRenderFixture(model domain.SquadModel, rules DedicatedSquadRules) DedicatedSquadDocumentInput {
 	date := time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC)
 	line := domain.SquadLineCalculation{SquadLineInput: domain.SquadLineInput{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 4}, AmountPerUnit: 10_000_000, LineTotal: 10_000_000}

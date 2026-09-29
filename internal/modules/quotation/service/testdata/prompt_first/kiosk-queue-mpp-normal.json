@@ -1,0 +1,56 @@
+{
+  "kind": "kiosk_queue_system_v1",
+  "variant": {"value": "government_mpp", "source": "meeting", "evidence": "MPP", "confirmed": false},
+  "document_number": {"value": "LANDA/MPP-Antrian/0726/001", "source": "meeting", "evidence": "MPP", "confirmed": false},
+  "system_name": {"value": "Sistem Antrian Terpadu MPP", "source": "meeting", "evidence": "Sistem Antrian Terpadu MPP", "confirmed": false},
+  "hardware_provision": {"value": "venturo_supplied", "source": "meeting", "evidence": "Pengadaan mesin kiosk", "confirmed": false},
+  "tax_treatment": {"value": "inclusive_ppn_11", "source": "meeting", "evidence": "MPP", "confirmed": false},
+  "government_scope_phases": [
+    {
+      "title": {"value": "Fase 1: Persiapan & Desain", "source": "meeting", "evidence": "Persiapan", "confirmed": false},
+      "deliverables": [{"value": "Dokumen Analisis Kebutuhan", "source": "meeting", "evidence": "Dokumen", "confirmed": false}]
+    }
+  ],
+  "expert_requirements": [
+    {
+      "role": {"value": "Project Manager", "source": "meeting", "evidence": "PM", "confirmed": false},
+      "headcount": {"value": 1, "source": "meeting", "evidence": "1", "confirmed": false},
+      "duration_label": {"value": "3 Bulan", "source": "meeting", "evidence": "3 Bulan", "confirmed": false},
+      "minimum_qualification": {"value": "S1 Sistem Informasi", "source": "meeting", "evidence": "S1", "confirmed": false}
+    }
+  ],
+  "service_groups": [
+    {
+      "title": {"value": "Development", "source": "meeting", "evidence": "Development", "confirmed": false},
+      "items": [
+        {
+          "name": {"value": "Senior Programmer", "source": "meeting", "evidence": "Senior", "confirmed": false},
+          "monthly_rate": {"amount": 16170000, "source": "catalog", "catalog_ref": "RATE-SR-PROG"},
+          "headcount": {"value": 1, "source": "meeting", "evidence": "1", "confirmed": false},
+          "period_quarters": {"value": 4, "source": "meeting", "evidence": "4", "confirmed": false}
+        }
+      ]
+    }
+  ],
+  "hardware_items": [
+    {
+      "name": {"value": "Mesin Kiosk Touchscreen 21.5 inch", "source": "meeting", "evidence": "Mesin Kiosk", "confirmed": false},
+      "unit_price": {"amount": 24500000, "source": "catalog", "catalog_ref": "HW-KIOSK"},
+      "quantity": {"value": 1, "source": "meeting", "evidence": "1", "confirmed": false}
+    }
+  ],
+  "government_payment_schedule": [
+    {
+      "stage": {"value": "Uang Muka 50%", "source": "meeting", "evidence": "DP", "confirmed": false},
+      "billing_basis": {"value": "SPMK", "source": "meeting", "evidence": "SPMK", "confirmed": false},
+      "nominal": {"amount": 27195000, "source": "user"}
+    },
+    {
+      "stage": {"value": "Pelunasan 50%", "source": "meeting", "evidence": "Pelunasan", "confirmed": false},
+      "billing_basis": {"value": "BAST", "source": "meeting", "evidence": "BAST", "confirmed": false},
+      "nominal": {"amount": 17948700, "source": "user"}
+    }
+  ],
+  "payment_due_days": {"value": 14, "source": "meeting", "evidence": "14", "confirmed": false},
+  "limitation_codes": [{"value": "civil_electrical", "source": "meeting", "evidence": "civil", "confirmed": false}]
+}

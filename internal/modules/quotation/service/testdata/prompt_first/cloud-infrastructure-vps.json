@@ -1,0 +1,233 @@
+{
+  "kind": "cloud_infrastructure_v1",
+  "document_number": {
+    "value": "CTH/Cloud-VPS/0926/001",
+    "source": "meeting",
+    "evidence": "dokumen no CTH/Cloud-VPS/0926/001",
+    "confirmed": true
+  },
+  "service_name": {
+    "value": "Venturo Cloud VPS",
+    "source": "meeting",
+    "evidence": "layanan Venturo Cloud VPS",
+    "confirmed": true
+  },
+  "tax_treatment": {
+    "value": "exclusive_ppn",
+    "source": "meeting",
+    "evidence": "belum termasuk PPN",
+    "confirmed": true
+  },
+  "package_items": [
+    {
+      "category": {
+        "value": "vps_cloud",
+        "source": "meeting",
+        "evidence": "VPS Cloud",
+        "confirmed": true
+      },
+      "name": {
+        "value": "Cloud VPS Medium",
+        "source": "meeting",
+        "evidence": "Paket VPS Medium",
+        "confirmed": true
+      },
+      "vcpu": {
+        "value": 4,
+        "source": "meeting",
+        "evidence": "4 vCPU",
+        "confirmed": true
+      },
+      "ram_gb": {
+        "value": 8,
+        "source": "meeting",
+        "evidence": "8 GB RAM",
+        "confirmed": true
+      },
+      "storage_gb": {
+        "value": 80,
+        "source": "meeting",
+        "evidence": "80 GB SSD",
+        "confirmed": true
+      },
+      "unit_rate": {
+        "amount": 1500000,
+        "source": "catalog",
+        "catalog_ref": "venturo-infra-2026.vps.medium"
+      }
+    }
+  ],
+  "setup_items": [
+    {
+      "name": {
+        "value": "Server Setup & Initial Hardening",
+        "source": "meeting",
+        "evidence": "setup dan hardening",
+        "confirmed": true
+      },
+      "amount": {
+        "amount": 500000,
+        "source": "user"
+      }
+    }
+  ],
+  "scope_rows": [
+    {
+      "sections": [
+        {
+          "title": {
+            "value": "Provisioning & Hardening",
+            "source": "meeting",
+            "evidence": "lingkup provisioning",
+            "confirmed": true
+          },
+          "activities": [
+            {
+              "value": "Setup OS Linux & Firewall",
+              "source": "meeting",
+              "evidence": "setup firewall",
+              "confirmed": true
+            },
+            {
+              "value": "Install Web Server & SSL",
+              "source": "meeting",
+              "evidence": "install SSL",
+              "confirmed": true
+            }
+          ]
+        }
+      ],
+      "timeline": {
+        "value": "3 Hari Kerja",
+        "source": "meeting",
+        "evidence": "timeline 3 hari kerja",
+        "confirmed": true
+      }
+    }
+  ],
+  "payment_schedule": [
+    {
+      "work_period": {
+        "value": "Setup",
+        "source": "meeting",
+        "evidence": "setup fee",
+        "confirmed": true
+      },
+      "terms": {
+        "value": "Di muka",
+        "source": "meeting",
+        "evidence": "pembayaran di muka",
+        "confirmed": true
+      },
+      "invoice_date_label": {
+        "value": "24 Sep 2026",
+        "source": "meeting",
+        "evidence": "24 Sep 2026",
+        "confirmed": true
+      },
+      "due_date_label": {
+        "value": "8 Okt 2026",
+        "source": "meeting",
+        "evidence": "8 Okt 2026",
+        "confirmed": true
+      },
+      "component": "setup",
+      "nominal": {
+        "amount": 500000,
+        "source": "user"
+      }
+    },
+    {
+      "work_period": {
+        "value": "Bulan 1",
+        "source": "meeting",
+        "evidence": "bulan 1",
+        "confirmed": true
+      },
+      "terms": {
+        "value": "Bulanan",
+        "source": "meeting",
+        "evidence": "termin bulanan",
+        "confirmed": true
+      },
+      "invoice_date_label": {
+        "value": "30 Sep 2026",
+        "source": "meeting",
+        "evidence": "30 Sep 2026",
+        "confirmed": true
+      },
+      "due_date_label": {
+        "value": "14 Okt 2026",
+        "source": "meeting",
+        "evidence": "14 Okt 2026",
+        "confirmed": true
+      },
+      "component": "monthly_service",
+      "nominal": {
+        "amount": 1500000,
+        "source": "catalog",
+        "catalog_ref": "venturo-infra-2026.vps.medium"
+      }
+    },
+    {
+      "work_period": {
+        "value": "Bulan 2",
+        "source": "meeting",
+        "evidence": "bulan 2",
+        "confirmed": true
+      },
+      "terms": {
+        "value": "Bulanan",
+        "source": "meeting",
+        "evidence": "termin bulanan",
+        "confirmed": true
+      },
+      "invoice_date_label": {
+        "value": "31 Okt 2026",
+        "source": "meeting",
+        "evidence": "31 Okt 2026",
+        "confirmed": true
+      },
+      "due_date_label": {
+        "value": "14 Nov 2026",
+        "source": "meeting",
+        "evidence": "14 Nov 2026",
+        "confirmed": true
+      },
+      "component": "monthly_service",
+      "nominal": {
+        "amount": 1500000,
+        "source": "catalog",
+        "catalog_ref": "venturo-infra-2026.vps.medium"
+      }
+    }
+  ],
+  "payment_due_days": {
+    "value": 14,
+    "source": "meeting",
+    "evidence": "jatuh tempo 14 hari",
+    "confirmed": true
+  },
+  "limitation_codes": [
+    {
+      "value": "out_of_pocket",
+      "source": "meeting",
+      "evidence": "out of pocket",
+      "confirmed": true
+    },
+    {
+      "value": "third_party",
+      "source": "meeting",
+      "evidence": "third party",
+      "confirmed": true
+    }
+  ],
+  "additional_limitations": [
+    {
+      "value": "Backup data di luar retensi standar memerlukan konfigurasi khusus.",
+      "source": "meeting",
+      "evidence": "backup data tambahan",
+      "confirmed": true
+    }
+  ]
+}

@@ -66,6 +66,28 @@ func TestDedicatedRateLookup(t *testing.T) {
 		assert.Equal(t, item.RecruitmentFee+item.OnboardingFee, item.TotalHiringFee())
 	})
 
+	t.Run("resolves the prompt card with its tenant-owned items at an effective date", func(t *testing.T) {
+		card, items, lookupErr := repo.GetActiveRateCardByCode(ctx, companyID.String(), "VENTURO-STD-2026", time.Now())
+		require.NoError(t, lookupErr)
+		require.NotNil(t, card)
+		assert.Equal(t, "VENTURO-STD-2026", card.Code)
+		require.Len(t, items, 1)
+		assert.Equal(t, companyID, items[0].CompanyID)
+		assert.Equal(t, card.ID, items[0].RateCardID)
+	})
+
+	t.Run("does not resolve another tenant's card", func(t *testing.T) {
+		_, _, lookupErr := repo.GetActiveRateCardByCode(ctx, otherCompanyID.String(), "VENTURO-STD-2026", time.Now())
+		assert.ErrorIs(t, lookupErr, repository.ErrRateCardNotFound)
+	})
+
+	t.Run("returns a card with no items without inventing roles", func(t *testing.T) {
+		card, items, lookupErr := repo.GetActiveRateCardByCode(ctx, companyID.String(), "VENTURO-BUMN-2026", time.Now())
+		require.NoError(t, lookupErr)
+		assert.Equal(t, "VENTURO-BUMN-2026", card.Code)
+		assert.Empty(t, items)
+	})
+
 	t.Run("returns the stable missing-item error across tenants", func(t *testing.T) {
 		_, lookupErr := repo.ResolveItem(ctx, otherCompanyID.String(), cardIDs["VENTURO-STD-2026"].String(), "backend_programmer", "senior", "long_term")
 		assert.ErrorIs(t, lookupErr, dto.ErrMissingRateItem)
@@ -83,6 +105,16 @@ func TestDedicatedRateLookup(t *testing.T) {
 
 		_, updateErr = pool.Exec(ctx, `UPDATE rate_cards SET is_active = true WHERE id = $1 AND company_id = $2`, cardIDs["VENTURO-STD-2026"], companyID)
 		require.NoError(t, updateErr)
+	})
+
+	t.Run("rejects an expired card at the requested date", func(t *testing.T) {
+		_, updateErr := pool.Exec(ctx, `UPDATE rate_cards SET effective_until = $1 WHERE id = $2 AND company_id = $3`, time.Now().Add(-time.Hour), cardIDs["VENTURO-STD-2026"], companyID)
+		require.NoError(t, updateErr)
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `UPDATE rate_cards SET effective_until = NULL WHERE id = $1 AND company_id = $2`, cardIDs["VENTURO-STD-2026"], companyID)
+		})
+		_, _, lookupErr := repo.GetActiveRateCardByCode(ctx, companyID.String(), "VENTURO-STD-2026", time.Now())
+		assert.ErrorIs(t, lookupErr, repository.ErrRateCardNotFound)
 	})
 
 	t.Run("lists only official generator cards", func(t *testing.T) {

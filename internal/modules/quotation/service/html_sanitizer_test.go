@@ -278,6 +278,34 @@ func TestSanitize_EmptyInput(t *testing.T) {
 	assert.Empty(t, out)
 }
 
+func TestSanitize_PreservesApprovedPromptSectionMarkers(t *testing.T) {
+	s := newSanitizerUnderTest()
+	input := `<section data-quotation-section="scope" data-section-version="1"><p>Scope</p></section>` +
+		`<section data-quotation-section="commercial" data-section-version="1" data-managed="true"><p>Total</p></section>` +
+		`<section data-quotation-section="payment" data-section-version="2" data-managed="true"><p>Payment</p></section>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+	assert.Contains(t, out, `data-quotation-section="scope"`)
+	assert.Contains(t, out, `data-quotation-section="commercial"`)
+	assert.Contains(t, out, `data-section-version="1"`)
+	assert.Contains(t, out, `data-section-version="2"`)
+	assert.Contains(t, out, `data-managed="true"`)
+}
+
+func TestSanitize_RemovesInvalidPromptSectionAttributes(t *testing.T) {
+	s := newSanitizerUnderTest()
+	input := `<section data-quotation-section="arbitrary" data-section-version="0" data-managed="yes" data-unknown="evil"><p>Keep</p></section>`
+
+	out, err := s.Sanitize(input)
+	require.NoError(t, err)
+	assert.NotContains(t, out, `data-quotation-section="arbitrary"`)
+	assert.NotContains(t, out, `data-section-version=`)
+	assert.NotContains(t, out, `data-managed=`)
+	assert.NotContains(t, out, `data-unknown=`)
+	assert.Contains(t, out, `Keep`)
+}
+
 func TestSanitize_PlainTextUntouched(t *testing.T) {
 	s := newSanitizerUnderTest()
 
@@ -601,4 +629,3 @@ func TestSanitize_RejectsUnapprovedHeaderImages(t *testing.T) {
 		})
 	}
 }
-

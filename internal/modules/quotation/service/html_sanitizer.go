@@ -48,8 +48,12 @@ func buildStrictQuotationPolicy() *bluemonday.Policy {
 	p.SkipElementsContent("script", "style", "iframe", "object", "embed", "noscript")
 
 	markerPattern := regexp.MustCompile(`^[a-zA-Z0-9_\-]{1,64}$`)
+	sectionMarkerPattern := regexp.MustCompile(`^(scope|commercial|payment|timeline|narrative|rights|limitations|legal|signature|commercial-development|commercial-monthly|information-missing|deleted-(rights|limitations|payment|timeline|signature)|removed-(rights|limitations|payment|timeline|signature))$`)
 	p.AllowAttrs("class").Matching(regexp.MustCompile(`^(quotation-document|quotation-document--cloud-infrastructure|kiosk-queue-document|signature-table|qtr-block|qtr-legal)( (quotation-document|quotation-document--cloud-infrastructure|kiosk-queue-document|signature-table|qtr-block|qtr-legal))*$`)).Globally()
-	p.AllowAttrs("data-block", "data-role", "data-block-type", "data-template-code", "data-modified", "data-component", "data-payment-index", "data-quotation-section", "data-quotation-field", "data-quotation-component").Matching(markerPattern).Globally()
+	p.AllowAttrs("data-block", "data-role", "data-block-type", "data-template-code", "data-modified", "data-component", "data-payment-index", "data-quotation-field", "data-quotation-component").Matching(markerPattern).Globally()
+	p.AllowAttrs("data-quotation-section").Matching(sectionMarkerPattern).OnElements("section", "div", "header")
+	p.AllowAttrs("data-section-version").Matching(regexp.MustCompile(`^[1-9][0-9]{0,2}$`)).OnElements("section")
+	p.AllowAttrs("data-managed").Matching(regexp.MustCompile(`^(true|false)$`)).OnElements("section")
 	p.AllowAttrs("data-field").Matching(regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,96}$`)).Globally()
 	p.AllowAttrs("data-section-number", "data-quotation-section-number").Matching(regexp.MustCompile(`^[1-9][0-9]{0,2}$`)).Globally()
 	p.AllowAttrs("data-column-width").Matching(regexp.MustCompile(`^(25|75)$`)).OnElements("th", "td")

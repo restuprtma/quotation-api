@@ -100,6 +100,20 @@ func TestMeetingExtractionRetriesUnsupportedEvidenceWithCorrectionPrompt(t *test
 	assert.Contains(t, provider.requests[1].Prompt, "contiguous literal substring")
 }
 
+func TestMeetingExtractionRetriesMissingRequiredFieldWithSchemaCorrection(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika membahas Arunika Inventory dan stok gudang selama tiga bulan. Dua programmer intermediate. Pembayaran 50:50."
+	first := strings.Replace(meetingOutput(notes, "unknown"), `"issues":[],`, "", 1)
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: first}, {Text: meetingOutput(notes, "unknown")}}}
+	svc := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	_, err := svc.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+	require.NoError(t, err)
+	require.Len(t, provider.requests, 2)
+	assert.Contains(t, provider.requests[1].Prompt, "missing required fields")
+	assert.Contains(t, provider.requests[1].Prompt, "schema_version, meeting_notes, scope, team, issues, readiness")
+}
+
 func TestMeetingExtractionStopsAfterSecondInvalidOutput(t *testing.T) {
 	provider := &meetingProviderFake{results: []GenerateResult{{Text: "{"}, {Text: "{"}}}
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
@@ -110,6 +124,21 @@ func TestMeetingExtractionStopsAfterSecondInvalidOutput(t *testing.T) {
 	require.ErrorAs(t, err, &extractionErr)
 	assert.Equal(t, "malformed_json", extractionErr.Reason)
 	assert.Len(t, provider.requests, 2)
+}
+
+func TestMeetingExtractionMakesTargetedThirdAttemptForEvidence(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika membahas Arunika Inventory dan stok gudang selama tiga bulan. Dua programmer intermediate. Pembayaran 50:50."
+	bad := strings.Replace(meetingOutput(notes, "unknown"), "tiga bulan", "masa pengerjaan triwulanan", 1)
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: bad}, {Text: bad}, {Text: meetingOutput(notes, "unknown")}}}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+
+	require.NoError(t, err)
+	require.Len(t, provider.requests, 3)
+	assert.Contains(t, provider.requests[2].Prompt, "duration_months")
+	assert.Contains(t, provider.requests[2].Prompt, "literal contiguous substring")
+	assert.NotContains(t, provider.requests[2].Prompt, "masa pengerjaan triwulanan")
 }
 
 func TestMeetingExtractionDoesNotRetryProviderFailure(t *testing.T) {
@@ -159,6 +188,7 @@ func TestBuildMeetingExtractionPromptIncludesEmbeddedOutputSchema(t *testing.T) 
 	require.NoError(t, err)
 	assert.Contains(t, prompt, "<output_schema>")
 	assert.Contains(t, prompt, `"schema_version"`)
+	assert.Contains(t, prompt, "contiguous substring copied verbatim")
 	assert.Contains(t, prompt, `"additionalProperties": false`)
 	assert.NotContains(t, prompt, "{{OUTPUT_SCHEMA}}")
 	assert.NotContains(t, prompt, "{{CATALOG_JSON}}")
@@ -270,6 +300,20 @@ func TestDecodeMeetingExtractionNormalizesFormattingOnly(t *testing.T) {
 	var extractionErr *MeetingExtractionError
 	require.ErrorAs(t, err, &extractionErr)
 	assert.Equal(t, "unsupported_evidence", extractionErr.Reason)
+}
+
+func TestDecodeMeetingExtractionRecordsSafeEvidenceField(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika membahas Arunika Inventory dan stok gudang selama tiga bulan. Dua programmer intermediate. Pembayaran 50:50."
+	raw := strings.Replace(meetingOutput(notes, "unknown"), "tiga bulan", "masa pengerjaan triwulanan", 1)
+
+	_, err := decodeMeetingExtraction(raw, notes)
+
+	var extractionErr *MeetingExtractionError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "unsupported_evidence", extractionErr.Reason)
+	assert.Equal(t, "duration_months", extractionErr.Field)
+	assert.NotContains(t, extractionErr.Error(), "masa pengerjaan triwulanan")
+	assert.NotContains(t, extractionErr.Error(), notes)
 }
 
 func TestDecodeMeetingExtractionClassifiesFailuresWithoutLeakingRawOutput(t *testing.T) {

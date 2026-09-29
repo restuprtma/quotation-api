@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prompt quotation meeting extraction v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "meeting_notes", "scope", "team", "issues", "readiness"],
+  "properties": {
+    "schema_version": {"const": "prompt_quotation_v1"},
+    "meeting_notes": {"type": "string", "minLength": 1},
+    "client_name": {"$ref": "#/$defs/factString"},
+    "client_company": {"$ref": "#/$defs/factString"},
+    "pic_name": {"$ref": "#/$defs/factString"},
+    "project_name": {"$ref": "#/$defs/factString"},
+    "commercial_scheme": {"$ref": "#/$defs/factString"},
+    "scope": {"type": "array", "items": {"$ref": "#/$defs/factString"}, "maxItems": 64},
+    "duration_months": {"$ref": "#/$defs/factInt"},
+    "team": {"type": "array", "maxItems": 32, "items": {"type": "object", "additionalProperties": false, "required": ["requested_role", "seniority", "headcount_quarters", "period_quarters", "source", "confirmed"], "properties": {
+      "requested_role": {"type": "string", "minLength": 1}, "resolved_rate_item_id": {"type": "string"}, "seniority": {"type": "string", "minLength": 1}, "headcount_quarters": {"type": "integer", "minimum": 1}, "period_quarters": {"type": "integer", "minimum": 1}, "source": {"enum": ["meeting", "catalog", "suggestion", "user"]}, "evidence": {"type": "string"}, "confirmed": {"type": "boolean"}
+    }}},
+    "payment_pattern": {"$ref": "#/$defs/factString"},
+    "service_input": {
+      "description": "For cloud_infrastructure use kind cloud_infrastructure_v1 (fields: document_number, service_name, tax_treatment='exclusive_ppn'|'inclusive_ppn'|'not_stated', package_items [category='shared_hosting'|'vps_cloud', name, vcpu, ram_gb, storage_gb], setup_items [name], scope_rows [sections [title, activities], timeline], payment_schedule [work_period, terms, invoice_date_label, due_date_label, component='setup'|'monthly_service'], payment_due_days, limitation_codes, additional_limitations). For talent_outsourcing use kind talent_outsourcing_v1 (fields: engagement_mode='manpower_supply'|'managed_squad', document_number, service_name, tax_treatment='bpjs_dpp_ppn_12'|'exclusive_ppn'|'not_stated', cost_groups [category='personnel'|'non_personnel', title, items [name, quantity, quantity_unit, period_count, period_unit='month'|'workday']], preparation_items [name, headcount], show_preparation_discount_row, squad_items [role, headcount, period_months], scope_blocks [title, description, responsibilities, qualifications, deliverables, timeline], payment_schedule [work_period, terms, invoice_date_label, due_date_label], payment_due_days, limitation_codes, additional_limitations, warranty_statements, rights_statements). For subscription_saas use kind subscription_saas_v1. For white_label use kind white_label_v1. For standalone_maintenance use kind standalone_maintenance_v1. For custom_development use kind custom_development_v1. For kiosk_queue_system use kind kiosk_queue_system_v1 and extract descriptive facts. Never include display_rate, quoted_line_total, unit_rate, monthly_rate, unit_price, payment nominal, totals, discounts, or catalog_ref. Omit money amounts from meeting mentions so backend validation reports them as unavailable."
+    },
+    "issues": {"type": "array"},
+    "readiness": {"enum": ["", "incomplete", "priceable", "ready_for_final"]}
+  },
+  "$defs": {
+    "factString": {"type": "object", "additionalProperties": false, "required": ["value", "source", "confirmed"], "properties": {"value": {"type": "string", "minLength": 1}, "source": {"enum": ["meeting", "catalog", "suggestion", "user"]}, "evidence": {"type": "string"}, "confirmed": {"type": "boolean"}}},
+    "factInt": {"type": "object", "additionalProperties": false, "required": ["value", "source", "confirmed"], "properties": {"value": {"type": "integer", "minimum": 1}, "source": {"enum": ["meeting", "catalog", "suggestion", "user"]}, "evidence": {"type": "string"}, "confirmed": {"type": "boolean"}}}
+  }
+}

@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -9,17 +10,20 @@ import (
 // QuotationRevisionResponse is the API view of one revision of a quotation.
 // ai_raw_response and generated_content are stored as JSONB and returned as-is.
 type QuotationRevisionResponse struct {
-	ID                uuid.UUID              `json:"id"`
-	VersionNumber     int                    `json:"version_number"`
-	Status            string                 `json:"status"`
-	AIRawResponse     map[string]interface{} `json:"ai_raw_response,omitempty"`
-	GeneratedContent  map[string]interface{} `json:"generated_content,omitempty"`
-	ClientSnapshot    map[string]interface{} `json:"client_snapshot,omitempty"`
-	ContractTerms     *string                `json:"contract_terms,omitempty"`
-	SignatureImageURL *string                `json:"signature_image_url,omitempty"`
-	SignedAt          *time.Time             `json:"signed_at,omitempty"`
-	SignedBy          *string                `json:"signed_by,omitempty"`
-	SignedIP          *string                `json:"signed_ip,omitempty"`
+	ID                  uuid.UUID              `json:"id"`
+	VersionNumber       int                    `json:"version_number"`
+	Status              string                 `json:"status"`
+	AIRawResponse       map[string]interface{} `json:"ai_raw_response,omitempty"`
+	GeneratedContent    map[string]interface{} `json:"generated_content,omitempty"`
+	ClientSnapshot      map[string]interface{} `json:"client_snapshot,omitempty"`
+	ContractTerms       *string                `json:"contract_terms,omitempty"`
+	SignatureImageURL   *string                `json:"signature_image_url,omitempty"`
+	PromptState         json.RawMessage        `json:"prompt_state,omitempty"`
+	PromptStateVersion  int64                  `json:"prompt_state_version,omitempty"`
+	PromptSectionHashes json.RawMessage        `json:"prompt_section_hashes,omitempty"`
+	SignedAt            *time.Time             `json:"signed_at,omitempty"`
+	SignedBy            *string                `json:"signed_by,omitempty"`
+	SignedIP            *string                `json:"signed_ip,omitempty"`
 
 	*BlueprintSourceMetadata `json:",inline"`
 }

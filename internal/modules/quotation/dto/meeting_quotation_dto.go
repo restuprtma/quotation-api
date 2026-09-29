@@ -35,7 +35,18 @@ type MeetingDraftResponse struct {
 	Issues           []domain.DraftIssue         `json:"issues"`
 	Readiness        string                      `json:"readiness"`
 	Calculation      json.RawMessage             `json:"calculation,omitempty"`
+	CatalogRoles     []PromptCatalogRole         `json:"catalog_roles,omitempty"`
 	IdempotentReplay bool                        `json:"idempotent_replay"`
+}
+
+// PromptCatalogRole is the safe, editor-facing projection of a rate card
+// item. Commercial rates and internal costs intentionally remain server-only.
+type PromptCatalogRole struct {
+	RateItemID  uuid.UUID `json:"rate_item_id"`
+	Role        string    `json:"role"`
+	DisplayName string    `json:"display_name"`
+	Seniority   string    `json:"seniority"`
+	TermType    string    `json:"term_type"`
 }
 
 const (
@@ -86,6 +97,7 @@ type PromptPatchResponse struct {
 	Issues         []domain.DraftIssue              `json:"issues"`
 	Readiness      string                           `json:"readiness"`
 	Calculation    domain.DedicatedSquadCalculation `json:"calculation"`
+	CatalogRoles   []PromptCatalogRole              `json:"catalog_roles,omitempty"`
 }
 
 // MeetingExtractionRequest contains only the BA-authored source text. It is

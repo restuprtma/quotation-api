@@ -707,6 +707,31 @@ func TestHTTP_GetByID_ExposesLegalSnapshotAndRevisionID(t *testing.T) {
 	}
 }
 
+func TestHTTP_GetByID_PromptCatalogRolesProjectStoredDefaultSnapshot(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+	router := newGenerationRouter(pool, &adaptiveAIProvider{}, fx.companyID)
+	qid := generateViaHTTP(t, router, fx)
+
+	item := domain.RateCardItem{ID: uuid.New(), Role: "frontend_programmer", DisplayName: "Frontend Programmer", Seniority: "intermediate", TermType: "long_term", AmountPerMonth: 10_000_000, BaseSalary: 7_000_000, KickoffFee: 500_000}
+	snapshot, err := json.Marshal(struct {
+		Card  domain.RateCard       `json:"card"`
+		Items []domain.RateCardItem `json:"items"`
+	}{Card: domain.RateCard{ID: uuid.New(), Code: domain.DefaultPromptRateCardCode}, Items: []domain.RateCardItem{item}})
+	require.NoError(t, err)
+	_, err = pool.Exec(context.Background(), `UPDATE quotation_revisions SET rate_card_snapshot = $1 WHERE quotation_id = $2 AND company_id = $3`, snapshot, qid, fx.companyID)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodGet, "/quotation/v1/quotations/"+qid.String(), nil, nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, `"catalog_roles":[{"rate_item_id":`+fmt.Sprintf("%q", item.ID.String()))
+	assert.Contains(t, body, `"display_name":"Frontend Programmer"`)
+	for _, forbidden := range []string{"rate_card_snapshot", "amount_per_month", "base_salary", "kickoff_fee"} {
+		assert.NotContains(t, body, forbidden)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task: wiring verification — request HTTP nyata harus mengalir sampai
 // pipeline asli (handler → service → repo/renderer/sanitizer/DOM validator);

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -261,6 +262,72 @@ func (r *RateCardRepository) GetActiveRateCard(ctx context.Context, companyID, m
 		return nil, ErrRateCardNotFound
 	}
 	return rc, err
+}
+
+// GetActiveRateCardByCode resolves one tenant-owned rate card at a point in
+// time and loads only items belonging to that same card and tenant.
+func (r *RateCardRepository) GetActiveRateCardByCode(ctx context.Context, companyID, code string, at time.Time) (*domain.RateCard, []domain.RateCardItem, error) {
+	cardQuery := `
+		SELECT id, company_id, code, name, market, client_tier, currency, description,
+			short_term_surcharge_pct, enterprise_markup_pct,
+			effective_from, effective_until, is_active, created_by, created_at, updated_at
+		FROM rate_cards
+		WHERE company_id = $1 AND code = $2 AND is_active = true
+			AND effective_from <= $3
+			AND (effective_until IS NULL OR effective_until > $3)
+		LIMIT 1
+	`
+	card := &domain.RateCard{}
+	if err := r.db.QueryRow(ctx, cardQuery, companyID, code, at).Scan(
+		&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.ClientTier, &card.Currency, &card.Description,
+		&card.ShortTermSurchargePct, &card.EnterpriseMarkupPct,
+		&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.CreatedBy, &card.CreatedAt, &card.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrRateCardNotFound
+		}
+		return nil, nil, err
+	}
+
+	itemQuery := `
+		SELECT item.id, item.company_id, item.rate_card_id, item.role, item.display_name,
+			item.seniority, item.discipline, item.term_type, item.amount_per_month,
+			item.base_salary, item.tech_lead_fee, item.ai_rnd_fee, item.workspace_fee, item.management_fee,
+			item.education_requirement, item.experience_requirement,
+			item.published_rate, item.max_discount_pct, item.floor_rate,
+			item.kickoff_fee, item.recruitment_fee, item.onboarding_fee,
+			item.created_at, item.updated_at
+		FROM rate_card_items AS item
+		JOIN rate_cards AS owner ON owner.id = item.rate_card_id AND owner.company_id = item.company_id
+		WHERE item.company_id = $1 AND item.rate_card_id = $2 AND owner.code = $3
+		ORDER BY item.discipline, item.role, item.seniority, item.term_type
+	`
+	rows, err := r.db.Query(ctx, itemQuery, companyID, card.ID, code)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.RateCardItem, 0)
+	for rows.Next() {
+		item := domain.RateCardItem{}
+		if err := rows.Scan(
+			&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.DisplayName,
+			&item.Seniority, &item.Discipline, &item.TermType, &item.AmountPerMonth,
+			&item.BaseSalary, &item.TechLeadFee, &item.AiRndFee, &item.WorkspaceFee, &item.ManagementFee,
+			&item.EducationRequirement, &item.ExperienceRequirement,
+			&item.PublishedRate, &item.MaxDiscountPct, &item.FloorRate,
+			&item.KickoffFee, &item.RecruitmentFee, &item.OnboardingFee,
+			&item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return card, items, nil
 }
 
 func (r *RateCardRepository) ListActiveRateCards(ctx context.Context, companyID string) ([]*domain.RateCard, error) {

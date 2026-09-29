@@ -1,0 +1,12 @@
+{
+  "kind": "subscription_saas_v1",
+  "product_name": {"value": "Venturo Print", "source": "meeting", "evidence": "Venturo Print", "confirmed": false},
+  "section_layout": {"value": "subscription_development", "source": "suggestion", "confirmed": false},
+  "billing_cycle": {"value": "quarterly", "source": "meeting", "evidence": "per kuartal", "confirmed": false},
+  "tax_treatment": {"value": "not_stated", "source": "suggestion", "confirmed": false},
+  "initial_term_months": {"value": 12, "source": "meeting", "evidence": "12 bulan", "confirmed": false},
+  "auto_renewal": {"value": false, "source": "suggestion", "confirmed": false},
+  "price_periods": [{"label": {"value": "Subscription 12 bulan", "source": "meeting", "evidence": "12 bulan", "confirmed": false}, "start_month_offset": 0, "duration_months": 12, "monthly_rate": {"source": "user"}}],
+  "payment_schedule": [{"work_period": {"value": "Tahun pertama", "source": "meeting", "evidence": "12 bulan", "confirmed": false}, "start_month_offset": 0, "covered_months": 12, "invoice_date_label": {"value": "Saat kontrak", "source": "meeting", "evidence": "Saat kontrak", "confirmed": false}, "due_date_label": {"value": "H+14", "source": "suggestion", "confirmed": false}, "nominal": {"source": "user"}}],
+  "is_partnership": {"value": false, "source": "suggestion", "confirmed": false}
+}

@@ -1,0 +1,128 @@
+{
+  "schema_version": "prompt_quotation_v1",
+  "meeting_notes": "Bu Nadia dari PT Arunika butuh aplikasi inventory bernama Arunika Inventory. Ada stok gudang, barang masuk-keluar, approval, dan laporan. Target tiga bulan, dua programmer intermediate. Pembayaran 50:50.",
+  "client_name": {
+    "value": "Nadia",
+    "source": "meeting",
+    "evidence": "\"Bu Nadia dari PT Arunika\"",
+    "confirmed": false
+  },
+  "client_company": {
+    "value": "PT Arunika",
+    "source": "meeting",
+    "evidence": "\"dari PT Arunika\"",
+    "confirmed": false
+  },
+  "pic_name": {
+    "value": "Nadia",
+    "source": "meeting",
+    "evidence": "\"Bu Nadia\" is the only contact named in the note",
+    "confirmed": false
+  },
+  "project_name": {
+    "value": "Arunika Inventory",
+    "source": "meeting",
+    "evidence": "\"aplikasi inventory bernama Arunika Inventory\"",
+    "confirmed": false
+  },
+  "scope": [
+    {
+      "value": "Stok gudang",
+      "source": "meeting",
+      "evidence": "\"Ada stok gudang\"",
+      "confirmed": false
+    },
+    {
+      "value": "Barang masuk-keluar",
+      "source": "meeting",
+      "evidence": "\"barang masuk-keluar\"",
+      "confirmed": false
+    },
+    {
+      "value": "Approval",
+      "source": "meeting",
+      "evidence": "\"approval\"",
+      "confirmed": false
+    },
+    {
+      "value": "Laporan",
+      "source": "meeting",
+      "evidence": "\"dan laporan\"",
+      "confirmed": false
+    }
+  ],
+  "duration_months": {
+    "value": 3,
+    "source": "meeting",
+    "evidence": "\"Target tiga bulan\"",
+    "confirmed": false
+  },
+  "team": [
+    {
+      "requested_role": "programmer",
+      "seniority": "intermediate",
+      "headcount_quarters": 8,
+      "period_quarters": 12,
+      "source": "meeting",
+      "evidence": "\"dua programmer intermediate\" against a three-month target, so 2 people for 3 months",
+      "confirmed": false
+    }
+  ],
+  "payment_pattern": {
+    "value": "50:50",
+    "source": "meeting",
+    "evidence": "\"Pembayaran 50:50\"",
+    "confirmed": false
+  },
+  "issues": [
+    {
+      "code": "client_name.unconfirmed",
+      "field": "client_name",
+      "message": "value comes from the meeting note and has not been confirmed yet",
+      "severity": "warning"
+    },
+    {
+      "code": "client_company.unconfirmed",
+      "field": "client_company",
+      "message": "value comes from the meeting note and has not been confirmed yet",
+      "severity": "warning"
+    },
+    {
+      "code": "pic_name.unconfirmed",
+      "field": "pic_name",
+      "message": "value comes from the meeting note and has not been confirmed yet",
+      "severity": "warning"
+    },
+    {
+      "code": "project_name.unconfirmed",
+      "field": "project_name",
+      "message": "value comes from the meeting note and has not been confirmed yet",
+      "severity": "warning"
+    },
+    {
+      "code": "commercial_scheme.missing",
+      "field": "commercial_scheme",
+      "message": "commercial scheme is required and was not found in the meeting note",
+      "severity": "blocking"
+    },
+    {
+      "code": "duration_months.unconfirmed",
+      "field": "duration_months",
+      "message": "value comes from the meeting note and has not been confirmed yet",
+      "severity": "warning"
+    },
+    {
+      "code": "team.rate_unresolved",
+      "field": "team[0].resolved_rate_item_id",
+      "message": "requested role \"programmer\" has no matching rate card item yet",
+      "severity": "blocking"
+    },
+    {
+      "code": "payment_pattern.unconfirmed",
+      "field": "payment_pattern",
+      "message": "value comes from the meeting note and has not been confirmed yet",
+      "severity": "warning"
+    }
+  ],
+  "readiness": "incomplete"
+}

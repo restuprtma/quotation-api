@@ -160,6 +160,31 @@ func TestPromptQuotationHandler_PriceableDraftReturns201(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, c.Writer.Status())
 }
 
+func TestPromptQuotationHandler_ReturnsOnlySafeCatalogRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	roleID := uuid.New()
+	h := NewPromptQuotationHandler(&promptCreatorStub{result: &dto.MeetingDraftResponse{
+		Readiness: "priceable",
+		CatalogRoles: []dto.PromptCatalogRole{{
+			RateItemID: roleID, Role: "backend_programmer", DisplayName: "Backend Programmer", Seniority: "senior", TermType: "long_term",
+		}},
+	}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setPromptTestClaims(c)
+	h.CreateFromMeeting(c)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, `"catalog_roles":[{"rate_item_id":`+`"`+roleID.String()+`"`)
+	assert.Contains(t, body, `"display_name":"Backend Programmer"`)
+	for _, forbidden := range []string{"rate_card_snapshot", "amount_per_month", "base_salary", "kickoff_fee"} {
+		assert.NotContains(t, body, forbidden)
+	}
+}
+
 func setPromptTestClaims(c *gin.Context) {
 	// The handler only needs the claims' company and user IDs; use the same
 	// helper shape as the production middleware rather than bypassing it.

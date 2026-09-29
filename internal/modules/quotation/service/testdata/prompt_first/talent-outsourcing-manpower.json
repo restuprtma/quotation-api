@@ -1,0 +1,43 @@
+{
+  "kind": "talent_outsourcing_v1",
+  "engagement_mode": { "value": "manpower_supply", "source": "meeting", "confirmed": true },
+  "document_number": { "value": "DOC-001", "source": "meeting", "confirmed": true },
+  "service_name": { "value": "Backend Developer Outsourcing", "source": "meeting", "confirmed": true },
+  "tax_treatment": { "value": "bpjs_dpp_ppn_12", "source": "suggestion", "confirmed": true },
+  "cost_groups": [
+    {
+      "category": "personnel",
+      "title": { "value": "Tim Personil", "source": "suggestion", "confirmed": true },
+      "items": [
+        {
+          "name": { "value": "Backend Dev", "source": "meeting", "confirmed": true },
+          "quantity": { "value": 2, "source": "meeting", "confirmed": true },
+          "quantity_unit": { "value": "Orang", "source": "meeting", "confirmed": true },
+          "period_count": { "value": 10, "source": "meeting", "confirmed": true },
+          "period_unit": "workday",
+          "unit_rate": { "amount": 15000000, "source": "catalog", "catalog_ref": "VENTURO-STD-2026" }
+        }
+      ]
+    }
+  ],
+  "scope_blocks": [
+    {
+      "title": { "value": "Ruang Lingkup", "source": "meeting", "confirmed": true },
+      "timeline": { "value": "Maret 2026", "source": "meeting", "confirmed": true },
+      "responsibilities": [
+        { "value": "Mengembangkan API", "source": "meeting", "confirmed": true }
+      ]
+    }
+  ],
+  "payment_schedule": [
+    {
+      "work_period": { "value": "Selesai pekerjaan", "source": "meeting", "confirmed": true },
+      "terms": { "value": "100%", "source": "meeting", "confirmed": true },
+      "invoice_date_label": { "value": "Akhir bulan", "source": "meeting", "confirmed": true },
+      "due_date_label": { "value": "H+14", "source": "meeting", "confirmed": true },
+      "nominal": { "amount": 16650000, "source": "user" }
+    }
+  ],
+  "payment_due_days": { "value": 14, "source": "meeting", "confirmed": true },
+  "limitation_codes": ["out_of_pocket"]
+}

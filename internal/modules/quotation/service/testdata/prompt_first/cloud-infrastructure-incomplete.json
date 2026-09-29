@@ -1,0 +1,104 @@
+{
+  "kind": "cloud_infrastructure_v1",
+  "document_number": {
+    "value": "CTH/Cloud-Incomplete/0926/001",
+    "source": "meeting",
+    "evidence": "dokumen draft cloud",
+    "confirmed": false
+  },
+  "service_name": {
+    "value": "Venturo Cloud VPS",
+    "source": "meeting",
+    "evidence": "layanan cloud",
+    "confirmed": false
+  },
+  "tax_treatment": {
+    "value": "exclusive_ppn",
+    "source": "meeting",
+    "evidence": "belum termasuk PPN",
+    "confirmed": false
+  },
+  "package_items": [
+    {
+      "category": {
+        "value": "vps_cloud",
+        "source": "meeting",
+        "evidence": "VPS",
+        "confirmed": false
+      },
+      "name": {
+        "value": "Custom Cloud VPS",
+        "source": "meeting",
+        "evidence": "Custom Cloud VPS",
+        "confirmed": false
+      },
+      "vcpu": {
+        "value": 4,
+        "source": "meeting",
+        "evidence": "4 vCPU",
+        "confirmed": false
+      },
+      "ram_gb": {
+        "value": 8,
+        "source": "meeting",
+        "evidence": "8 GB",
+        "confirmed": false
+      },
+      "storage_gb": {
+        "value": 100,
+        "source": "meeting",
+        "evidence": "100 GB",
+        "confirmed": false
+      },
+      "unit_rate": {
+        "source": "suggestion"
+      }
+    }
+  ],
+  "payment_schedule": [
+    {
+      "work_period": {
+        "value": "Bulan 1",
+        "source": "meeting",
+        "evidence": "bulan 1",
+        "confirmed": false
+      },
+      "terms": {
+        "value": "Bulanan",
+        "source": "meeting",
+        "evidence": "bulanan",
+        "confirmed": false
+      },
+      "invoice_date_label": {
+        "value": "30 Sep 2026",
+        "source": "meeting",
+        "evidence": "30 Sep",
+        "confirmed": false
+      },
+      "due_date_label": {
+        "value": "14 Okt 2026",
+        "source": "meeting",
+        "evidence": "14 Okt",
+        "confirmed": false
+      },
+      "component": "monthly_service",
+      "nominal": {
+        "source": "suggestion"
+      }
+    }
+  ],
+  "payment_due_days": {
+    "value": 14,
+    "source": "meeting",
+    "evidence": "14 hari",
+    "confirmed": false
+  },
+  "limitation_codes": [
+    {
+      "value": "out_of_pocket",
+      "source": "meeting",
+      "evidence": "out of pocket",
+      "confirmed": false
+    }
+  ]
+}

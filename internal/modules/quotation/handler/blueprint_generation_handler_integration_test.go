@@ -2095,4 +2095,3 @@ func TestBlueprintHTTP_ManualJourneyToArchitectureProviderRecovery(t *testing.T)
 	assert.Equal(t, 2, archFinalAttempts, "Attempt count must be exactly 2")
 	assert.Nil(t, archFinalError)
 }
-
