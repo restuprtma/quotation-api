@@ -78,6 +78,20 @@ func (s *BlueprintDraftService) getLifecycleRepo() BlueprintLifecycleRepo {
 	return nil
 }
 
+// DeleteDraft deletes the draft revision for a blueprint scoped by company ID.
+func (s *BlueprintDraftService) DeleteDraft(ctx context.Context, companyID, blueprintID string) error {
+	repo := s.getLifecycleRepo()
+	if repo != nil {
+		err := repo.DeleteDraft(ctx, companyID, blueprintID)
+		return mapBlueprintRepoErr(err)
+	}
+	if s.repo != nil {
+		err := s.repo.DeleteDraft(ctx, companyID, blueprintID)
+		return mapBlueprintRepoErr(err)
+	}
+	return errors.New("repository not configured")
+}
+
 // SaveDraftSectionAtVersion saves a section draft under optimistic concurrency control, setting run status to manual_edit.
 func (s *BlueprintDraftService) SaveDraftSectionAtVersion(
 	ctx context.Context,

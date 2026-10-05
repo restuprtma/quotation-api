@@ -319,6 +319,20 @@ func (s *BlueprintReadService) GetBlueprintHistory(ctx context.Context, companyI
 	return s.ListRevisions(ctx, companyID, blueprintID)
 }
 
+// GetRevisionDetail returns the revision detail for a specific blueprint revision.
+func (s *BlueprintReadService) GetRevisionDetail(ctx context.Context, companyID, blueprintID, revisionID uuid.UUID) (*dto.BlueprintRevisionHistoryItem, error) {
+	items, err := s.ListRevisions(ctx, companyID, blueprintID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item.ID == revisionID {
+			return &item, nil
+		}
+	}
+	return nil, ErrBlueprintNotFound
+}
+
 func buildCompletenessMatrix(runs []domain.BlueprintSectionRun, validationResult json.RawMessage) map[string]string {
 	matrix := make(map[string]string)
 	for _, run := range runs {

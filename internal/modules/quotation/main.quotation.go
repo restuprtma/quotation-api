@@ -14,6 +14,7 @@ import (
 
 type Module struct {
 	Handler                   *handler.Handler
+	LifecycleHandler          *handler.LifecycleHandler
 	GenHandler                *handler.QuotationGenerationHandler
 	PromptHandler             *handler.PromptQuotationHandler
 	MeetingExtractionHandler  *handler.MeetingExtractionHandler
@@ -105,6 +106,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	bpPipeline := service.NewBlueprintPipeline(bpGenRepo, providerSource, bpPrompts, bpValidator, bpCrossValidator)
 	bpDraftSvc := service.NewBlueprintDraftService(bpGenRepo, bpValidator, bpCrossValidator, providerSource)
 	bpHandler := handler.NewBlueprintGenerationHandler(bpGenSvc, bpReadSvc, bpPipeline, bpDraftSvc)
+	lifecycleHandler := handler.NewLifecycleHandler(svc, bpDraftSvc, bpReadSvc)
 
 	clientOrgRepo := repository.NewClientOrganizationRepository(db)
 	clientOrgSvc := service.NewClientOrganizationService(clientOrgRepo)
@@ -112,6 +114,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 
 	return &Module{
 		Handler:                   hdlr,
+		LifecycleHandler:          lifecycleHandler,
 		GenHandler:                handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
 		PromptHandler:             handler.NewPromptQuotationHandler(promptDraftSvc),
 		MeetingExtractionHandler:  handler.NewMeetingExtractionHandler(meetingExtractionAPI),
@@ -159,11 +162,20 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.GET("/:id/generation-status", m.GenHandler.GetGenerationStatus)
 		quotations.PUT("/:id/draft", m.GenHandler.SaveDraft)
 
-		// V2 Revisions & Sharing
-		quotations.POST("/:id/revisions", m.Handler.CreateRevision)
-		quotations.GET("/:id/revisions", m.Handler.ListRevisions)
-		quotations.GET("/:id/revisions/:revision_id", m.Handler.GetRevisionDetail)
-		quotations.POST("/:id/share", m.Handler.ShareQuotation)
+		// Lifecycle & Revisions
+		if m.LifecycleHandler != nil {
+			quotations.POST("/:id/publish", m.LifecycleHandler.PublishQuotation)
+			quotations.POST("/:id/revisions", m.LifecycleHandler.CreateQuotationRevision)
+			quotations.GET("/:id/revisions", m.LifecycleHandler.ListQuotationRevisions)
+			quotations.GET("/:id/revisions/:revision_id", m.LifecycleHandler.GetQuotationRevisionDetail)
+		} else if m.Handler != nil {
+			quotations.POST("/:id/revisions", m.Handler.CreateRevision)
+			quotations.GET("/:id/revisions", m.Handler.ListRevisions)
+			quotations.GET("/:id/revisions/:revision_id", m.Handler.GetRevisionDetail)
+		}
+		if m.Handler != nil {
+			quotations.POST("/:id/share", m.Handler.ShareQuotation)
+		}
 	}
 
 	ai := router.Group("/ai")
@@ -199,14 +211,24 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 	blueprints := router.Group("/blueprints")
 	blueprints.Use(middleware.JWTAuth(), middleware.CompanyContext())
 	{
-		blueprints.POST("/generate", m.BlueprintHandler.Generate)
-		blueprints.GET("/:id/generation-status", m.BlueprintHandler.GetStatus)
-		blueprints.GET("/:id", m.BlueprintHandler.GetDetail)
-		blueprints.POST("/:id/continue", m.BlueprintHandler.Continue)
-		blueprints.POST("/:id/sections/:section/retry", m.BlueprintHandler.RetrySection)
-		blueprints.PUT("/:id/sections/:section/manual", m.BlueprintHandler.ManualCompleteSection)
-		blueprints.PUT("/:id/sections/:section/draft", m.BlueprintHandler.SaveDraftSection)
-		blueprints.GET("", m.BlueprintHandler.List)
+		if m.BlueprintHandler != nil {
+			blueprints.POST("/generate", m.BlueprintHandler.Generate)
+			blueprints.GET("/:id/generation-status", m.BlueprintHandler.GetStatus)
+			blueprints.GET("/:id", m.BlueprintHandler.GetDetail)
+			blueprints.POST("/:id/continue", m.BlueprintHandler.Continue)
+			blueprints.POST("/:id/sections/:section/retry", m.BlueprintHandler.RetrySection)
+			blueprints.PUT("/:id/sections/:section/manual", m.BlueprintHandler.ManualCompleteSection)
+			blueprints.PUT("/:id/sections/:section/draft", m.BlueprintHandler.SaveDraftSection)
+			blueprints.GET("", m.BlueprintHandler.List)
+		}
+
+		if m.LifecycleHandler != nil {
+			blueprints.POST("/:id/publish", m.LifecycleHandler.PublishBlueprint)
+			blueprints.POST("/:id/revisions", m.LifecycleHandler.CreateBlueprintRevision)
+			blueprints.GET("/:id/revisions", m.LifecycleHandler.ListBlueprintRevisions)
+			blueprints.GET("/:id/revisions/:revision_id", m.LifecycleHandler.GetBlueprintRevisionDetail)
+			blueprints.DELETE("/:id/draft", m.LifecycleHandler.DeleteBlueprintDraft)
+		}
 	}
 
 	clientOrganizations := router.Group("/client-organizations")
