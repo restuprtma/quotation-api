@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -52,6 +53,26 @@ func (f *fakeDraftRepo) SaveBlueprintDraft(ctx context.Context, params repositor
 		ContentVersion:   params.Snapshot.ExpectedContentVersion + 1,
 		Attempt:          1,
 	}, nil
+}
+
+func (f *fakeDraftRepo) LockBlueprintMaster(ctx context.Context, tx pgx.Tx, blueprintID string) error {
+	return nil
+}
+
+func (f *fakeDraftRepo) DeleteDraft(ctx context.Context, companyID, blueprintID string) error {
+	return nil
+}
+
+func (f *fakeDraftRepo) PublishDraftBlueprint(ctx context.Context, tx pgx.Tx, blueprintID, draftID string, isComplete bool) error {
+	return nil
+}
+
+func (f *fakeDraftRepo) MarkPublishedRevisionSuperseded(ctx context.Context, tx pgx.Tx, blueprintID string) error {
+	return nil
+}
+
+func (f *fakeDraftRepo) GetMaxRevisionNumber(ctx context.Context, tx pgx.Tx, blueprintID string) (int, error) {
+	return 0, nil
 }
 
 func defaultDraftSnapshot(companyID, blueprintID, revisionID uuid.UUID) *repository.BlueprintDraftSnapshot {

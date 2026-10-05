@@ -43,6 +43,7 @@ type Service struct {
 	legalTemplateSvc *LegalTemplateService
 	revRepo          RevisionRepository
 	quotationRepo    QuotationRepository
+	lifecycleRepo    LifecycleRepository
 }
 
 func NewService(
@@ -81,6 +82,11 @@ func (s *Service) WithRevisionRepository(revRepo RevisionRepository) *Service {
 
 func (s *Service) WithQuotationRepository(quotRepo QuotationRepository) *Service {
 	s.quotationRepo = quotRepo
+	return s
+}
+
+func (s *Service) WithLifecycleRepository(lifecycleRepo LifecycleRepository) *Service {
+	s.lifecycleRepo = lifecycleRepo
 	return s
 }
 

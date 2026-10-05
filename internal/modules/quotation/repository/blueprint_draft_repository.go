@@ -40,6 +40,11 @@ type SaveBlueprintDraftParams struct {
 type BlueprintDraftRepository interface {
 	LoadBlueprintDraftSnapshot(ctx context.Context, companyID, blueprintID uuid.UUID, sectionType domain.BlueprintSectionType) (*BlueprintDraftSnapshot, error)
 	SaveBlueprintDraft(ctx context.Context, params SaveBlueprintDraftParams) (*BlueprintSectionPersistenceResult, error)
+	LockBlueprintMaster(ctx context.Context, tx pgx.Tx, blueprintID string) error
+	DeleteDraft(ctx context.Context, companyID, blueprintID string) error
+	PublishDraftBlueprint(ctx context.Context, tx pgx.Tx, blueprintID, draftID string, isComplete bool) error
+	MarkPublishedRevisionSuperseded(ctx context.Context, tx pgx.Tx, blueprintID string) error
+	GetMaxRevisionNumber(ctx context.Context, tx pgx.Tx, blueprintID string) (int, error)
 }
 
 // LoadBlueprintDraftSnapshot loads the draft revision, section run, and context content needed for draft save validation.
