@@ -25,6 +25,7 @@ type BlueprintDraftValidator interface {
 // BlueprintDraftService handles saving draft sections with optimistic concurrency, shape validation, and downstream invalidation.
 type BlueprintDraftService struct {
 	repo           repository.BlueprintDraftRepository
+	lifecycleRepo  BlueprintLifecycleRepo
 	validator      BlueprintDraftValidator
 	crossValidator BlueprintBundleCrossValidator
 	providers      ProviderSource
@@ -46,6 +47,9 @@ func NewBlueprintDraftService(
 		providers:      providers,
 		clock:          defaultPipelineClock{},
 	}
+	if lr, ok := repo.(BlueprintLifecycleRepo); ok {
+		s.lifecycleRepo = lr
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			pipeline := &BlueprintPipeline{}
@@ -56,6 +60,22 @@ func NewBlueprintDraftService(
 		}
 	}
 	return s
+}
+
+// WithLifecycleRepo attaches a BlueprintLifecycleRepo to the BlueprintDraftService.
+func (s *BlueprintDraftService) WithLifecycleRepo(repo BlueprintLifecycleRepo) *BlueprintDraftService {
+	s.lifecycleRepo = repo
+	return s
+}
+
+func (s *BlueprintDraftService) getLifecycleRepo() BlueprintLifecycleRepo {
+	if s.lifecycleRepo != nil {
+		return s.lifecycleRepo
+	}
+	if lr, ok := s.repo.(BlueprintLifecycleRepo); ok {
+		return lr
+	}
+	return nil
 }
 
 // SaveDraftSectionAtVersion saves a section draft under optimistic concurrency control, setting run status to manual_edit.
