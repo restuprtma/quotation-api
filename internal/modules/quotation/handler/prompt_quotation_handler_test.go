@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,19 +15,36 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/internal/modules/quotation/repository"
 	"venturo-skeleton-go/internal/shared/response"
 	jwtpkg "venturo-skeleton-go/pkg/jwt"
 )
 
 type promptCreatorStub struct {
-	called  bool
-	result  *dto.MeetingDraftResponse
-	errCode string
-	err     error
+	called        bool
+	processCalled bool
+	pending       *dto.PendingMeetingDraftResponse
+	result        *dto.MeetingDraftResponse
+	errCode       string
+	err           error
 }
 
-func (s *promptCreatorStub) CreateFromMeeting(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ dto.CreateFromMeetingRequest) (*dto.MeetingDraftResponse, error) {
+func (s *promptCreatorStub) CreateMeetingDraft(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ dto.CreateFromMeetingRequest) (*dto.PendingMeetingDraftResponse, error) {
 	s.called = true
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.errCode != "" {
+		return nil, promptHandlerError{code: s.errCode}
+	}
+	if s.pending != nil {
+		return s.pending, nil
+	}
+	return &dto.PendingMeetingDraftResponse{QuotationID: uuid.New(), RevisionID: uuid.New(), QuotationNumber: "Q-2026-001", GenerationStatus: repository.GenerationStatusPending}, nil
+}
+
+func (s *promptCreatorStub) ProcessMeetingDraft(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*dto.MeetingDraftResponse, error) {
+	s.processCalled = true
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -148,41 +166,74 @@ func TestPromptQuotationHandler_NoBusinessSignalReturns422(t *testing.T) {
 	assert.Equal(t, []string{"meeting_notes_no_business_signal"}, resp.Errors["detail"])
 }
 
-func TestPromptQuotationHandler_PriceableDraftReturns201(t *testing.T) {
+func TestCreateFromMeeting_ReturnsPending201(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewPromptQuotationHandler(&promptCreatorStub{result: &dto.MeetingDraftResponse{Readiness: "priceable"}})
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	setPromptTestClaims(c)
-	h.CreateFromMeeting(c)
-
-	assert.Equal(t, http.StatusCreated, c.Writer.Status())
-}
-
-func TestPromptQuotationHandler_ReturnsOnlySafeCatalogRoles(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	roleID := uuid.New()
-	h := NewPromptQuotationHandler(&promptCreatorStub{result: &dto.MeetingDraftResponse{
-		Readiness: "priceable",
-		CatalogRoles: []dto.PromptCatalogRole{{
-			RateItemID: roleID, Role: "backend_programmer", DisplayName: "Backend Programmer", Seniority: "senior", TermType: "long_term",
-		}},
-	}})
+	pending := &dto.PendingMeetingDraftResponse{QuotationID: uuid.New(), RevisionID: uuid.New(), QuotationNumber: "Q-2026-001", GenerationStatus: repository.GenerationStatusPending}
 	rec := httptest.NewRecorder()
+	h := NewPromptQuotationHandler(&promptCreatorStub{pending: pending})
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	setPromptTestClaims(c)
 	h.CreateFromMeeting(c)
 
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	body := rec.Body.String()
-	assert.Contains(t, body, `"catalog_roles":[{"rate_item_id":`+`"`+roleID.String()+`"`)
-	assert.Contains(t, body, `"display_name":"Backend Programmer"`)
-	for _, forbidden := range []string{"rate_card_snapshot", "amount_per_month", "base_salary", "kickoff_fee"} {
-		assert.NotContains(t, body, forbidden)
+	assert.Equal(t, http.StatusCreated, c.Writer.Status())
+	assert.Contains(t, rec.Body.String(), `"generation_status":"pending"`)
+}
+
+func TestProcessMeeting_SuccessReturns200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	quotationID := uuid.New()
+	h := NewPromptQuotationHandler(&promptCreatorStub{result: &dto.MeetingDraftResponse{QuotationID: quotationID, ContentHTML: "<p>completed</p>"}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Params = gin.Params{{Key: "id", Value: quotationID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	setPromptTestClaims(c)
+	h.ProcessMeeting(c)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "completed")
+}
+
+func TestProcessMeeting_MapsSafeErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	quotationID := uuid.New()
+	tests := []struct {
+		name   string
+		stub   *promptCreatorStub
+		status int
+		code   string
+	}{
+		{name: "provider timeout", stub: &promptCreatorStub{errCode: "provider_timeout"}, status: http.StatusGatewayTimeout, code: "provider_timeout"},
+		{name: "in progress", stub: &promptCreatorStub{errCode: "generation_in_progress"}, status: http.StatusConflict, code: "generation_in_progress"},
+		{name: "foreign or missing", stub: &promptCreatorStub{err: fmt.Errorf("wrapped: %w", repository.ErrRevisionNotFound)}, status: http.StatusNotFound, code: "generation_failed"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h := NewPromptQuotationHandler(tt.stub)
+			c, _ := gin.CreateTestContext(rec)
+			c.Params = gin.Params{{Key: "id", Value: quotationID.String()}}
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+			setPromptTestClaims(c)
+			h.ProcessMeeting(c)
+
+			assert.Equal(t, tt.status, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tt.code)
+		})
+	}
+}
+
+func TestProcessMeeting_RejectsInvalidQuotationID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Params = gin.Params{{Key: "id", Value: "not-a-uuid"}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	setPromptTestClaims(c)
+	NewPromptQuotationHandler(&promptCreatorStub{}).ProcessMeeting(c)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func setPromptTestClaims(c *gin.Context) {
@@ -193,7 +244,7 @@ func setPromptTestClaims(c *gin.Context) {
 
 func TestPromptQuotationHandler_UnknownFieldsAccepted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	stub := &promptCreatorStub{result: &dto.MeetingDraftResponse{Readiness: "incomplete"}}
+	stub := &promptCreatorStub{}
 	h := NewPromptQuotationHandler(stub)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"meeting_notes":"notes","unknown_field":"some_val","project_name":"Project Alpha"}`))

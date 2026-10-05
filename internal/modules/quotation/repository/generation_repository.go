@@ -22,11 +22,12 @@ import (
 // Session 5 regeneration. Quotation rows are created as `queued`; the draft
 // revision starts as `pending` until the pipeline persists a result.
 const (
-	QuotationStatusQueued     = "queued"
-	QuotationStatusFailed     = "failed"
-	GenerationStatusPending   = "pending"
-	GenerationStatusCompleted = "completed"
-	GenerationStatusFailed    = "failed"
+	QuotationStatusQueued      = "queued"
+	QuotationStatusFailed      = "failed"
+	GenerationStatusPending    = "pending"
+	GenerationStatusInProgress = "in_progress"
+	GenerationStatusCompleted  = "completed"
+	GenerationStatusFailed     = "failed"
 
 	PublicationStatusDraft = "draft"
 
@@ -41,6 +42,12 @@ var (
 	// ErrQuotationNumberAlreadyExists reports that the quotation number is already taken
 	// within the active quotations of the same company.
 	ErrQuotationNumberAlreadyExists = errors.New("quotation number already exists")
+	// ErrGenerationInProgress prevents a second worker from calling the
+	// provider for the same draft revision.
+	ErrGenerationInProgress = errors.New("generation already in progress")
+	// ErrGenerationAlreadyCompleted lets callers replay the durable response
+	// without regenerating a completed draft.
+	ErrGenerationAlreadyCompleted = errors.New("generation already completed")
 )
 
 // GenerationRepository owns persistence for the AI-first quotation
@@ -853,6 +860,7 @@ func (r *GenerationRepository) UpdateDraft(ctx context.Context, q Execer, compan
 // internal snapshots.
 type GenerationState struct {
 	GenerationStatus string     `json:"generation_status"`
+	ErrorCode        string     `json:"error_code,omitempty"`
 	ContentVersion   int        `json:"content_version"`
 	ContentHTML      string     `json:"content_html"`
 	GeneratedAt      *time.Time `json:"generated_at,omitempty"`
@@ -865,18 +873,19 @@ type GenerationState struct {
 func (r *GenerationRepository) GetGenerationState(ctx context.Context, companyID, quotationID uuid.UUID) (*GenerationState, error) {
 	var s GenerationState
 	err := r.db.QueryRow(ctx, `
-		SELECT r.generation_status, r.content_version, COALESCE(r.content_html, ''), r.generated_at, r.updated_at
+		SELECT r.generation_status, COALESCE(r.generation_error, ''), r.content_version, COALESCE(r.content_html, ''), r.generated_at, r.updated_at
 		FROM quotation_revisions r
 		JOIN quotations q ON q.id = r.quotation_id
 		WHERE r.quotation_id = $1 AND r.company_id = $2 AND r.revision_number = q.current_revision
 		  AND q.deleted_at IS NULL
-	`, quotationID, companyID).Scan(&s.GenerationStatus, &s.ContentVersion, &s.ContentHTML, &s.GeneratedAt, &s.UpdatedAt)
+	`, quotationID, companyID).Scan(&s.GenerationStatus, &s.ErrorCode, &s.ContentVersion, &s.ContentHTML, &s.GeneratedAt, &s.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrRevisionNotFound
 		}
 		return nil, err
 	}
+	s.ErrorCode = safeGenerationErrorCode(s.ErrorCode)
 	return &s, nil
 }
 

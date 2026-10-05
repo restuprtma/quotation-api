@@ -21,22 +21,61 @@ type CreateFromMeetingRequest struct {
 	IdempotencyKey    string     `json:"idempotency_key"`
 }
 
+// PendingMeetingDraftResponse confirms that the quotation aggregate exists
+// before any external AI provider is contacted.
+type PendingMeetingDraftResponse struct {
+	QuotationID      uuid.UUID `json:"quotation_id"`
+	RevisionID       uuid.UUID `json:"revision_id"`
+	QuotationNumber  string    `json:"quotation_number"`
+	GenerationStatus string    `json:"generation_status"`
+	IdempotentReplay bool      `json:"idempotent_replay"`
+}
+
 // MeetingDraftResponse is intentionally editor-oriented: the caller gets the
 // saved aggregate identifiers, version tokens, prompt state, and sanitized
 // HTML in one response. Calculation is omitted for incomplete drafts.
 type MeetingDraftResponse struct {
-	QuotationID      uuid.UUID                   `json:"quotation_id"`
-	RevisionID       uuid.UUID                   `json:"revision_id"`
-	QuotationNumber  string                      `json:"quotation_number"`
-	ContentHTML      string                      `json:"content_html"`
-	ContentVersion   int                         `json:"content_version"`
-	StateVersion     int64                       `json:"state_version"`
-	PromptState      domain.PromptQuotationState `json:"prompt_state"`
-	Issues           []domain.DraftIssue         `json:"issues"`
-	Readiness        string                      `json:"readiness"`
-	Calculation      json.RawMessage             `json:"calculation,omitempty"`
-	CatalogRoles     []PromptCatalogRole         `json:"catalog_roles,omitempty"`
-	IdempotentReplay bool                        `json:"idempotent_replay"`
+	QuotationID      uuid.UUID                `json:"quotation_id"`
+	RevisionID       uuid.UUID                `json:"revision_id"`
+	QuotationNumber  string                   `json:"quotation_number"`
+	ContentHTML      string                   `json:"content_html"`
+	ContentVersion   int                      `json:"content_version"`
+	StateVersion     int64                    `json:"state_version"`
+	PromptState      PromptQuotationStateView `json:"prompt_state"`
+	Issues           []domain.DraftIssue      `json:"issues"`
+	Readiness        string                   `json:"readiness"`
+	Calculation      json.RawMessage          `json:"calculation,omitempty"`
+	CatalogRoles     []PromptCatalogRole      `json:"catalog_roles,omitempty"`
+	IdempotentReplay bool                     `json:"idempotent_replay"`
+}
+
+// PromptQuotationStateView is the safe, response-facing projection. Meeting
+// notes remain available only in the internally persisted domain state.
+type PromptQuotationStateView struct {
+	SchemaVersion         string                  `json:"schema_version"`
+	ClientName            *domain.Fact[string]    `json:"client_name,omitempty"`
+	ClientCompany         *domain.Fact[string]    `json:"client_company,omitempty"`
+	PICName               *domain.Fact[string]    `json:"pic_name,omitempty"`
+	ProjectName           *domain.Fact[string]    `json:"project_name,omitempty"`
+	CommercialScheme      *domain.Fact[string]    `json:"commercial_scheme,omitempty"`
+	Scope                 []domain.Fact[string]   `json:"scope"`
+	DurationMonths        *domain.Fact[int]       `json:"duration_months,omitempty"`
+	Team                  []domain.PromptTeamLine `json:"team"`
+	PaymentPattern        *domain.Fact[string]    `json:"payment_pattern,omitempty"`
+	AdditionalDiscountBPS *int32                  `json:"additional_discount_bps,omitempty"`
+	ServiceInput          json.RawMessage         `json:"service_input,omitempty"`
+	Issues                []domain.DraftIssue     `json:"issues"`
+	Readiness             string                  `json:"readiness"`
+}
+
+func NewPromptQuotationStateView(state domain.PromptQuotationState) PromptQuotationStateView {
+	return PromptQuotationStateView{
+		SchemaVersion: state.SchemaVersion, ClientName: state.ClientName, ClientCompany: state.ClientCompany,
+		PICName: state.PICName, ProjectName: state.ProjectName, CommercialScheme: state.CommercialScheme,
+		Scope: state.Scope, DurationMonths: state.DurationMonths, Team: state.Team,
+		PaymentPattern: state.PaymentPattern, AdditionalDiscountBPS: state.AdditionalDiscountBPS,
+		ServiceInput: state.ServiceInput, Issues: state.Issues, Readiness: state.Readiness,
+	}
 }
 
 // PromptCatalogRole is the safe, editor-facing projection of a rate card
@@ -93,7 +132,7 @@ type PromptPatchResponse struct {
 	ContentHTML    string                           `json:"content_html"`
 	ContentVersion int                              `json:"content_version"`
 	StateVersion   int64                            `json:"state_version"`
-	PromptState    domain.PromptQuotationState      `json:"prompt_state"`
+	PromptState    PromptQuotationStateView         `json:"prompt_state"`
 	Issues         []domain.DraftIssue              `json:"issues"`
 	Readiness      string                           `json:"readiness"`
 	Calculation    domain.DedicatedSquadCalculation `json:"calculation"`

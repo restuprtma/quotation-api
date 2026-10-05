@@ -88,7 +88,7 @@ func buildPromptRevisionIntentPrompt(state domain.PromptQuotationState, instruct
 	// State is structured context only. The current HTML is deliberately never
 	// sent to the provider; only plain text from the BA-selected section is.
 	state.ServiceInput = nil
-	stateJSON, err := json.Marshal(state)
+	stateJSON, err := MarshalPromptQuotationStateForPersistence(&state)
 	if err != nil {
 		return "", err
 	}

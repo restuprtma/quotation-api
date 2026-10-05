@@ -53,6 +53,18 @@ run_migrations() {
         echo "Core migrations completed successfully!"
     fi
 
+    # Run quotation migrations
+    if [ -d "/app/internal/database/migrations/quotation" ]; then
+        echo "Running quotation migrations..."
+        migrate -path /app/internal/database/migrations/quotation \
+                -database "${DB_URL}&x-migrations-table=schema_migrations_quotation" \
+                up || {
+                    echo "ERROR: Quotation migrations failed"
+                    exit 1
+                }
+        echo "Quotation migrations completed successfully!"
+    fi
+
     # Run CRM migrations
     if [ -d "/app/internal/database/migrations/crm" ]; then
         echo "Running CRM migrations..."

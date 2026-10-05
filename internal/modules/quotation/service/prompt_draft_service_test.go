@@ -22,6 +22,10 @@ type promptRepoStub struct {
 	nextNumber         string
 	draft              *repository.CreateDraftResult
 	record             *repository.PromptDraftRecord
+	createParams       repository.CreateDraftParams
+	claim              *repository.PromptDraftClaim
+	failureCode        string
+	completeErr        error
 	nextNumberCalls    int
 	createDraftCalls   int
 	completeDraftCalls int
@@ -44,17 +48,44 @@ func (r *promptRepoStub) NextQuotationNumber(context.Context, uuid.UUID) (string
 	}
 	return r.nextNumber, nil
 }
-func (r *promptRepoStub) CreateDraftTransaction(_ context.Context, _ repository.CreateDraftParams) (*repository.CreateDraftResult, error) {
+func (r *promptRepoStub) CreateDraftTransaction(_ context.Context, params repository.CreateDraftParams) (*repository.CreateDraftResult, error) {
 	r.createDraftCalls++
+	r.createParams = params
 	if r.draft == nil {
 		r.draft = &repository.CreateDraftResult{QuotationID: uuid.New(), RevisionID: uuid.New()}
 	}
 	return r.draft, nil
 }
+func (r *promptRepoStub) ClaimPromptDraft(_ context.Context, _ uuid.UUID, quotationID uuid.UUID) (*repository.PromptDraftClaim, error) {
+	if r.record != nil && r.record.GenerationStatus == repository.GenerationStatusCompleted {
+		return nil, repository.ErrGenerationAlreadyCompleted
+	}
+	if r.claim == nil {
+		rateSnapshot := r.createParams.RateCardSnapshot
+		if string(rateSnapshot) == "null" || len(rateSnapshot) == 0 {
+			rateSnapshot = []byte(`{"card":{"id":"11111111-1111-1111-1111-111111111111","code":"VENTURO-STD-2026","name":"Default","currency":"IDR"},"items":[{"id":"22222222-2222-2222-2222-222222222222","role":"frontend_programmer","display_name":"Frontend Programmer","seniority":"intermediate","term_type":"long_term"}]}`)
+		}
+		r.claim = &repository.PromptDraftClaim{QuotationID: quotationID, RevisionID: r.draft.RevisionID, QuotationNumber: r.nextNumber, GenerationInput: r.createParams.GenerationInput, RateCardSnapshot: rateSnapshot}
+	}
+	return r.claim, nil
+}
+func (r *promptRepoStub) FailPromptDraft(_ context.Context, _ uuid.UUID, _, _ uuid.UUID, code string) error {
+	r.failureCode = code
+	return nil
+}
 func (r *promptRepoStub) CompletePromptDraft(_ context.Context, params repository.CompletePromptDraftParams) (*repository.PromptDraftSaveResult, error) {
 	r.completeDraftCalls++
-	r.record = &repository.PromptDraftRecord{QuotationID: params.QuotationID, RevisionID: params.RevisionID, QuotationNumber: r.nextNumber, ContentHTML: params.ContentHTML, ContentVersion: 1, StateVersion: 1, PromptState: json.RawMessage(params.PromptState), Calculation: params.CalculationSnapshot, RateCardSnapshot: params.RateCardSnapshot}
+	if r.completeErr != nil {
+		return nil, r.completeErr
+	}
+	r.record = &repository.PromptDraftRecord{QuotationID: params.QuotationID, RevisionID: params.RevisionID, QuotationNumber: r.nextNumber, GenerationStatus: repository.GenerationStatusCompleted, ContentHTML: params.ContentHTML, ContentVersion: 1, StateVersion: 1, PromptState: json.RawMessage(params.PromptState), Calculation: params.CalculationSnapshot, RateCardSnapshot: params.RateCardSnapshot}
 	return &repository.PromptDraftSaveResult{RevisionID: params.RevisionID, ContentVersion: 1, StateVersion: 1}, nil
+}
+
+type rejectingPromptSanitizer struct{}
+
+func (rejectingPromptSanitizer) Sanitize(string) (string, error) {
+	return "", errors.New("unsafe html")
 }
 func (r *promptRepoStub) LoadPromptDraft(context.Context, uuid.UUID, uuid.UUID) (*repository.PromptDraftRecord, error) {
 	return r.record, nil
@@ -63,6 +94,20 @@ func (r *promptRepoStub) LoadPromptDraft(context.Context, uuid.UUID, uuid.UUID) 
 type promptExtractorStub struct{ state domain.PromptQuotationState }
 
 func (e promptExtractorStub) Extract(context.Context, uuid.UUID, dto.MeetingExtractionRequest, CatalogContext) (domain.PromptQuotationState, error) {
+	return e.state, nil
+}
+
+type countingPromptExtractor struct {
+	state domain.PromptQuotationState
+	err   error
+	calls int
+}
+
+func (e *countingPromptExtractor) Extract(context.Context, uuid.UUID, dto.MeetingExtractionRequest, CatalogContext) (domain.PromptQuotationState, error) {
+	e.calls++
+	if e.err != nil {
+		return domain.PromptQuotationState{}, e.err
+	}
 	return e.state, nil
 }
 
@@ -110,6 +155,104 @@ func TestPromptDraftService_UsesCompanyScopedClientLookup(t *testing.T) {
 	require.Equal(t, companyID, repo.companySeen)
 }
 
+func TestPromptDraftService_LoadResponseJSONSnapshotRedactsPersistedMeetingNotes(t *testing.T) {
+	companyID, quotationID := uuid.New(), uuid.New()
+	repo := &promptRepoStub{record: &repository.PromptDraftRecord{
+		QuotationID: quotationID, RevisionID: uuid.New(), QuotationNumber: "Q-2026-001",
+		PromptState: json.RawMessage(`{"schema_version":"prompt_quotation_v1","meeting_notes":"CANARY-PERSISTED-MEETING-NOTES-MUST-NOT-LEAK","scope":[],"team":[],"issues":[],"readiness":"incomplete"}`),
+	}}
+	svc := NewPromptDraftService(repo, nil, nil, nil, nil, nil)
+
+	response, err := svc.loadResponse(context.Background(), companyID, quotationID, false)
+	require.NoError(t, err)
+	body, err := json.Marshal(response)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "meeting_notes")
+	assert.NotContains(t, string(body), "CANARY-PERSISTED-MEETING-NOTES-MUST-NOT-LEAK")
+}
+
+func TestCreateMeetingDraft_PersistsWithoutCallingExtractor(t *testing.T) {
+	companyID := uuid.New()
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+	extractor := &countingPromptExtractor{err: errors.New("must not be called")}
+	svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+	req := dto.CreateFromMeetingRequest{ClientName: stringPtr("PT Arunika"), MeetingNotes: "Membutuhkan aplikasi inventori.", IdempotencyKey: uuid.New().String()}
+
+	pending, err := svc.CreateMeetingDraft(context.Background(), companyID, nil, req)
+	require.NoError(t, err)
+	assert.Equal(t, 1, repo.createDraftCalls)
+	assert.Zero(t, extractor.calls)
+	assert.Equal(t, repository.GenerationStatusPending, pending.GenerationStatus)
+}
+
+func TestProcessMeetingDraft_TimeoutMarksSameDraftFailed(t *testing.T) {
+	companyID := uuid.New()
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+	extractor := &countingPromptExtractor{err: newGenerationError(ErrCodeProviderTimeout, "AI provider timed out")}
+	svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+	req := dto.CreateFromMeetingRequest{ClientName: stringPtr("PT Arunika"), MeetingNotes: "Membutuhkan aplikasi inventori.", IdempotencyKey: uuid.New().String()}
+
+	pending, err := svc.CreateMeetingDraft(context.Background(), companyID, nil, req)
+	require.NoError(t, err)
+	_, err = svc.ProcessMeetingDraft(context.Background(), companyID, pending.QuotationID)
+	require.Error(t, err)
+	assert.Equal(t, ErrCodeProviderTimeout, repo.failureCode)
+	require.NotNil(t, repo.claim)
+	assert.Equal(t, pending.QuotationID, repo.claim.QuotationID)
+}
+
+func TestProcessMeetingDraft_RetryCompletesOriginalDraft(t *testing.T) {
+	companyID := uuid.New()
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+	extractor := &countingPromptExtractor{err: newGenerationError(ErrCodeProviderTimeout, "AI provider timed out")}
+	svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+	req := dto.CreateFromMeetingRequest{ClientName: stringPtr("PT Arunika"), MeetingNotes: incompletePromptTestState().MeetingNotes, IdempotencyKey: uuid.New().String()}
+
+	pending, err := svc.CreateMeetingDraft(context.Background(), companyID, nil, req)
+	require.NoError(t, err)
+	_, err = svc.ProcessMeetingDraft(context.Background(), companyID, pending.QuotationID)
+	require.Error(t, err)
+	extractor.err = nil
+	extractor.state = incompletePromptTestState()
+	result, err := svc.ProcessMeetingDraft(context.Background(), companyID, pending.QuotationID)
+	require.NoError(t, err)
+	assert.Equal(t, pending.QuotationID, result.QuotationID)
+	assert.Equal(t, 1, repo.createDraftCalls)
+	assert.Equal(t, 2, extractor.calls)
+}
+
+func TestProcessMeetingDraft_PersistsPostClaimFailuresOnce(t *testing.T) {
+	companyID := uuid.New()
+	request := func() dto.CreateFromMeetingRequest {
+		return dto.CreateFromMeetingRequest{ClientName: stringPtr("PT Arunika"), MeetingNotes: incompletePromptTestState().MeetingNotes, IdempotencyKey: uuid.New().String()}
+	}
+
+	tests := []struct {
+		name      string
+		extractor *countingPromptExtractor
+		sanitizer HTMLSanitizer
+		complete  error
+		wantCode  string
+	}{
+		{name: "invalid extraction", extractor: &countingPromptExtractor{err: &MeetingExtractionError{Reason: "malformed_json"}}, wantCode: "invalid_extraction.malformed_json"},
+		{name: "canceled provider request", extractor: &countingPromptExtractor{err: context.Canceled}, wantCode: "invalid_extraction"},
+		{name: "sanitizer rejection", extractor: &countingPromptExtractor{state: incompletePromptTestState()}, sanitizer: rejectingPromptSanitizer{}, wantCode: "unsafe_html"},
+		{name: "completion persistence", extractor: &countingPromptExtractor{state: incompletePromptTestState()}, complete: errors.New("write failed"), wantCode: "generation_failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &promptRepoStub{clientName: "PT Arunika", completeErr: tt.complete}
+			svc := NewPromptDraftService(repo, nil, tt.extractor, nil, nil, tt.sanitizer)
+			pending, err := svc.CreateMeetingDraft(context.Background(), companyID, nil, request())
+			require.NoError(t, err)
+			_, err = svc.ProcessMeetingDraft(context.Background(), companyID, pending.QuotationID)
+			require.Error(t, err)
+			assert.Equal(t, tt.wantCode, repo.failureCode)
+			assert.Equal(t, 1, repo.createDraftCalls)
+		})
+	}
+}
+
 func TestPromptDraftService_IncompleteDraftHasNoFictitiousCalculation(t *testing.T) {
 	repo := &promptRepoStub{clientName: "PT Arunika"}
 	state := incompletePromptTestState()
@@ -126,7 +269,7 @@ func TestPromptDraftService_IncompleteDraftHasNoFictitiousCalculation(t *testing
 	require.Contains(t, result.ContentHTML, "information-missing")
 }
 
-func TestPromptDraftService_RejectsNoBusinessSignalBeforePersistence(t *testing.T) {
+func TestPromptDraftService_NoBusinessSignalFailsPersistedDraft(t *testing.T) {
 	repo := &promptRepoStub{clientName: "PT Arunika"}
 	svc := NewPromptDraftService(repo, nil, promptExtractorStub{state: domain.PromptQuotationState{}}, nil, nil, nil)
 
@@ -139,9 +282,10 @@ func TestPromptDraftService_RejectsNoBusinessSignalBeforePersistence(t *testing.
 	var safe *PromptDraftError
 	require.ErrorAs(t, err, &safe)
 	assert.Equal(t, "meeting_notes_no_business_signal", safe.SafeCode())
-	assert.Zero(t, repo.nextNumberCalls)
-	assert.Zero(t, repo.createDraftCalls)
+	assert.Equal(t, 1, repo.nextNumberCalls)
+	assert.Equal(t, 1, repo.createDraftCalls)
 	assert.Zero(t, repo.completeDraftCalls)
+	assert.Equal(t, "meeting_notes_no_business_signal", repo.failureCode)
 }
 
 func TestPromptDraftService_IdempotencyReplayLoadsSameDraft(t *testing.T) {

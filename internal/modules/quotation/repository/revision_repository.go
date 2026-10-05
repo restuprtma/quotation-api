@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,6 +13,32 @@ import (
 
 type RevisionRepository struct {
 	db *pgxpool.Pool
+}
+
+type ExtractionP5Context struct {
+	QuotationNumber       string
+	Subject               string
+	ClientName            string
+	ClientCompanyName     string
+	SolutionType          string
+	QuotationDate         time.Time
+	LegalTemplateSnapshot []byte
+}
+
+func (r *RevisionRepository) GetExtractionP5Context(ctx context.Context, revisionID string, companyID string) (ExtractionP5Context, error) {
+	var out ExtractionP5Context
+	err := r.db.QueryRow(ctx, `
+		SELECT q.quotation_number, COALESCE(q.subject, ''), COALESCE(q.client_name_snapshot, ''), COALESCE(c.name, ''),
+		       COALESCE(q.solution_type, ''), q.created_at, COALESCE(r.legal_template_snapshot, '{}'::jsonb)
+		FROM quotation_revisions r
+		JOIN quotations q ON q.id = r.quotation_id AND q.company_id = r.company_id
+		LEFT JOIN core.clients c ON c.id = q.client_id
+		WHERE r.id=$1 AND r.company_id=$2
+	`, revisionID, companyID).Scan(&out.QuotationNumber, &out.Subject, &out.ClientName, &out.ClientCompanyName, &out.SolutionType, &out.QuotationDate, &out.LegalTemplateSnapshot)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ExtractionP5Context{}, ErrRevisionNotFound
+	}
+	return out, err
 }
 
 func NewRevisionRepository(db *pgxpool.Pool) *RevisionRepository {
@@ -65,6 +92,24 @@ func (r *RevisionRepository) GetActiveRevision(ctx context.Context, quotationID,
 		ORDER BY revision_number DESC LIMIT 1
 	`
 	return scanRevisionRow(r.db.QueryRow(ctx, query, quotationID, companyID))
+}
+
+// GetByID loads the immutable revision selected by an extraction run.  The
+// caller owns tenant validation through the run it has already claimed.
+func (r *RevisionRepository) GetByID(ctx context.Context, revisionID string) (*domain.QuotationRevision, error) {
+	query := `
+		SELECT
+			id, company_id, quotation_id, revision_number, idempotency_key, publication_status, generation_status,
+			generation_input, budget_maximum, allocation_snapshot, rate_card_snapshot, legal_template_snapshot,
+			prompt_state, prompt_state_version, prompt_section_hashes,
+			content_html, content_version, content_hash, ai_provider, ai_model, skill_snapshot, safety_envelope_version,
+			legal_content_modified, legal_modified_by, legal_modified_at, commercial_content_modified,
+			commercial_modified_by, commercial_modified_at, generated_at, published_at, signer_name, signer_email,
+			signature_data, signed_content_hash, signed_at, signed_ip, signed_user_agent, created_by, created_at, updated_at
+		FROM quotation_revisions
+		WHERE id = $1
+	`
+	return scanRevisionRow(r.db.QueryRow(ctx, query, revisionID))
 }
 
 func (r *RevisionRepository) UpdateRevision(ctx context.Context, q Execer, rev *domain.QuotationRevision) (*domain.QuotationRevision, error) {

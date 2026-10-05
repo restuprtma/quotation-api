@@ -29,7 +29,7 @@ import (
 // generate request can never hang indefinitely.
 const (
 	MaxProposalAttempts    = 3
-	DefaultAttemptTimeout  = 180 * time.Second
+	DefaultAttemptTimeout  = 420 * time.Second
 	SafetyEnvelopeFileName = "quotation_safety_v1.txt"
 	SafetyEnvelopeVersion  = "quotation_safety_v1"
 	// DefaultLegalTemplateCode selects the company's standard legal template.

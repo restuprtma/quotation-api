@@ -684,6 +684,41 @@ func TestHTTP_GetGenerationStatus_ExposesStateWithoutBudgetLeak(t *testing.T) {
 	}
 }
 
+func TestGetGenerationStatus_ExposesFailedSafeError(t *testing.T) {
+	pool := getHandlerPool(t)
+	fx := seedHTTPFixtures(t, pool)
+	router := newGenerationRouter(pool, &adaptiveAIProvider{}, fx.companyID)
+	genRepo := repository.NewGenerationRepository(pool)
+	created, err := genRepo.CreateDraftTransaction(context.Background(), repository.CreateDraftParams{
+		CompanyID:             fx.companyID,
+		ClientName:            "Generation status client",
+		QuotationNumber:       "Q-STATUS-" + uuid.New().String()[:8],
+		Subject:               "Generation status test",
+		SolutionType:          "custom_software",
+		CommercialScheme:      "dedicated_squad",
+		IdempotencyKey:        uuid.New().String(),
+		GenerationInput:       json.RawMessage(`{"meeting_notes":"safe"}`),
+		RateCardSnapshot:      json.RawMessage(`{}`),
+		LegalTemplateSnapshot: json.RawMessage(`{}`),
+		SkillSnapshot:         json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+	qid := created.QuotationID
+
+	_, err := pool.Exec(context.Background(), `
+		UPDATE quotation_revisions
+		SET generation_status = 'failed', generation_error = 'provider_timeout', content_html = ''
+		WHERE quotation_id = $1 AND company_id = $2
+	`, qid, fx.companyID)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodGet, "/quotation/v1/quotations/"+qid.String()+"/generation-status", nil, nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"generation_status":"failed"`)
+	assert.Contains(t, w.Body.String(), `"error_code":"provider_timeout"`)
+	assert.Contains(t, w.Body.String(), `"content_html":""`)
+}
+
 func TestHTTP_GetByID_ExposesLegalSnapshotAndRevisionID(t *testing.T) {
 	pool := getHandlerPool(t)
 	fx := seedHTTPFixtures(t, pool)

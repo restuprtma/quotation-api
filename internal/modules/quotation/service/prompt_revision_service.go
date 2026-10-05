@@ -184,7 +184,7 @@ func (s *PromptRevisionService) apply(ctx context.Context, companyID uuid.UUID, 
 	if err != nil {
 		return nil, promptRevisionError("section_merge_invalid", err)
 	}
-	stateJSON, _ := json.Marshal(state)
+	stateJSON, _ := MarshalPromptQuotationStateForPersistence(&state)
 	calculationJSON, _ := json.Marshal(calculation)
 	profileJSON, _ := json.Marshal(profile)
 	sectionJSON, _ := json.Marshal(promptSectionHashes(merged))
@@ -202,7 +202,7 @@ func (s *PromptRevisionService) apply(ctx context.Context, companyID uuid.UUID, 
 		}
 		return nil, promptRevisionError("revision_update_failed", err)
 	}
-	return &dto.PromptPatchResponse{QuotationID: record.QuotationID, RevisionID: record.RevisionID, ContentHTML: merged, ContentVersion: saved.ContentVersion, StateVersion: saved.StateVersion, PromptState: state, Issues: state.Issues, Readiness: state.Readiness, Calculation: calculation, CatalogRoles: PromptCatalogRoles(items)}, nil
+	return &dto.PromptPatchResponse{QuotationID: record.QuotationID, RevisionID: record.RevisionID, ContentHTML: merged, ContentVersion: saved.ContentVersion, StateVersion: saved.StateVersion, PromptState: dto.NewPromptQuotationStateView(state), Issues: state.Issues, Readiness: state.Readiness, Calculation: calculation, CatalogRoles: PromptCatalogRoles(items)}, nil
 }
 
 func discountPolicyVerified(policy DiscountPolicy) bool {

@@ -4,21 +4,65 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Database DatabaseConfig
-	Server   ServerConfig
-	Security SecurityConfig
-	Auth     AuthConfig
-	WAHA     WAHAConfig
-	AI       AIConfig
-	Redis    RedisConfig
-	GCS      GCSConfig
-	Firebase FirebaseConfig
+	Database          DatabaseConfig
+	Server            ServerConfig
+	Security          SecurityConfig
+	Auth              AuthConfig
+	WAHA              WAHAConfig
+	AI                AIConfig
+	Redis             RedisConfig
+	GCS               GCSConfig
+	Firebase          FirebaseConfig
+	MeetingExtraction MeetingExtractionConfig
+}
+
+// MeetingExtractionMode controls which meeting-extraction implementation may
+// be selected by the application. The default is deliberately legacy so the
+// flag is safe to deploy before the pipeline worker/API is enabled.
+type MeetingExtractionMode string
+
+const (
+	MeetingExtractionModeLegacy   MeetingExtractionMode = "legacy"
+	MeetingExtractionModePipeline MeetingExtractionMode = "pipeline"
+	MeetingExtractionModeShadow   MeetingExtractionMode = "shadow"
+)
+
+const meetingExtractionModeEnv = "MEETING_EXTRACTION_MODE"
+
+// MeetingExtractionConfig contains configuration for the meeting-extraction
+// rollout. Consumers should use Mode as a selector only; pipeline/shadow
+// execution remains owned by the async orchestration layer.
+type MeetingExtractionConfig struct {
+	Mode                  MeetingExtractionMode
+	ShadowSamplingPercent int
+}
+
+// ParseMeetingExtractionMode validates the externally supplied mode without
+// silently falling back from a typo to legacy.
+func ParseMeetingExtractionMode(value string) (MeetingExtractionMode, error) {
+	switch strings.TrimSpace(value) {
+	case string(MeetingExtractionModeLegacy):
+		return MeetingExtractionModeLegacy, nil
+	case string(MeetingExtractionModePipeline):
+		return MeetingExtractionModePipeline, nil
+	case string(MeetingExtractionModeShadow):
+		return MeetingExtractionModeShadow, nil
+	default:
+		return "", fmt.Errorf("%s must be one of %q, %q, or %q; got %q", meetingExtractionModeEnv, MeetingExtractionModeLegacy, MeetingExtractionModePipeline, MeetingExtractionModeShadow, value)
+	}
+}
+
+// LoadMeetingExtractionMode reads MEETING_EXTRACTION_MODE and defaults to the
+// legacy path when the variable is unset or empty.
+func LoadMeetingExtractionMode() (MeetingExtractionMode, error) {
+	return ParseMeetingExtractionMode(getEnv(meetingExtractionModeEnv, string(MeetingExtractionModeLegacy)))
 }
 
 type GCSConfig struct {
@@ -101,6 +145,11 @@ type RedisConfig struct {
 func Load() *Config {
 	_ = godotenv.Load(".env", "../.env", "../../.env")
 
+	meetingExtractionMode, err := LoadMeetingExtractionMode()
+	if err != nil {
+		panic("FATAL: " + err.Error())
+	}
+
 	cfg := &Config{
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -155,6 +204,10 @@ func Load() *Config {
 		Firebase: FirebaseConfig{
 			ProjectID:       getEnv("FIREBASE_PROJECT_ID", ""),
 			CredentialsJSON: getEnv("FIREBASE_CREDENTIALS_JSON", ""),
+		},
+		MeetingExtraction: MeetingExtractionConfig{
+			Mode:                  meetingExtractionMode,
+			ShadowSamplingPercent: getEnvInt("MEETING_EXTRACTION_SHADOW_SAMPLING_PERCENT", 0),
 		},
 	}
 

@@ -11,11 +11,13 @@ import (
 
 	"venturo-skeleton-go/internal/middleware"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/internal/modules/quotation/repository"
 	"venturo-skeleton-go/internal/shared/response"
 )
 
 type promptQuotationCreator interface {
-	CreateFromMeeting(context.Context, uuid.UUID, *uuid.UUID, dto.CreateFromMeetingRequest) (*dto.MeetingDraftResponse, error)
+	CreateMeetingDraft(context.Context, uuid.UUID, *uuid.UUID, dto.CreateFromMeetingRequest) (*dto.PendingMeetingDraftResponse, error)
+	ProcessMeetingDraft(context.Context, uuid.UUID, uuid.UUID) (*dto.MeetingDraftResponse, error)
 }
 
 // PromptQuotationHandler exposes the additive prompt-first endpoint. It does
@@ -55,7 +57,7 @@ func (h *PromptQuotationHandler) CreateFromMeeting(c *gin.Context) {
 		return
 	}
 
-	result, err := h.creator.CreateFromMeeting(c.Request.Context(), companyID, createdBy, req)
+	result, err := h.creator.CreateMeetingDraft(c.Request.Context(), companyID, createdBy, req)
 	if err != nil {
 		status := http.StatusUnprocessableEntity
 		code := safePromptErrorCode(err)
@@ -71,6 +73,43 @@ func (h *PromptQuotationHandler) CreateFromMeeting(c *gin.Context) {
 		status = http.StatusOK
 	}
 	response.Success(c, status, "Quotation draft created", result)
+}
+
+// ProcessMeeting retries or completes the persisted meeting draft identified
+// by :id. The handler only exposes safe lifecycle codes, never provider data.
+func (h *PromptQuotationHandler) ProcessMeeting(c *gin.Context) {
+	quotationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid quotation id", "invalid_request")
+		return
+	}
+	companyID, ok := companyUUID(c)
+	if !ok {
+		return
+	}
+	if h == nil || h.creator == nil {
+		response.Error(c, http.StatusInternalServerError, "Internal server error", "")
+		return
+	}
+
+	result, err := h.creator.ProcessMeetingDraft(c.Request.Context(), companyID, quotationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrRevisionNotFound) {
+			response.Error(c, http.StatusNotFound, "Quotation not found", "generation_failed")
+			return
+		}
+		code := safePromptErrorCode(err)
+		switch code {
+		case "provider_timeout":
+			response.Error(c, http.StatusGatewayTimeout, "AI provider timed out", code)
+		case "generation_in_progress":
+			response.Error(c, http.StatusConflict, "Quotation generation is already in progress", code)
+		default:
+			response.Error(c, http.StatusUnprocessableEntity, "Unable to process quotation draft", code)
+		}
+		return
+	}
+	response.Success(c, http.StatusOK, "Quotation draft processed", result)
 }
 
 type safePromptError interface {

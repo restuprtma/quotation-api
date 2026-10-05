@@ -1,0 +1,3 @@
+DROP TABLE quotation_extraction_provider_state;
+DROP TABLE quotation_extraction_phases;
+DROP TABLE quotation_extraction_runs;

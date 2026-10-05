@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -56,6 +57,22 @@ type Fact[T any] struct {
 	Source    ValueSource `json:"source"`
 	Evidence  string      `json:"evidence,omitempty"`
 	Confirmed bool        `json:"confirmed"`
+}
+
+var evidenceReferenceTokenPattern = regexp.MustCompile(`^ev1:C[0-9]{3}:L[0-9]{4}(?:-L[0-9]{4})?:o[0-9]+-[0-9]+:h=[A-Za-z0-9_-]+$`)
+
+// NewEvidenceReferenceToken creates the non-secret evidence reference retained
+// by the persisted prompt state. It identifies a canonical note span without
+// storing its quoted text.
+func NewEvidenceReferenceToken(chunkID, lineRange string, startOffset, endOffset int, normalizedHash string) string {
+	return fmt.Sprintf("ev1:%s:%s:o%d-%d:h=%s", chunkID, lineRange, startOffset, endOffset, normalizedHash)
+}
+
+// IsEvidenceReferenceToken recognizes the version-one reference format. The
+// existing validator intentionally still accepts legacy non-empty evidence so
+// saved prompt states remain compatible during the pipeline migration.
+func IsEvidenceReferenceToken(value string) bool {
+	return evidenceReferenceTokenPattern.MatchString(strings.TrimSpace(value))
 }
 
 type IssueSeverity string

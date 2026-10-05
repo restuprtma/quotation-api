@@ -9,16 +9,19 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/handler"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
 	"venturo-skeleton-go/internal/modules/quotation/service"
+	quotationWorker "venturo-skeleton-go/internal/modules/quotation/worker"
 )
 
 type Module struct {
 	Handler                   *handler.Handler
 	GenHandler                *handler.QuotationGenerationHandler
 	PromptHandler             *handler.PromptQuotationHandler
+	MeetingExtractionHandler  *handler.MeetingExtractionHandler
 	PromptRevisionHandler     *handler.PromptRevisionHandler
 	BlueprintHandler          *handler.BlueprintGenerationHandler
 	ClientOrganizationHandler *handler.ClientOrganizationHandler
 	Service                   *service.Service
+	ExtractionExecutor        quotationWorker.Executor
 }
 
 // Initialize wires the quotation module. The AI provider is instantiated via
@@ -49,7 +52,29 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	// resolution stays inside DBCredentialProviderSource; nothing derived
 	// from credentials is cached.
 	genRepo := repository.NewGenerationRepository(db)
+	meetingExtractionRepo := repository.NewMeetingExtractionRepository(db)
 	providerSource := service.NewDBCredentialProviderSource(credentialRepo, aiFactory, cfg.AI.CredentialEncryptionKey)
+	startDecider := service.NewMeetingExtractionStartDecider(providerSource, string(cfg.MeetingExtraction.Mode), cfg.MeetingExtraction.ShadowSamplingPercent)
+	meetingExtractionAPI := handler.NewRepositoryMeetingExtractionAPI(meetingExtractionRepo, genRepo, startDecider)
+	var extractionExecutor quotationWorker.Executor
+	if cfg.MeetingExtraction.Mode == config.MeetingExtractionModePipeline || cfg.MeetingExtraction.Mode == config.MeetingExtractionModeShadow {
+		extractionStore, storeErr := service.NewPostgreSQLMeetingExtractionOrchestratorStore(meetingExtractionRepo, service.MeetingExtractionStoreOptions{DailyProviderCallsMax: 8, DailyQuotationCallsMax: 8})
+		if storeErr != nil {
+			panic("meeting extraction startup dependency missing: " + storeErr.Error())
+		}
+		p5, p5Err := service.NewCatalogBackedMeetingExtractionP5(genRepo, service.NewPromptServiceAdapterRegistry(nil, nil, nil, nil))
+		if p5Err != nil {
+			panic("meeting extraction startup dependency missing: " + p5Err.Error())
+		}
+		productionExecutor, executorErr := service.NewMeetingExtractionExecutor(service.MeetingExtractionExecutorOptions{
+			Revisions: repository.NewRevisionRepository(db), Providers: providerSource, Catalog: service.RevisionRateCardSnapshotLoader{},
+			Store: extractionStore, P5: p5, PipelineVersion: "meeting-extraction-v1", PromptVersion: "meeting-extraction-v1", SchemaVersion: "meeting-extraction-v1",
+		})
+		if executorErr != nil {
+			panic("meeting extraction startup dependency missing: " + executorErr.Error())
+		}
+		extractionExecutor = productionExecutor
+	}
 	genSvc := service.NewQuotationGenerationService(genRepo, providerSource)
 	previewCalculator := service.NewDedicatedSquadCalculator(rcRepo)
 	promptCatalog := service.NewPromptCatalogService(rcRepo)
@@ -89,10 +114,12 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 		Handler:                   hdlr,
 		GenHandler:                handler.NewQuotationGenerationHandler(genSvc, genRepo, previewCalculator),
 		PromptHandler:             handler.NewPromptQuotationHandler(promptDraftSvc),
+		MeetingExtractionHandler:  handler.NewMeetingExtractionHandler(meetingExtractionAPI),
 		PromptRevisionHandler:     handler.NewPromptRevisionHandler(promptRevisionSvc, promptSectionRevisionSvc),
 		BlueprintHandler:          bpHandler,
 		ClientOrganizationHandler: clientOrgHandler,
 		Service:                   svc,
+		ExtractionExecutor:        extractionExecutor,
 	}
 }
 
@@ -114,6 +141,10 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		quotations.POST("/preview/cloud-infrastructure", m.GenHandler.PreviewCloudInfrastructure)
 		// Register the additive prompt-first route before the /:id wildcard.
 		quotations.POST("/from-meeting", m.PromptHandler.CreateFromMeeting)
+		quotations.POST("/:id/meeting-extraction", m.MeetingExtractionHandler.Start)
+		quotations.GET("/:id/meeting-extraction/:run_id", m.MeetingExtractionHandler.Status)
+		quotations.POST("/:id/meeting-extraction/:run_id/retry", m.MeetingExtractionHandler.Retry)
+		quotations.POST("/:id/process-meeting", m.PromptHandler.ProcessMeeting)
 		quotations.PATCH("/:id/prompt-state", m.PromptRevisionHandler.PatchPromptState)
 		quotations.POST("/:id/revise-section", m.PromptRevisionHandler.ReviseSection)
 		// AI-first detail (Fase 6 Session 5): menggantikan target stub yang

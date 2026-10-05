@@ -1,6 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"venturo-skeleton-go/internal/config"
@@ -49,13 +55,38 @@ func main() {
 	ginRouter := gin.New() // Use gin.New() instead of gin.Default() since we use custom middleware
 
 	// Setup routes (all modules initialized inside router)
-	router.Setup(ginRouter, db.Pool, cfg)
+	managedWorker := router.Setup(ginRouter, db.Pool, cfg)
+
+	processCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	if err := managedWorker.Start(processCtx); err != nil {
+		logger.Fatal("Failed to start meeting extraction worker", logger.Err(err))
+	}
 
 	// Start server
 	serverAddr := ":" + cfg.Server.Port
 	logger.Info("Starting server on " + serverAddr + " (Environment: " + cfg.Server.Env + ")")
 
-	if err := ginRouter.Run(serverAddr); err != nil {
-		logger.Fatal("Failed to start server")
+	server := &http.Server{Addr: serverAddr, Handler: ginRouter}
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case <-processCtx.Done():
+		logger.Info("Shutdown signal received")
+	case err := <-serverErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server stopped", logger.Err(err))
+		}
+		stopSignals()
 	}
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("HTTP graceful shutdown failed", logger.Err(err))
+	}
+	managedWorker.Wait()
 }

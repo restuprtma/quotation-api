@@ -9,6 +9,21 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// discordSafeFieldKeys is deliberately smaller than the set of fields written
+// to the primary Zap sink. Discord is an external alert channel, so it must
+// receive only bounded operational metadata and never request/provider text,
+// credentials, identifiers, or arbitrary errors.
+var discordSafeFieldKeys = map[string]struct{}{
+	"duration_ms":         {},
+	"calls_used":          {},
+	"calls_max":           {},
+	"input_tokens":        {},
+	"output_tokens":       {},
+	"attempt":             {},
+	"http_status":         {},
+	"retry_after_seconds": {},
+}
+
 // discordCore is a zapcore.Core that forwards entries at or above minLevel
 // to a Discord webhook via a rate-limited notifier. It does not encode or
 // write the entry anywhere else — pair with NewTee so the primary core
@@ -56,22 +71,56 @@ func (c *discordCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcor
 }
 
 func (c *discordCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+	allFields := make([]zapcore.Field, 0, len(c.fields)+len(fields))
+	allFields = append(allFields, c.fields...)
+	allFields = append(allFields, fields...)
+
+	c.notifier.Notify(discordEventForAlert(ent, allFields))
+	return nil
+}
+
+func discordEventForAlert(ent zapcore.Entry, fields []zapcore.Field) discord.Event {
 	enc := zapcore.NewMapObjectEncoder()
-	for _, f := range c.fields {
-		f.AddTo(enc)
-	}
 	for _, f := range fields {
-		f.AddTo(enc)
+		if discordSafeField(f) {
+			f.AddTo(enc)
+		}
 	}
 
-	c.notifier.Notify(discord.Event{
-		Level:   ent.Level.String(),
-		Message: ent.Message,
+	return discord.Event{
+		Level: ent.Level.String(),
+		// Entry messages are free text and may contain request or provider
+		// content. Use a fixed message; detailed data remains only in the
+		// primary, access-controlled Zap sink.
+		Message: "application alert",
 		Caller:  ent.Caller.TrimmedPath(),
 		Time:    ent.Time,
 		Fields:  enc.Fields,
-	})
-	return nil
+	}
+}
+
+func discordSafeField(field zapcore.Field) bool {
+	if _, ok := discordSafeFieldKeys[field.Key]; !ok {
+		return false
+	}
+
+	// Only scalar Zap encodings are allowed. In particular, ErrorType,
+	// ObjectMarshalerType, ReflectType, and StringerType can contain
+	// arbitrary free text and are never forwarded.
+	switch field.Type {
+	case zapcore.BoolType,
+		zapcore.Int64Type,
+		zapcore.Int32Type,
+		zapcore.Int16Type,
+		zapcore.Int8Type,
+		zapcore.Uint64Type,
+		zapcore.Uint32Type,
+		zapcore.Uint16Type,
+		zapcore.Uint8Type:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *discordCore) Sync() error { return nil }

@@ -1,0 +1,4 @@
+Extract only generic scope features from the supplied meeting-note context.
+Return only JSON matching the supplied schema. Each feature must be supported by
+reference IDs. Evidence contains reference IDs only: never copy or quote source
+text. Do not infer prices, rates, totals, discounts, staffing, or service details.

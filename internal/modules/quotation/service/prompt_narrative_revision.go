@@ -52,7 +52,7 @@ func (s *PromptNarrativeRevisionService) Apply(ctx context.Context, companyID, q
 	if err != nil {
 		return nil, promptRevisionError("section_merge_invalid", err)
 	}
-	stateJSON, _ := json.Marshal(state)
+	stateJSON, _ := MarshalPromptQuotationStateForPersistence(&state)
 	sectionJSON, _ := json.Marshal(promptSectionHashes(merged))
 	hash := sha256.Sum256([]byte(merged))
 	contentHash := hex.EncodeToString(hash[:])
@@ -70,7 +70,7 @@ func (s *PromptNarrativeRevisionService) Apply(ctx context.Context, companyID, q
 	}
 	var calculation domain.DedicatedSquadCalculation
 	_ = json.Unmarshal(record.Calculation, &calculation)
-	result := &dto.PromptPatchResponse{QuotationID: quotationID, RevisionID: record.RevisionID, ContentHTML: merged, ContentVersion: saved.ContentVersion, StateVersion: saved.StateVersion, PromptState: state, Issues: state.Issues, Readiness: state.Readiness, Calculation: calculation}
+	result := &dto.PromptPatchResponse{QuotationID: quotationID, RevisionID: record.RevisionID, ContentHTML: merged, ContentVersion: saved.ContentVersion, StateVersion: saved.StateVersion, PromptState: dto.NewPromptQuotationStateView(state), Issues: state.Issues, Readiness: state.Readiness, Calculation: calculation}
 	if _, items, snapshotErr := promptRateCardSnapshot(record.RateCardSnapshot); snapshotErr == nil {
 		result.CatalogRoles = PromptCatalogRoles(items)
 	}

@@ -4,11 +4,138 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// PromptDraftClaim is the immutable input and catalog snapshot owned by one
+// processing attempt. The claim is made before an AI provider is called.
+type PromptDraftClaim struct {
+	QuotationID      uuid.UUID
+	RevisionID       uuid.UUID
+	QuotationNumber  string
+	GenerationInput  json.RawMessage
+	RateCardSnapshot json.RawMessage
+}
+
+// ClaimPromptDraft transitions the current draft revision from pending (or a
+// previously failed attempt) to in_progress under row locks. Completed and
+// in-progress revisions are deliberately not mutated.
+func (r *GenerationRepository) ClaimPromptDraft(ctx context.Context, companyID, quotationID uuid.UUID) (*PromptDraftClaim, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	claim := &PromptDraftClaim{}
+	var status string
+	err = tx.QueryRow(ctx, `
+		SELECT q.id, r.id, q.quotation_number,
+		       COALESCE(r.generation_input, '{}'::jsonb),
+		       COALESCE(r.rate_card_snapshot, 'null'::jsonb),
+		       r.generation_status
+		FROM quotations q
+		JOIN quotation_revisions r
+		  ON r.quotation_id = q.id
+		 AND r.revision_number = q.current_revision
+		WHERE q.id = $1 AND q.company_id = $2 AND r.company_id = $2
+		  AND q.deleted_at IS NULL AND r.publication_status = $3
+		FOR UPDATE OF q, r
+	`, quotationID, companyID, PublicationStatusDraft).Scan(
+		&claim.QuotationID, &claim.RevisionID, &claim.QuotationNumber,
+		&claim.GenerationInput, &claim.RateCardSnapshot, &status,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrRevisionNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	switch status {
+	case GenerationStatusCompleted:
+		return nil, ErrGenerationAlreadyCompleted
+	case GenerationStatusInProgress:
+		return nil, ErrGenerationInProgress
+	case GenerationStatusPending, GenerationStatusFailed:
+		// Claimable states.
+	default:
+		return nil, ErrRevisionConflict
+	}
+
+	result, err := tx.Exec(ctx, `
+		UPDATE quotation_revisions
+		SET generation_status = $1,
+		    generation_error = NULL,
+		    updated_at = NOW()
+		WHERE id = $2 AND quotation_id = $3 AND company_id = $4
+	`, GenerationStatusInProgress, claim.RevisionID, claim.QuotationID, companyID)
+	if err != nil {
+		return nil, err
+	}
+	if result.RowsAffected() != 1 {
+		return nil, ErrRevisionNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return claim, nil
+}
+
+// FailPromptDraft records only a safe, client-facing error code and marks the
+// quotation aggregate as failed in the same SQL statement.
+func (r *GenerationRepository) FailPromptDraft(ctx context.Context, companyID, quotationID, revisionID uuid.UUID, safeCode string) error {
+	code := safeGenerationFailureCode(safeCode)
+	result, err := r.db.Exec(ctx, `
+		WITH updated_rev AS (
+			UPDATE quotation_revisions
+			SET generation_status = $1,
+			    generation_error = $2,
+			    updated_at = NOW()
+			WHERE id = $3 AND quotation_id = $4 AND company_id = $5
+			RETURNING quotation_id
+		)
+		UPDATE quotations q
+		SET status = $6, updated_at = NOW()
+		FROM updated_rev r
+		WHERE q.id = r.quotation_id AND q.company_id = $5
+	`, GenerationStatusFailed, code, revisionID, quotationID, companyID, QuotationStatusFailed)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrRevisionNotFound
+	}
+	return nil
+}
+
+func safeGenerationFailureCode(code string) string {
+	code = strings.TrimSpace(code)
+	switch code {
+	case "provider_timeout", "provider_rate_limited", "provider_invalid_credential",
+		"settings_incomplete", "meeting_notes_no_business_signal", "unsafe_html",
+		"generation_failed", "generation_in_progress":
+		return code
+	default:
+		if strings.HasPrefix(code, "invalid_extraction.") {
+			return code
+		}
+		return "generation_failed"
+	}
+}
+
+// safeGenerationErrorCode makes legacy error text safe before it leaves the
+// repository read model. New failure writes already go through the allowlist.
+func safeGenerationErrorCode(code string) string {
+	if strings.TrimSpace(code) == "" {
+		return ""
+	}
+	return safeGenerationFailureCode(code)
+}
 
 // PromptDraftSnapshots is the complete set of persisted artefacts that must
 // move together with prompt state. Nil JSON values intentionally remain NULL.
@@ -121,6 +248,7 @@ type PromptDraftRecord struct {
 	QuotationID           uuid.UUID
 	RevisionID            uuid.UUID
 	QuotationNumber       string
+	GenerationStatus      string
 	ContentHTML           string
 	ContentVersion        int
 	StateVersion          int64
@@ -139,7 +267,7 @@ type PromptDraftRecord struct {
 func (r *GenerationRepository) LoadPromptDraft(ctx context.Context, companyID, quotationID uuid.UUID) (*PromptDraftRecord, error) {
 	var record PromptDraftRecord
 	err := r.db.QueryRow(ctx, `
-		SELECT q.company_id, q.id, r.id, q.quotation_number, r.content_html, r.content_version,
+		SELECT q.company_id, q.id, r.id, q.quotation_number, r.generation_status, r.content_html, r.content_version,
 		       r.prompt_state_version, r.prompt_state, r.prompt_section_hashes,
 		       COALESCE(r.calculation_snapshot, 'null'::jsonb),
 		       COALESCE(r.allocation_snapshot, 'null'::jsonb), COALESCE(r.rate_card_snapshot, 'null'::jsonb),
@@ -151,7 +279,7 @@ func (r *GenerationRepository) LoadPromptDraft(ctx context.Context, companyID, q
 		WHERE q.id = $1 AND q.company_id = $2 AND r.company_id = $2
 		  AND q.deleted_at IS NULL AND r.publication_status = $3
 	`, quotationID, companyID, PublicationStatusDraft).Scan(
-		&record.CompanyID, &record.QuotationID, &record.RevisionID, &record.QuotationNumber,
+		&record.CompanyID, &record.QuotationID, &record.RevisionID, &record.QuotationNumber, &record.GenerationStatus,
 		&record.ContentHTML, &record.ContentVersion, &record.StateVersion,
 		&record.PromptState, &record.PromptSections, &record.Calculation,
 		&record.AllocationSnapshot, &record.RateCardSnapshot, &record.LegalTemplateSnapshot,

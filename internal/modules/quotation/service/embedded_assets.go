@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed prompts/*
+//go:embed prompts
 var promptsFS embed.FS
 
 // GetSafetyEnvelope reads a prompt file from the embedded assets.

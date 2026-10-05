@@ -1,0 +1,1 @@
+Extract only descriptive white-label facts allowed by the supplied schema. Return JSON only. Never invent commercial values.

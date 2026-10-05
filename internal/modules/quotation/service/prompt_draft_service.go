@@ -49,6 +49,8 @@ type promptDraftRepository interface {
 	GetClientNameForCompany(context.Context, uuid.UUID, uuid.UUID) (string, error)
 	NextQuotationNumber(context.Context, uuid.UUID) (string, error)
 	CreateDraftTransaction(context.Context, repository.CreateDraftParams) (*repository.CreateDraftResult, error)
+	ClaimPromptDraft(context.Context, uuid.UUID, uuid.UUID) (*repository.PromptDraftClaim, error)
+	FailPromptDraft(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string) error
 	CompletePromptDraft(context.Context, repository.CompletePromptDraftParams) (*repository.PromptDraftSaveResult, error)
 	LoadPromptDraft(context.Context, uuid.UUID, uuid.UUID) (*repository.PromptDraftRecord, error)
 }
@@ -91,7 +93,9 @@ func NewPromptDraftService(
 	return &PromptDraftService{genRepo: genRepo, catalog: catalog, extractor: extractor, calculator: calculator, renderer: renderer, sanitizer: sanitizer}
 }
 
-func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uuid.UUID, userID *uuid.UUID, req dto.CreateFromMeetingRequest) (*dto.MeetingDraftResponse, error) {
+// CreateMeetingDraft persists the complete provider input and catalog snapshot
+// before any AI call. A replay returns the original aggregate and lifecycle.
+func (s *PromptDraftService) CreateMeetingDraft(ctx context.Context, companyID uuid.UUID, userID *uuid.UUID, req dto.CreateFromMeetingRequest) (*dto.PendingMeetingDraftResponse, error) {
 	if s == nil || s.genRepo == nil || companyID == uuid.Nil {
 		return nil, promptError("invalid_request", ErrPromptInvalidRequest)
 	}
@@ -110,7 +114,7 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 	if existing, err := s.genRepo.FindByIdempotencyKey(ctx, companyID, idempotencyKey); err != nil {
 		return nil, promptError("generation_failed", ErrPromptPersistence)
 	} else if existing != nil {
-		return s.loadResponse(ctx, companyID, existing.QuotationID, true)
+		return s.loadPendingResponse(ctx, companyID, existing.QuotationID, true)
 	}
 
 	clientName, err := s.resolveClient(ctx, companyID, req)
@@ -118,41 +122,14 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 		return nil, err
 	}
 	ident := normalizeMeetingIdentity(req, clientName)
+	if ident.Organization != "" {
+		req.ClientCompanyName = &ident.Organization
+	}
 
-	catalogContext, card, items, catalogErr := s.resolveCatalog(ctx, companyID)
+	_, card, items, catalogErr := s.resolveCatalog(ctx, companyID)
 	if catalogErr != nil && !errors.Is(catalogErr, ErrPromptCatalogEmpty) {
 		return nil, promptError("commercial_input_missing", catalogErr)
 	}
-
-	if s.extractor == nil {
-		return nil, promptError("generation_failed", ErrPromptInvalidExtraction)
-	}
-	state, err := s.extractor.Extract(ctx, companyID, dto.MeetingExtractionRequest{MeetingNotes: notes}, catalogContext)
-	if err != nil {
-		return nil, promptError(promptExtractionErrorCode(err), ErrPromptInvalidExtraction)
-	}
-	if !hasMeetingBusinessSignal(state) {
-		return nil, promptError("meeting_notes_no_business_signal", ErrPromptNoBusinessSignal)
-	}
-	if ident.Organization != "" {
-		state.ClientCompany = userFact(ident.Organization)
-	}
-	if ident.PIC != "" {
-		state.PICName = optionalUserFact(ident.PIC)
-		state.ClientName = optionalUserFact(ident.PIC) // compatibility for old snapshots/renderers
-	}
-	if ident.ProjectName != "" {
-		state.ProjectName = userFact(ident.ProjectName)
-	}
-	// The extractor's readiness was computed before request-level identity
-	// overrides. Recompute it only after those overrides so validation never
-	// rejects a now-complete state because of a stale readiness value.
-	state.Readiness = ""
-	state.Issues = state.ComputeIssues()
-	if catalogErr != nil {
-		state.Issues = append(state.Issues, domain.DraftIssue{Code: "commercial_input_missing", Field: "rate_card", Message: "the default rate card is not available", Severity: domain.IssueBlocking})
-	}
-	state.Readiness = readinessForIssues(state.Issues)
 
 	quotationNumber, err := s.genRepo.NextQuotationNumber(ctx, companyID)
 	if err != nil {
@@ -161,7 +138,7 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 	inputJSON, _ := json.Marshal(req)
 	draft, err := s.genRepo.CreateDraftTransaction(ctx, repository.CreateDraftParams{
 		CompanyID: companyID, ClientID: req.ClientID, ClientName: ident.Organization,
-		QuotationNumber: quotationNumber, Subject: promptSubject(state),
+		QuotationNumber: quotationNumber, Subject: promptSubjectFromIdentity(ident),
 		SolutionType: PromptSolutionType, CommercialScheme: domain.CommercialSchemeDedicatedSquad,
 		IdempotencyKey: idempotencyKey, GenerationInput: inputJSON,
 		RateCardSnapshot: snapshotRateCard(card, items), LegalTemplateSnapshot: []byte("{}"),
@@ -174,14 +151,86 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 		return nil, promptError("generation_failed", ErrPromptPersistence)
 	}
 	if draft.IdempotentReplay {
-		return s.loadResponse(ctx, companyID, draft.QuotationID, true)
+		return s.loadPendingResponse(ctx, companyID, draft.QuotationID, true)
 	}
+	return &dto.PendingMeetingDraftResponse{
+		QuotationID: draft.QuotationID, RevisionID: draft.RevisionID, QuotationNumber: quotationNumber,
+		GenerationStatus: repository.GenerationStatusPending,
+	}, nil
+}
+
+// ProcessMeetingDraft claims one persisted draft and runs the provider-backed,
+// deterministic quotation pipeline. Every failure after the claim is recorded
+// with a bounded context that survives request cancellation.
+func (s *PromptDraftService) ProcessMeetingDraft(ctx context.Context, companyID, quotationID uuid.UUID) (*dto.MeetingDraftResponse, error) {
+	if s == nil || s.genRepo == nil || companyID == uuid.Nil || quotationID == uuid.Nil {
+		return nil, promptError("invalid_request", ErrPromptInvalidRequest)
+	}
+	claim, err := s.genRepo.ClaimPromptDraft(ctx, companyID, quotationID)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrGenerationAlreadyCompleted):
+			return s.loadResponse(ctx, companyID, quotationID, true)
+		case errors.Is(err, repository.ErrGenerationInProgress):
+			return nil, promptError("generation_in_progress", err)
+		case errors.Is(err, repository.ErrRevisionNotFound):
+			return nil, promptError("generation_failed", err)
+		default:
+			return nil, promptError("generation_failed", ErrPromptPersistence)
+		}
+	}
+
+	fail := func(code string, cause error) (*dto.MeetingDraftResponse, error) {
+		failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if persistErr := s.genRepo.FailPromptDraft(failureCtx, companyID, claim.QuotationID, claim.RevisionID, code); persistErr != nil {
+			return nil, promptError("generation_failed", ErrPromptPersistence)
+		}
+		return nil, promptError(code, cause)
+	}
+
+	var req dto.CreateFromMeetingRequest
+	if err := json.Unmarshal(claim.GenerationInput, &req); err != nil {
+		return fail("invalid_extraction.malformed_json", ErrPromptInvalidRequest)
+	}
+	if strings.TrimSpace(req.MeetingNotes) == "" {
+		return fail("invalid_extraction.missing_required_field", ErrPromptInvalidRequest)
+	}
+	card, items, err := promptRateCardSnapshot(claim.RateCardSnapshot)
+	if err != nil {
+		return fail("settings_incomplete", ErrPromptCatalogEmpty)
+	}
+	catalogContext := CatalogContext{RateCardCode: card.Code, RateCardName: card.Name, Currency: card.Currency, Items: items}
+	ident := normalizeMeetingIdentity(req, "")
+	if s.extractor == nil {
+		return fail("generation_failed", ErrPromptInvalidExtraction)
+	}
+	state, err := s.extractor.Extract(ctx, companyID, dto.MeetingExtractionRequest{MeetingNotes: strings.TrimSpace(req.MeetingNotes)}, catalogContext)
+	if err != nil {
+		return fail(promptExtractionErrorCode(err), ErrPromptInvalidExtraction)
+	}
+	if !hasMeetingBusinessSignal(state) {
+		return fail("meeting_notes_no_business_signal", ErrPromptNoBusinessSignal)
+	}
+	if ident.Organization != "" {
+		state.ClientCompany = userFact(ident.Organization)
+	}
+	if ident.PIC != "" {
+		state.PICName = optionalUserFact(ident.PIC)
+		state.ClientName = optionalUserFact(ident.PIC)
+	}
+	if ident.ProjectName != "" {
+		state.ProjectName = userFact(ident.ProjectName)
+	}
+	state.Readiness = ""
+	state.Issues = state.ComputeIssues()
+	state.Readiness = readinessForIssues(state.Issues)
 
 	contentHTML := renderIncompletePromptDraft(state)
 	var calculation json.RawMessage
 	var readinessCalculation *domain.DedicatedSquadCalculation
 	var profileSnapshot, moduleSnapshot, timelineSnapshot json.RawMessage = []byte("null"), []byte("[]"), []byte("[]")
-	if catalogErr == nil && state.Readiness != domain.ReadinessIncomplete && s.calculator != nil {
+	if state.Readiness != domain.ReadinessIncomplete && s.calculator != nil {
 		anchor := time.Now().UTC()
 		input, issues := BuildDedicatedInput(&state, items, &anchor)
 		var calc domain.DedicatedSquadCalculation
@@ -211,7 +260,7 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 				if timelineErr == nil {
 					timelineSnapshot, _ = json.Marshal(timeline)
 					rendered, renderErr := s.renderer.Render(DedicatedSquadDocumentInput{
-						Metadata:    QuotationMetadata{QuotationNumber: quotationNumber, Subject: promptSubject(state), ClientName: promptPICName(state), ClientCompanyName: valueOfFact(state.ClientCompany), IssueDate: time.Now().Format("2 January 2006")},
+						Metadata:    QuotationMetadata{QuotationNumber: claim.QuotationNumber, Subject: promptSubject(state), ClientName: promptPICName(state), ClientCompanyName: valueOfFact(state.ClientCompany), IssueDate: time.Now().Format("2 January 2006")},
 						Calculation: calc, Profile: profile, Rules: rules, Timeline: timeline,
 					})
 					if renderErr == nil {
@@ -228,23 +277,33 @@ func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uu
 	state.Readiness = readiness.Readiness
 	sanitized, sanitizeErr := s.sanitizer.Sanitize(contentHTML)
 	if sanitizeErr != nil || strings.TrimSpace(sanitized) == "" {
-		return nil, promptError("unsafe_html", ErrPromptPersistence)
+		return fail("unsafe_html", ErrPromptPersistence)
 	}
 	contentHTML = sanitized
-	stateJSON, _ := json.Marshal(state)
+	stateJSON, _ := MarshalPromptQuotationStateForPersistence(&state)
 	sectionsJSON, _ := json.Marshal(promptSectionHashes(contentHTML))
 	hash := sha256.Sum256([]byte(contentHTML))
 	hashString := hex.EncodeToString(hash[:])
 	if _, err := s.genRepo.CompletePromptDraft(ctx, repository.CompletePromptDraftParams{
-		CompanyID: companyID, QuotationID: draft.QuotationID, RevisionID: draft.RevisionID,
+		CompanyID: companyID, QuotationID: claim.QuotationID, RevisionID: claim.RevisionID,
 		ContentHTML: contentHTML, PromptState: stateJSON, PromptSectionHashes: sectionsJSON,
-		RateCardSnapshot: snapshotRateCard(card, items), LegalTemplateSnapshot: []byte("{}"), SkillSnapshot: []byte("{}"),
+		RateCardSnapshot: claim.RateCardSnapshot, LegalTemplateSnapshot: []byte("{}"), SkillSnapshot: []byte("{}"),
 		ResolvedProfileSnapshot: profileSnapshot, CalculationSnapshot: calculation,
 		ModuleSnapshot: moduleSnapshot, TimelineSnapshot: timelineSnapshot, ContentHash: &hashString,
 	}); err != nil {
-		return nil, promptError("generation_failed", ErrPromptPersistence)
+		return fail("generation_failed", ErrPromptPersistence)
 	}
-	return s.loadResponse(ctx, companyID, draft.QuotationID, false)
+	return s.loadResponse(ctx, companyID, claim.QuotationID, false)
+}
+
+// CreateFromMeeting is retained while existing callers migrate to the explicit
+// create/process protocol.
+func (s *PromptDraftService) CreateFromMeeting(ctx context.Context, companyID uuid.UUID, userID *uuid.UUID, req dto.CreateFromMeetingRequest) (*dto.MeetingDraftResponse, error) {
+	pending, err := s.CreateMeetingDraft(ctx, companyID, userID, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.ProcessMeetingDraft(ctx, companyID, pending.QuotationID)
 }
 
 func calculationPayments(calculation *domain.DedicatedSquadCalculation) []domain.PaymentRow {
@@ -294,7 +353,7 @@ func (s *PromptDraftService) loadResponse(ctx context.Context, companyID, quotat
 	if err := json.Unmarshal(record.PromptState, &state); err != nil {
 		return nil, promptError("generation_failed", ErrPromptPersistence)
 	}
-	result := &dto.MeetingDraftResponse{QuotationID: record.QuotationID, RevisionID: record.RevisionID, QuotationNumber: record.QuotationNumber, ContentHTML: record.ContentHTML, ContentVersion: record.ContentVersion, StateVersion: record.StateVersion, PromptState: state, Issues: state.Issues, Readiness: state.Readiness, IdempotentReplay: replay}
+	result := &dto.MeetingDraftResponse{QuotationID: record.QuotationID, RevisionID: record.RevisionID, QuotationNumber: record.QuotationNumber, ContentHTML: record.ContentHTML, ContentVersion: record.ContentVersion, StateVersion: record.StateVersion, PromptState: dto.NewPromptQuotationStateView(state), Issues: state.Issues, Readiness: state.Readiness, IdempotentReplay: replay}
 	if _, items, snapshotErr := promptRateCardSnapshot(record.RateCardSnapshot); snapshotErr == nil {
 		result.CatalogRoles = PromptCatalogRoles(items)
 	}
@@ -302,6 +361,17 @@ func (s *PromptDraftService) loadResponse(ctx context.Context, companyID, quotat
 		result.Calculation = record.Calculation
 	}
 	return result, nil
+}
+
+func (s *PromptDraftService) loadPendingResponse(ctx context.Context, companyID, quotationID uuid.UUID, replay bool) (*dto.PendingMeetingDraftResponse, error) {
+	record, err := s.genRepo.LoadPromptDraft(ctx, companyID, quotationID)
+	if err != nil {
+		return nil, promptError("generation_failed", ErrPromptPersistence)
+	}
+	return &dto.PendingMeetingDraftResponse{
+		QuotationID: record.QuotationID, RevisionID: record.RevisionID, QuotationNumber: record.QuotationNumber,
+		GenerationStatus: record.GenerationStatus, IdempotentReplay: replay,
+	}, nil
 }
 
 func promptError(code string, err error) error { return &PromptDraftError{Code: code, err: err} }
@@ -386,6 +456,13 @@ func promptPICName(state domain.PromptQuotationState) string {
 func promptSubject(state domain.PromptQuotationState) string {
 	if state.ProjectName != nil && strings.TrimSpace(state.ProjectName.Value) != "" {
 		return strings.TrimSpace(state.ProjectName.Value)
+	}
+	return "Quotation from meeting notes"
+}
+
+func promptSubjectFromIdentity(ident MeetingIdentity) string {
+	if strings.TrimSpace(ident.ProjectName) != "" {
+		return strings.TrimSpace(ident.ProjectName)
 	}
 	return "Quotation from meeting notes"
 }

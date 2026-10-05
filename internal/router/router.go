@@ -20,6 +20,8 @@ import (
 
 	"venturo-skeleton-go/internal/modules/contract"
 	"venturo-skeleton-go/internal/modules/quotation"
+	"venturo-skeleton-go/internal/modules/quotation/repository"
+	quotationWorker "venturo-skeleton-go/internal/modules/quotation/worker"
 
 	"venturo-skeleton-go/internal/shared/audit"
 	"venturo-skeleton-go/internal/shared/authz"
@@ -35,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) {
+func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) *quotationWorker.Worker {
 	// Get logger instance
 	log := logger.GetLogger()
 
@@ -234,4 +236,11 @@ func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) {
 	contractModule.SetupRoutes(router)
 
 	log.Info("Routes setup completed", zap.Int("routes", len(router.Routes())))
+
+	extractionRepo := repository.NewMeetingExtractionRepository(db)
+	managedWorker, workerErr := quotationWorker.NewManagedWorkerWithExecutor(extractionRepo, string(cfg.MeetingExtraction.Mode), quotationModule.ExtractionExecutor, quotationWorker.DefaultOptions())
+	if workerErr != nil {
+		log.Fatal("meeting extraction worker startup dependency missing", zap.Error(workerErr))
+	}
+	return managedWorker
 }

@@ -5,11 +5,10 @@ package repository_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
-	"time"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
+	"venturo-skeleton-go/internal/modules/quotation/testutil"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -21,53 +20,7 @@ func testDB(t *testing.T) *pgxpool.Pool {
 }
 
 func getTestPool(t *testing.T) *pgxpool.Pool {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		host := os.Getenv("DB_HOST")
-		if host == "" {
-			host = "localhost"
-		}
-		port := os.Getenv("DB_PORT")
-		if port == "" {
-			port = "5432"
-		}
-		user := os.Getenv("DB_USER")
-		if user == "" {
-			user = "postgres"
-		}
-		pass := os.Getenv("DB_PASSWORD")
-		if pass == "" {
-			pass = "postgres"
-		}
-		name := os.Getenv("DB_NAME")
-		if name == "" {
-			name = "tuai"
-		}
-		ssl := os.Getenv("DB_SSLMODE")
-		if ssl == "" {
-			ssl = "disable"
-		}
-		dsn = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s", user, pass, host, port, name, ssl)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
-
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Fatalf("failed to ping test database: %v", err)
-	}
-
-	t.Cleanup(func() {
-		pool.Close()
-	})
-
-	return pool
+	return testutil.Pool(t)
 }
 
 func tableExists(ctx context.Context, pool *pgxpool.Pool, table string) (bool, error) {
