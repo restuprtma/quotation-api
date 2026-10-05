@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -159,6 +161,7 @@ func (s *Service) ListRevisions(ctx context.Context, companyID, id string) ([]dt
 			ID:                      r.ID,
 			VersionNumber:           r.RevisionNumber,
 			Status:                  r.PublicationStatus,
+			AIRawResponse:           nil, // Explicitly masked to prevent leaking raw prompts
 			SignatureImageURL:       r.SignatureData,
 			SignedAt:                r.SignedAt,
 			SignedBy:                r.SignerName,
@@ -171,6 +174,149 @@ func (s *Service) ListRevisions(ctx context.Context, companyID, id string) ([]dt
 	}
 
 	return res, nil
+}
+
+// GetQuotationHistory returns read-only revision history items for a quotation with raw prompts,
+// AI system instructions, and rate card secrets masked/omitted.
+func (s *Service) GetQuotationHistory(ctx context.Context, companyID, quotationID string) ([]dto.QuotationRevisionHistoryItem, error) {
+	if companyID == "" {
+		return nil, ErrNoCompanyContext
+	}
+	if _, err := uuid.Parse(companyID); err != nil {
+		return nil, ErrNotFound
+	}
+	if _, err := uuid.Parse(quotationID); err != nil {
+		return nil, ErrNotFound
+	}
+
+	quotRepo := s.quotationRepo
+	if quotRepo == nil && s.repo != nil {
+		quotRepo = s.repo
+	}
+	if quotRepo != nil {
+		if _, err := quotRepo.GetQuotationByID(ctx, quotationID, companyID); err != nil {
+			return nil, mapRepoErr(err)
+		}
+	}
+
+	revRepo := s.revRepo
+	if revRepo == nil && s.repo != nil && s.repo.Pool() != nil {
+		revRepo = repository.NewRevisionRepository(s.repo.Pool())
+	}
+	if revRepo == nil {
+		return nil, errors.New("revision repository not configured")
+	}
+
+	revs, err := revRepo.ListRevisionsByQuotationID(ctx, quotationID, companyID)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+
+	items := make([]dto.QuotationRevisionHistoryItem, 0, len(revs))
+	for _, r := range revs {
+		items = append(items, dto.QuotationRevisionHistoryItem{
+			ID:                        r.ID,
+			RevisionNumber:            r.RevisionNumber,
+			PublicationStatus:         r.PublicationStatus,
+			IsSigned:                  r.SignedAt != nil,
+			LegalContentModified:      r.LegalContentModified,
+			CommercialContentModified: r.CommercialContentModified,
+			CreatedAt:                 r.CreatedAt,
+			GeneratedAt:               r.GeneratedAt,
+			PublishedAt:               r.PublishedAt,
+			SignedAt:                  r.SignedAt,
+			CreatedBy:                 r.CreatedBy,
+			RateCardVersion:           extractRateCardVersion(r.RateCardSnapshot),
+			LegalTemplateVersion:      extractLegalTemplateVersion(r.LegalTemplateSnapshot),
+			PromptVersion:             extractPromptVersion(r.PromptState, r.PromptStateVersion),
+			SafetyEnvelopeVersion:     r.SafetyEnvelopeVersion,
+		})
+	}
+
+	return items, nil
+}
+
+func extractRateCardVersion(snapshot json.RawMessage) *string {
+	if len(snapshot) == 0 {
+		return nil
+	}
+	var data struct {
+		Version         interface{} `json:"version"`
+		Code            string      `json:"code"`
+		RateCardVersion string      `json:"rate_card_version"`
+	}
+	if err := json.Unmarshal(snapshot, &data); err != nil {
+		return nil
+	}
+	if data.RateCardVersion != "" {
+		return &data.RateCardVersion
+	}
+	if data.Version != nil {
+		v := fmt.Sprintf("%v", data.Version)
+		if v != "" && v != "<nil>" {
+			return &v
+		}
+	}
+	if data.Code != "" {
+		return &data.Code
+	}
+	return nil
+}
+
+func extractLegalTemplateVersion(snapshot json.RawMessage) *string {
+	if len(snapshot) == 0 {
+		return nil
+	}
+	var data struct {
+		Version              interface{} `json:"version"`
+		Code                 string      `json:"code"`
+		LegalTemplateVersion string      `json:"legal_template_version"`
+	}
+	if err := json.Unmarshal(snapshot, &data); err != nil {
+		return nil
+	}
+	if data.LegalTemplateVersion != "" {
+		return &data.LegalTemplateVersion
+	}
+	if data.Version != nil {
+		v := fmt.Sprintf("%v", data.Version)
+		if v != "" && v != "<nil>" && v != "0" {
+			return &v
+		}
+	}
+	if data.Code != "" {
+		return &data.Code
+	}
+	return nil
+}
+
+func extractPromptVersion(promptState json.RawMessage, promptStateVersion int64) *string {
+	if len(promptState) > 0 {
+		var p struct {
+			SchemaVersion string      `json:"schema_version"`
+			PromptVersion string      `json:"prompt_version"`
+			Version       interface{} `json:"version"`
+		}
+		if err := json.Unmarshal(promptState, &p); err == nil {
+			if p.PromptVersion != "" {
+				return &p.PromptVersion
+			}
+			if p.SchemaVersion != "" {
+				return &p.SchemaVersion
+			}
+			if p.Version != nil {
+				v := fmt.Sprintf("%v", p.Version)
+				if v != "" && v != "<nil>" {
+					return &v
+				}
+			}
+		}
+	}
+	if promptStateVersion > 0 {
+		v := strconv.FormatInt(promptStateVersion, 10)
+		return &v
+	}
+	return nil
 }
 
 // List returns a paginated list of quotations

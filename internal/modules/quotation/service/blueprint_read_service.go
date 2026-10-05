@@ -32,18 +32,38 @@ type BlueprintListReader interface {
 	ListBlueprints(ctx context.Context, companyID uuid.UUID, params repository.BlueprintListParams) ([]dto.BlueprintListItemResponse, int, error)
 }
 
+// BlueprintRevisionHistoryReader loads revision history with details for a blueprint.
+type BlueprintRevisionHistoryReader interface {
+	ListBlueprintRevisionHistory(ctx context.Context, blueprintID, companyID uuid.UUID) ([]repository.BlueprintRevisionDetail, error)
+}
+
 // BlueprintReadService coordinates read-only operations for blueprints.
 type BlueprintReadService struct {
 	genReader  BlueprintGenerationReader
 	listReader BlueprintListReader
+	histReader BlueprintRevisionHistoryReader
 }
 
 // NewBlueprintReadService constructs a new BlueprintReadService.
-func NewBlueprintReadService(genReader BlueprintGenerationReader, listReader BlueprintListReader) *BlueprintReadService {
-	return &BlueprintReadService{
+func NewBlueprintReadService(genReader BlueprintGenerationReader, listReader BlueprintListReader, histReaders ...BlueprintRevisionHistoryReader) *BlueprintReadService {
+	s := &BlueprintReadService{
 		genReader:  genReader,
 		listReader: listReader,
 	}
+	if len(histReaders) > 0 && histReaders[0] != nil {
+		s.histReader = histReaders[0]
+	} else if hr, ok := listReader.(BlueprintRevisionHistoryReader); ok {
+		s.histReader = hr
+	} else if hr, ok := genReader.(BlueprintRevisionHistoryReader); ok {
+		s.histReader = hr
+	}
+	return s
+}
+
+// WithHistoryReader configures a BlueprintRevisionHistoryReader on the service.
+func (s *BlueprintReadService) WithHistoryReader(histReader BlueprintRevisionHistoryReader) *BlueprintReadService {
+	s.histReader = histReader
+	return s
 }
 
 // GetStatus returns the public generation/publication status and canonical section statuses.
@@ -229,4 +249,98 @@ func mapSectionStatuses(runs []domain.BlueprintSectionRun, fallbackTime time.Tim
 		}
 	}
 	return sections
+}
+
+// ListRevisions returns the revision history for a blueprint scoped by company ID, ordered by revision_number DESC,
+// along with completeness status, source quotation revision info, and section completeness matrix.
+func (s *BlueprintReadService) ListRevisions(ctx context.Context, companyID, blueprintID uuid.UUID) ([]dto.BlueprintRevisionHistoryItem, error) {
+	if companyID == uuid.Nil || blueprintID == uuid.Nil {
+		return nil, ErrBlueprintNotFound
+	}
+
+	histReader := s.histReader
+	if histReader == nil {
+		if hr, ok := s.listReader.(BlueprintRevisionHistoryReader); ok {
+			histReader = hr
+		} else if hr, ok := s.genReader.(BlueprintRevisionHistoryReader); ok {
+			histReader = hr
+		}
+	}
+	if histReader == nil {
+		return nil, errors.New("blueprint revision history reader not configured")
+	}
+
+	records, err := histReader.ListBlueprintRevisionHistory(ctx, blueprintID, companyID)
+	if err != nil {
+		if errors.Is(err, repository.ErrBlueprintNotFound) {
+			return nil, ErrBlueprintNotFound
+		}
+		return nil, err
+	}
+
+	items := make([]dto.BlueprintRevisionHistoryItem, 0, len(records))
+	for _, rec := range records {
+		matrix := buildCompletenessMatrix(rec.SectionRuns, rec.Revision.ValidationResult)
+		sourceRevNum := rec.SourceQuotationRevNumber
+		if sourceRevNum == nil && len(rec.Revision.SourceContextSnapshot) > 0 {
+			var snap struct {
+				RevisionNumber     *int `json:"revision_number"`
+				QuotationRevNumber *int `json:"quotation_rev_number"`
+			}
+			if err := json.Unmarshal(rec.Revision.SourceContextSnapshot, &snap); err == nil {
+				if snap.RevisionNumber != nil {
+					sourceRevNum = snap.RevisionNumber
+				} else if snap.QuotationRevNumber != nil {
+					sourceRevNum = snap.QuotationRevNumber
+				}
+			}
+		}
+
+		items = append(items, dto.BlueprintRevisionHistoryItem{
+			ID:                        rec.Revision.ID,
+			RevisionNumber:            rec.Revision.RevisionNumber,
+			PublicationStatus:         rec.Revision.PublicationStatus,
+			CompletenessStatus:        rec.Revision.CompletenessStatus,
+			SourceQuotationRevisionID: rec.Revision.SourceQuotationRevisionID,
+			SourceQuotationRevNumber:  sourceRevNum,
+			CompletenessMatrix:        matrix,
+			CreatedAt:                 rec.Revision.CreatedAt,
+			GeneratedAt:               rec.Revision.GeneratedAt,
+			PublishedAt:               rec.Revision.PublishedAt,
+			CreatedBy:                 rec.Revision.CreatedBy,
+		})
+	}
+
+	return items, nil
+}
+
+// GetBlueprintHistory is an alias for ListRevisions.
+func (s *BlueprintReadService) GetBlueprintHistory(ctx context.Context, companyID, blueprintID uuid.UUID) ([]dto.BlueprintRevisionHistoryItem, error) {
+	return s.ListRevisions(ctx, companyID, blueprintID)
+}
+
+func buildCompletenessMatrix(runs []domain.BlueprintSectionRun, validationResult json.RawMessage) map[string]string {
+	matrix := make(map[string]string)
+	for _, run := range runs {
+		status := run.Status
+		if run.SectionType == "context" && status == "" {
+			status = string(domain.BlueprintSectionValidated)
+		}
+		matrix[run.SectionType] = status
+	}
+	if len(matrix) == 0 && len(validationResult) > 0 {
+		var vr map[string]interface{}
+		if err := json.Unmarshal(validationResult, &vr); err == nil {
+			for k, v := range vr {
+				if strVal, ok := v.(string); ok {
+					matrix[k] = strVal
+				} else if mapVal, ok := v.(map[string]interface{}); ok {
+					if status, ok := mapVal["status"].(string); ok {
+						matrix[k] = status
+					}
+				}
+			}
+		}
+	}
+	return matrix
 }

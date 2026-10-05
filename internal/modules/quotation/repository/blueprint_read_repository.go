@@ -2,12 +2,15 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 )
 
@@ -140,4 +143,127 @@ func (r *BlueprintReadRepository) ListBlueprints(ctx context.Context, companyID 
 	}
 
 	return items, total, nil
+}
+
+// BlueprintRevisionDetail aggregates a blueprint revision with its section runs and source quotation revision info.
+type BlueprintRevisionDetail struct {
+	Revision                 domain.BlueprintRevision
+	SourceQuotationRevNumber *int
+	SectionRuns              []domain.BlueprintSectionRun
+}
+
+// ListBlueprintRevisionHistory retrieves all revisions for a blueprint scoped by company ID, ordered by revision_number DESC, along with section runs and source quotation revision numbers.
+func (r *BlueprintReadRepository) ListBlueprintRevisionHistory(ctx context.Context, blueprintID, companyID uuid.UUID) ([]BlueprintRevisionDetail, error) {
+	if companyID == uuid.Nil || blueprintID == uuid.Nil {
+		return nil, ErrBlueprintNotFound
+	}
+	if r.db == nil {
+		return nil, errors.New("database pool is nil")
+	}
+
+	// Verify blueprint exists and belongs to company
+	var bpID uuid.UUID
+	err := r.db.QueryRow(ctx, "SELECT id FROM blueprints WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL", blueprintID, companyID).Scan(&bpID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrBlueprintNotFound
+		}
+		return nil, err
+	}
+
+	revQuery := `
+		SELECT
+			r.id, r.company_id, r.blueprint_id, r.revision_number,
+			r.idempotency_key, r.idempotency_payload_hash,
+			r.source_quotation_revision_id, r.source_context_snapshot,
+			r.publication_status, r.completeness_status, r.generation_status,
+			r.content_json, r.content_version,
+			r.validation_result, r.cross_validation_result,
+			r.skill_snapshot, r.safety_envelope_version,
+			r.ai_provider, r.ai_model,
+			r.generated_at, r.published_at,
+			r.created_by, r.created_at, r.updated_at,
+			qr.revision_number AS source_quotation_rev_number
+		FROM blueprint_revisions r
+		LEFT JOIN quotation_revisions qr ON qr.id = r.source_quotation_revision_id AND qr.company_id = r.company_id
+		WHERE r.blueprint_id = $1 AND r.company_id = $2
+		ORDER BY r.revision_number DESC
+	`
+
+	rows, err := r.db.Query(ctx, revQuery, blueprintID, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var details []BlueprintRevisionDetail
+	var revIDs []uuid.UUID
+	revMap := make(map[uuid.UUID]int)
+
+	for rows.Next() {
+		var d BlueprintRevisionDetail
+		err := rows.Scan(
+			&d.Revision.ID, &d.Revision.CompanyID, &d.Revision.BlueprintID, &d.Revision.RevisionNumber,
+			&d.Revision.IdempotencyKey, &d.Revision.IdempotencyPayloadHash,
+			&d.Revision.SourceQuotationRevisionID, &d.Revision.SourceContextSnapshot,
+			&d.Revision.PublicationStatus, &d.Revision.CompletenessStatus, &d.Revision.GenerationStatus,
+			&d.Revision.ContentJSON, &d.Revision.ContentVersion,
+			&d.Revision.ValidationResult, &d.Revision.CrossValidationResult,
+			&d.Revision.SkillSnapshot, &d.Revision.SafetyEnvelopeVersion,
+			&d.Revision.AiProvider, &d.Revision.AiModel,
+			&d.Revision.GeneratedAt, &d.Revision.PublishedAt,
+			&d.Revision.CreatedBy, &d.Revision.CreatedAt, &d.Revision.UpdatedAt,
+			&d.SourceQuotationRevNumber,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if d.Revision.IdempotencyPayloadHash != nil {
+			trimmed := strings.TrimSpace(*d.Revision.IdempotencyPayloadHash)
+			d.Revision.IdempotencyPayloadHash = &trimmed
+		}
+		revMap[d.Revision.ID] = len(details)
+		revIDs = append(revIDs, d.Revision.ID)
+		details = append(details, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(revIDs) > 0 {
+		runsQuery := `
+			SELECT
+				id, company_id, blueprint_revision_id, section_type, status, attempt_count,
+				content_json, validation_result, safe_error_code, started_at, completed_at, updated_at
+			FROM blueprint_section_runs
+			WHERE blueprint_revision_id = ANY($1) AND company_id = $2
+			ORDER BY blueprint_revision_id, CASE section_type
+				WHEN 'context' THEN 1 WHEN 'journey' THEN 2 WHEN 'architecture' THEN 3
+				WHEN 'state_machine' THEN 4 WHEN 'workflow' THEN 5 WHEN 'wbs' THEN 6
+				WHEN 'cross_validation' THEN 7 ELSE 99 END
+		`
+		runRows, err := r.db.Query(ctx, runsQuery, revIDs, companyID)
+		if err != nil {
+			return nil, err
+		}
+		defer runRows.Close()
+
+		for runRows.Next() {
+			var run domain.BlueprintSectionRun
+			if err := runRows.Scan(
+				&run.ID, &run.CompanyID, &run.BlueprintRevisionID, &run.SectionType, &run.Status, &run.AttemptCount,
+				&run.ContentJSON, &run.ValidationResult, &run.SafeErrorCode, &run.StartedAt, &run.CompletedAt, &run.UpdatedAt,
+			); err != nil {
+				return nil, err
+			}
+			if idx, ok := revMap[run.BlueprintRevisionID]; ok {
+				details[idx].SectionRuns = append(details[idx].SectionRuns, run)
+			}
+		}
+		if err := runRows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	return details, nil
 }
