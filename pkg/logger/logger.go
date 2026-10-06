@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -76,6 +77,17 @@ func Sync() {
 	if Log != nil {
 		_ = Log.Sync()
 	}
+}
+
+// SetCustomOutput redirects the global logger output to the provided io.Writer
+func SetCustomOutput(w io.Writer) {
+	encoderConfig := zap.NewDevelopmentEncoderConfig()
+	core := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(encoderConfig),
+		zapcore.AddSync(w),
+		zap.DebugLevel,
+	)
+	Log = zap.New(core)
 }
 
 // Helper functions for common logging patterns
