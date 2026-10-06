@@ -300,3 +300,81 @@ func (r *BlueprintReadRepository) GetRevisionForSharing(ctx context.Context, com
 	}
 	return &rev, nil
 }
+
+// LoadSharedRevisionData loads the blueprint master, the specified revision, and its section runs for public sharing without company isolation filter (token lookup already guarantees authorization).
+func (r *BlueprintReadRepository) LoadSharedRevisionData(
+	ctx context.Context, blueprintID, revisionID uuid.UUID,
+) (*domain.Blueprint, *domain.BlueprintRevision, []domain.BlueprintSectionRun, error) {
+	if blueprintID == uuid.Nil || revisionID == uuid.Nil {
+		return nil, nil, nil, ErrBlueprintNotFound
+	}
+
+	bpQuery := `SELECT id, company_id, quotation_id, title, created_at, updated_at FROM blueprints WHERE id = $1 AND deleted_at IS NULL`
+	var bp domain.Blueprint
+	err := r.db.QueryRow(ctx, bpQuery, blueprintID).Scan(
+		&bp.ID, &bp.CompanyID, &bp.QuotationID, &bp.Title, &bp.CreatedAt, &bp.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, nil, ErrBlueprintNotFound
+		}
+		return nil, nil, nil, err
+	}
+
+	revQuery := `
+		SELECT
+			id, company_id, blueprint_id, revision_number,
+			publication_status, completeness_status, generation_status,
+			content_json, content_version,
+			validation_result, cross_validation_result,
+			published_at, created_at, updated_at
+		FROM blueprint_revisions
+		WHERE id = $1 AND blueprint_id = $2
+	`
+	var rev domain.BlueprintRevision
+	err = r.db.QueryRow(ctx, revQuery, revisionID, blueprintID).Scan(
+		&rev.ID, &rev.CompanyID, &rev.BlueprintID, &rev.RevisionNumber,
+		&rev.PublicationStatus, &rev.CompletenessStatus, &rev.GenerationStatus,
+		&rev.ContentJSON, &rev.ContentVersion,
+		&rev.ValidationResult, &rev.CrossValidationResult,
+		&rev.PublishedAt, &rev.CreatedAt, &rev.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, nil, ErrBlueprintNotFound
+		}
+		return nil, nil, nil, err
+	}
+
+	runsQuery := `
+		SELECT
+			id, company_id, blueprint_revision_id, section_type, status, attempt_count,
+			content_json, validation_result, safe_error_code, started_at, completed_at, updated_at
+		FROM blueprint_section_runs
+		WHERE blueprint_revision_id = $1
+		ORDER BY CASE section_type
+			WHEN 'context' THEN 1 WHEN 'journey' THEN 2 WHEN 'architecture' THEN 3
+			WHEN 'state_machine' THEN 4 WHEN 'workflow' THEN 5 WHEN 'wbs' THEN 6
+			WHEN 'cross_validation' THEN 7 ELSE 99 END
+	`
+	rows, err := r.db.Query(ctx, runsQuery, revisionID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer rows.Close()
+
+	var runs []domain.BlueprintSectionRun
+	for rows.Next() {
+		var run domain.BlueprintSectionRun
+		err := rows.Scan(
+			&run.ID, &run.CompanyID, &run.BlueprintRevisionID, &run.SectionType, &run.Status, &run.AttemptCount,
+			&run.ContentJSON, &run.ValidationResult, &run.SafeErrorCode, &run.StartedAt, &run.CompletedAt, &run.UpdatedAt,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		runs = append(runs, run)
+	}
+
+	return &bp, &rev, runs, rows.Err()
+}

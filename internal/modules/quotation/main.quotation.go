@@ -23,6 +23,7 @@ type Module struct {
 	BlueprintShareLinkHandler *handler.BlueprintShareLinkHandler
 	ClientOrganizationHandler *handler.ClientOrganizationHandler
 	PublicHandler             *handler.PublicQuotationHandler
+	PublicBlueprintHandler    *handler.PublicBlueprintHandler
 	Service                   *service.Service
 	ExtractionExecutor        quotationWorker.Executor
 }
@@ -118,6 +119,9 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	shareLinkSvc := service.NewBlueprintShareLinkService(shareLinkRepo, bpReadRepo)
 	shareLinkHandler := handler.NewBlueprintShareLinkHandler(shareLinkSvc, "")
 
+	publicBlueprintSvc := service.NewPublicBlueprintService(shareLinkRepo, bpReadRepo)
+	publicBlueprintHandler := handler.NewPublicBlueprintHandler(publicBlueprintSvc)
+
 	return &Module{
 		Handler:                   hdlr,
 		LifecycleHandler:          lifecycleHandler,
@@ -129,6 +133,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 		BlueprintShareLinkHandler: shareLinkHandler,
 		ClientOrganizationHandler: clientOrgHandler,
 		PublicHandler:             handler.NewPublicQuotationHandler(svc),
+		PublicBlueprintHandler:    publicBlueprintHandler,
 		Service:                   svc,
 		ExtractionExecutor:        extractionExecutor,
 	}
@@ -255,12 +260,17 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 
 // SetupPublicRoutes registers token-based quotation endpoints without auth.
 func (m *Module) SetupPublicRoutes(router *gin.RouterGroup) {
-	if m.PublicHandler == nil {
-		return
+	if m.PublicHandler != nil {
+		q := router.Group("/q")
+		{
+			q.GET("/:public_token", m.PublicHandler.GetPublicQuotation)
+			q.POST("/:public_token/sign", m.PublicHandler.SignPublicQuotation)
+		}
 	}
-	q := router.Group("/q")
-	{
-		q.GET("/:public_token", m.PublicHandler.GetPublicQuotation)
-		q.POST("/:public_token/sign", m.PublicHandler.SignPublicQuotation)
+	if m.PublicBlueprintHandler != nil {
+		bp := router.Group("/blueprint")
+		{
+			bp.GET("/:token", m.PublicBlueprintHandler.GetPublicBlueprint)
+		}
 	}
 }
