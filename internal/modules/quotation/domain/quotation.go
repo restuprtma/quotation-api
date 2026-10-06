@@ -18,6 +18,12 @@ const (
 	CommercialSchemeCloudInfrastructure   = "cloud_infrastructure"
 )
 
+const (
+	QuotationStatusDraft     = "draft"
+	QuotationStatusPublished = "published"
+	QuotationStatusSigned    = "signed"
+)
+
 // Quotation merepresentasikan data master quotation.
 type Quotation struct {
 	ID                        uuid.UUID  `json:"id" db:"id"`

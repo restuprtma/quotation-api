@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_quotations_public_token_active;
+DROP INDEX IF EXISTS idx_quotation_revisions_lookup_published;
