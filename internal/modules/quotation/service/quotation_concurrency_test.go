@@ -511,15 +511,15 @@ func TestConcurrentQuotationPublish(t *testing.T) {
 		contentHTML := "<p>Final Quotation Revision 1</p>"
 		contentVer := "1"
 		draftRev := &domain.QuotationRevision{
-			ID:                    draftRevID,
-			CompanyID:             companyID,
-			QuotationID:           quotationID,
-			RevisionNumber:        1,
-			PublicationStatus:     repository.PublicationStatusDraft,
-			GenerationStatus:      "completed",
-			ContentVersion:        &contentVer,
-			ContentHTML:           &contentHTML,
-			LegalContentModified:  false,
+			ID:                        draftRevID,
+			CompanyID:                 companyID,
+			QuotationID:               quotationID,
+			RevisionNumber:            1,
+			PublicationStatus:         repository.PublicationStatusDraft,
+			GenerationStatus:          "completed",
+			ContentVersion:            &contentVer,
+			ContentHTML:               &contentHTML,
+			LegalContentModified:      false,
 			CommercialContentModified: false,
 		}
 
@@ -882,7 +882,7 @@ func TestConcurrentBlueprintPublish(t *testing.T) {
 			GenerationStatus:      "completed",
 			ContentJSON:           concurrencyCompleteBlueprintJSON(),
 			CrossValidationResult: json.RawMessage(`{"valid":true,"issues":[]}`),
-			ValidationResult:     json.RawMessage(`{"journey":{"valid":true,"issues":[]}}`),
+			ValidationResult:      json.RawMessage(`{"journey":{"valid":true,"issues":[]}}`),
 		}
 
 		bpMaster := &domain.Blueprint{
@@ -1064,7 +1064,7 @@ func TestConcurrentBlueprintCreateRevision(t *testing.T) {
 			GenerationStatus:      "completed",
 			ContentJSON:           concurrencyCompleteBlueprintJSON(),
 			CrossValidationResult: json.RawMessage(`{"valid":true,"issues":[]}`),
-			ValidationResult:     json.RawMessage(`{"journey":{"valid":true,"issues":[]}}`),
+			ValidationResult:      json.RawMessage(`{"journey":{"valid":true,"issues":[]}}`),
 		}
 
 		bpMaster := &domain.Blueprint{

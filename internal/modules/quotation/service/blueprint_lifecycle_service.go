@@ -17,7 +17,7 @@ type BlueprintLifecycleRepo = repository.BlueprintLifecycleRepository
 
 var (
 	ErrBlueprintConfirmationRequired     = errors.New("confirmation required for partial blueprint publish")
-	ErrBlueprintImmutable               = errors.New("published blueprint is immutable")
+	ErrBlueprintImmutable                = errors.New("published blueprint is immutable")
 	ErrBlueprintActiveDraftAlreadyExists = errors.New("active draft revision already exists")
 	ErrBlueprintNoPublishedRevision      = errors.New("no published revision found to revise")
 	ErrBlueprintRevisionNotFound         = repository.ErrBlueprintRevisionNotFound
