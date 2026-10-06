@@ -56,7 +56,8 @@ func (s *contractService) CreateContract(ctx context.Context, companyID, quotati
 		return nil, err
 	}
 
-	if rev.SignedAt == nil || rev.SignatureData == nil {
+	// Verify exact signed indicators: signed_at, signature_data, and signed_content_hash
+	if rev.SignedAt == nil || rev.SignatureData == nil || rev.SignedContentHash == nil || *rev.SignedContentHash == "" {
 		return nil, ErrQuotationNotSigned
 	}
 
