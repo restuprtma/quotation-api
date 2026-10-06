@@ -2,7 +2,10 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -73,4 +76,131 @@ func (r *Repository) GetPublicQuotationByToken(ctx context.Context, token uuid.U
 	}
 
 	return quot, rev, nil
+}
+
+func (r *Repository) LockAndSignQuotationTx(
+	ctx context.Context, tx pgx.Tx, token uuid.UUID,
+	signerName, signerEmail, signatureData, ip, userAgent string,
+) (*domain.Quotation, *domain.QuotationRevision, error) {
+	// 1. Lock quotation master row
+	var qID uuid.UUID
+	var activeRevID *uuid.UUID
+	var qNumber string
+	var subject *string
+	var clientID uuid.UUID
+	var companyID uuid.UUID
+
+	queryLockQ := `
+		SELECT id, company_id, client_id, quotation_number, subject, active_published_revision_id
+		FROM quotations 
+		WHERE public_token = $1 AND deleted_at IS NULL 
+		FOR UPDATE
+	`
+	err := tx.QueryRow(ctx, queryLockQ, token).Scan(&qID, &companyID, &clientID, &qNumber, &subject, &activeRevID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, err
+	}
+
+	if activeRevID == nil {
+		return nil, nil, ErrNotFound
+	}
+
+	// 2. Lock active published revision row
+	var revID uuid.UUID
+	var revNum int
+	var contentHTML *string
+	var publishedAt *time.Time
+	var existingSignedAt *time.Time
+
+	queryLockRev := `
+		SELECT id, revision_number, content_html, published_at, signed_at
+		FROM quotation_revisions
+		WHERE id = $1 AND quotation_id = $2 AND publication_status = 'published'
+		FOR UPDATE
+	`
+	err = tx.QueryRow(ctx, queryLockRev, *activeRevID, qID).Scan(&revID, &revNum, &contentHTML, &publishedAt, &existingSignedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, err
+	}
+
+	// Double-check unsigned condition
+	if existingSignedAt != nil {
+		return nil, nil, ErrAlreadySigned
+	}
+
+	// 3. Compute exact SHA-256 hash of content_html
+	htmlStr := ""
+	if contentHTML != nil {
+		htmlStr = *contentHTML
+	}
+	hashSum := sha256.Sum256([]byte(htmlStr))
+	contentHash := hex.EncodeToString(hashSum[:])
+
+	now := time.Now().UTC()
+
+	// 4. Update revision with signature metadata
+	updateRevQuery := `
+		UPDATE quotation_revisions
+		SET signer_name = $1,
+		    signer_email = $2,
+		    signature_data = $3,
+		    signed_content_hash = $4,
+		    signed_at = $5,
+		    signed_ip = $6,
+		    signed_user_agent = $7,
+		    updated_at = $5
+		WHERE id = $8 AND signed_at IS NULL
+	`
+	res, err := tx.Exec(ctx, updateRevQuery, signerName, signerEmail, signatureData, contentHash, now, ip, userAgent, revID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if res.RowsAffected() == 0 {
+		return nil, nil, ErrAlreadySigned
+	}
+
+	// 5. Update quotation master status to 'signed'
+	updateQQuery := `
+		UPDATE quotations
+		SET status = 'signed', updated_at = $1
+		WHERE id = $2
+	`
+	if _, err := tx.Exec(ctx, updateQQuery, now, qID); err != nil {
+		return nil, nil, err
+	}
+
+	// 6. Fetch client display name
+	var clientName string
+	queryClient := `
+		SELECT COALESCE(qco.name, legacy_client.name, '')
+		FROM core.clients legacy_client
+		LEFT JOIN quotation_client_organizations qco 
+		  ON qco.company_id = $1 AND qco.id = $2 AND qco.deleted_at IS NULL
+		WHERE legacy_client.id = $2
+	`
+	_ = tx.QueryRow(ctx, queryClient, companyID, clientID).Scan(&clientName)
+
+	return &domain.Quotation{
+			ID:              qID,
+			QuotationNumber: qNumber,
+			Subject:         subject,
+			ClientName:      &clientName,
+			Status:          "signed",
+		}, &domain.QuotationRevision{
+			ID:                revID,
+			RevisionNumber:    revNum,
+			ContentHTML:       contentHTML,
+			PublishedAt:       publishedAt,
+			SignerName:        &signerName,
+			SignerEmail:       &signerEmail,
+			SignatureData:     &signatureData,
+			SignedContentHash: &contentHash,
+			SignedAt:          &now,
+		}, nil
 }

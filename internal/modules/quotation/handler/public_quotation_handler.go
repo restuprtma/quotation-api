@@ -47,5 +47,38 @@ func (h *PublicQuotationHandler) GetPublicQuotation(c *gin.Context) {
 }
 
 func (h *PublicQuotationHandler) SignPublicQuotation(c *gin.Context) {
-	// Implemented in Task 3, stub for now
+	tokenStr := c.Param("public_token")
+	if _, err := uuid.Parse(tokenStr); err != nil {
+		response.Error(c, http.StatusNotFound, "Quotation not found", "")
+		return
+	}
+
+	var req dto.SignPublicQuotationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request payload", err.Error())
+		return
+	}
+
+	clientIP := c.ClientIP()
+	userAgent := c.Request.UserAgent()
+
+	data, err := h.svc.SignPublicQuotation(c.Request.Context(), tokenStr, req, clientIP, userAgent)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrPublicQuotationNotFound):
+			response.Error(c, http.StatusNotFound, "Quotation not found", "")
+		case errors.Is(err, service.ErrQuotationAlreadySigned):
+			response.Error(c, http.StatusConflict, "Quotation has already been signed", "")
+		case errors.Is(err, service.ErrConsentRequired),
+			errors.Is(err, service.ErrInvalidSignerName),
+			errors.Is(err, service.ErrInvalidSignerEmail),
+			errors.Is(err, service.ErrInvalidSignaturePNG):
+			response.Error(c, http.StatusBadRequest, err.Error(), "")
+		default:
+			response.Error(c, http.StatusInternalServerError, "Failed to sign quotation", "")
+		}
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Quotation signed successfully", data)
 }
