@@ -20,6 +20,7 @@ type Module struct {
 	MeetingExtractionHandler  *handler.MeetingExtractionHandler
 	PromptRevisionHandler     *handler.PromptRevisionHandler
 	BlueprintHandler          *handler.BlueprintGenerationHandler
+	BlueprintShareLinkHandler *handler.BlueprintShareLinkHandler
 	ClientOrganizationHandler *handler.ClientOrganizationHandler
 	PublicHandler             *handler.PublicQuotationHandler
 	Service                   *service.Service
@@ -113,6 +114,10 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 	clientOrgSvc := service.NewClientOrganizationService(clientOrgRepo)
 	clientOrgHandler := handler.NewClientOrganizationHandler(clientOrgSvc)
 
+	shareLinkRepo := repository.NewShareLinkRepository(db)
+	shareLinkSvc := service.NewBlueprintShareLinkService(shareLinkRepo, bpReadRepo)
+	shareLinkHandler := handler.NewBlueprintShareLinkHandler(shareLinkSvc, "")
+
 	return &Module{
 		Handler:                   hdlr,
 		LifecycleHandler:          lifecycleHandler,
@@ -121,6 +126,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 		MeetingExtractionHandler:  handler.NewMeetingExtractionHandler(meetingExtractionAPI),
 		PromptRevisionHandler:     handler.NewPromptRevisionHandler(promptRevisionSvc, promptSectionRevisionSvc),
 		BlueprintHandler:          bpHandler,
+		BlueprintShareLinkHandler: shareLinkHandler,
 		ClientOrganizationHandler: clientOrgHandler,
 		PublicHandler:             handler.NewPublicQuotationHandler(svc),
 		Service:                   svc,
@@ -230,6 +236,12 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 			blueprints.GET("/:id/revisions", m.LifecycleHandler.ListBlueprintRevisions)
 			blueprints.GET("/:id/revisions/:revision_id", m.LifecycleHandler.GetBlueprintRevisionDetail)
 			blueprints.DELETE("/:id/draft", m.LifecycleHandler.DeleteBlueprintDraft)
+		}
+
+		if m.BlueprintShareLinkHandler != nil {
+			blueprints.POST("/:id/share-links", m.BlueprintShareLinkHandler.Create)
+			blueprints.GET("/:id/share-links", m.BlueprintShareLinkHandler.List)
+			blueprints.DELETE("/:id/share-links/:link_id", m.BlueprintShareLinkHandler.Revoke)
 		}
 	}
 

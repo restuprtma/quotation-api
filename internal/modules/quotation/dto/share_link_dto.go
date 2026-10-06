@@ -1,23 +1,31 @@
 package dto
 
 import (
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-type CreateShareLinkRequest struct {
-	BlueprintID uuid.UUID `json:"blueprint_id" binding:"required"`
-	ExpiresAt   time.Time `json:"expires_at" binding:"required"`
+type CreateBlueprintShareLinkRequest struct {
+	BlueprintRevisionID uuid.UUID `json:"blueprint_revision_id" binding:"required"`
+	Label               string    `json:"label" binding:"required,min=1,max=255"`
 }
 
-type ShareLinkResponse struct {
-	ID          uuid.UUID  `json:"id"`
-	CompanyID   uuid.UUID  `json:"company_id"`
-	BlueprintID uuid.UUID  `json:"blueprint_id"`
-	TokenHash   string     `json:"-"`               // Explicitly omit token hash from API
-	Token       string     `json:"token,omitempty"` // Only populated on creation
-	IsRevoked   bool       `json:"is_revoked"`
-	ExpiresAt   time.Time  `json:"expires_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CreatedBy   *uuid.UUID `json:"created_by,omitempty"`
+type CreateBlueprintShareLinkResponse struct {
+	ID             uuid.UUID `json:"id"`
+	Label          string    `json:"label"`
+	RevisionNumber int       `json:"revision_number"`
+	URL            string    `json:"url"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type BlueprintShareLinkItemResponse struct {
+	ID                  uuid.UUID  `json:"id"`
+	Label               string     `json:"label"`
+	RevisionNumber      int        `json:"revision_number"`
+	BlueprintRevisionID uuid.UUID  `json:"blueprint_revision_id"`
+	CreatedAt           time.Time  `json:"created_at"`
+	RevokedAt           *time.Time `json:"revoked_at"`
+	LastAccessedAt      *time.Time `json:"last_accessed_at"`
+	IsRevoked           bool       `json:"is_revoked"`
 }

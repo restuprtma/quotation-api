@@ -267,3 +267,36 @@ func (r *BlueprintReadRepository) ListBlueprintRevisionHistory(ctx context.Conte
 
 	return details, nil
 }
+
+// GetRevisionForSharing loads a specific blueprint revision scoped by company and blueprint ID for sharing.
+func (r *BlueprintReadRepository) GetRevisionForSharing(ctx context.Context, companyID, blueprintID, revisionID uuid.UUID) (*domain.BlueprintRevision, error) {
+	if companyID == uuid.Nil || blueprintID == uuid.Nil || revisionID == uuid.Nil {
+		return nil, ErrBlueprintNotFound
+	}
+
+	query := `
+		SELECT
+			id, company_id, blueprint_id, revision_number,
+			publication_status, completeness_status, generation_status,
+			content_json, content_version,
+			validation_result, cross_validation_result,
+			published_at, created_at, updated_at
+		FROM blueprint_revisions
+		WHERE id = $1 AND blueprint_id = $2 AND company_id = $3
+	`
+	var rev domain.BlueprintRevision
+	err := r.db.QueryRow(ctx, query, revisionID, blueprintID, companyID).Scan(
+		&rev.ID, &rev.CompanyID, &rev.BlueprintID, &rev.RevisionNumber,
+		&rev.PublicationStatus, &rev.CompletenessStatus, &rev.GenerationStatus,
+		&rev.ContentJSON, &rev.ContentVersion,
+		&rev.ValidationResult, &rev.CrossValidationResult,
+		&rev.PublishedAt, &rev.CreatedAt, &rev.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrBlueprintNotFound
+		}
+		return nil, err
+	}
+	return &rev, nil
+}
