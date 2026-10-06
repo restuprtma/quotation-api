@@ -21,6 +21,7 @@ type Module struct {
 	PromptRevisionHandler     *handler.PromptRevisionHandler
 	BlueprintHandler          *handler.BlueprintGenerationHandler
 	ClientOrganizationHandler *handler.ClientOrganizationHandler
+	PublicHandler             *handler.PublicQuotationHandler
 	Service                   *service.Service
 	ExtractionExecutor        quotationWorker.Executor
 }
@@ -121,6 +122,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 		PromptRevisionHandler:     handler.NewPromptRevisionHandler(promptRevisionSvc, promptSectionRevisionSvc),
 		BlueprintHandler:          bpHandler,
 		ClientOrganizationHandler: clientOrgHandler,
+		PublicHandler:             handler.NewPublicQuotationHandler(svc),
 		Service:                   svc,
 		ExtractionExecutor:        extractionExecutor,
 	}
@@ -241,6 +243,12 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 
 // SetupPublicRoutes registers token-based quotation endpoints without auth.
 func (m *Module) SetupPublicRoutes(router *gin.RouterGroup) {
-	// Fase 1: All public endpoints that depend on legacy artifacts have been removed.
-	// We will introduce the new allowlist-based endpoints in Fase 11.
+	if m.PublicHandler == nil {
+		return
+	}
+	q := router.Group("/q")
+	{
+		q.GET("/:public_token", m.PublicHandler.GetPublicQuotation)
+		q.POST("/:public_token/sign", m.PublicHandler.SignPublicQuotation)
+	}
 }
