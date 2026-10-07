@@ -42,6 +42,7 @@ func buildStrictQuotationPolicy() *bluemonday.Policy {
 	// attribute in generated content. Dedicated documents never need links;
 	// this also prevents external navigation from user/AI supplied HTML.
 	p.AllowAttrs("href").Matching(regexp.MustCompile(`^$`)).OnElements("a")
+	p.AllowAttrs("data-bare-anchor").Matching(regexp.MustCompile(`^1$`)).OnElements("a")
 
 	p.AllowAttrs("colspan", "rowspan").Matching(regexp.MustCompile(`^[0-9]{1,3}$`)).OnElements("td", "th")
 
@@ -77,10 +78,6 @@ func (s *defaultHTMLSanitizer) Sanitize(rawHTML string) (string, error) {
 	// normally require a URL. Preserve the semantic tag while still stripping
 	// every href/URL attribute by using an internal marker during sanitization.
 	marked := bareAnchorPattern.ReplaceAllString(rawHTML, `<a data-bare-anchor="1">`)
-	markedPolicy := s.policy
-	// The marker is allowed only for this internal round-trip and is removed
-	// immediately after policy processing.
-	markedPolicy.AllowAttrs("data-bare-anchor").Matching(regexp.MustCompile(`^1$`)).OnElements("a")
-	out := markedPolicy.Sanitize(marked)
+	out := s.policy.Sanitize(marked)
 	return strings.ReplaceAll(out, ` data-bare-anchor="1"`, ""), nil
 }
