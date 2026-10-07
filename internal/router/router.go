@@ -224,16 +224,10 @@ func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) *quotationW
 	auditModule.SetupRoutes(coreV1)
 
 	// Initialize and setup quotation module
-	quotationV1 := router.Group("/quotation/v1")
-	quotationModule := quotation.Initialize(db, cfg)
-	quotationModule.SetupRoutes(quotationV1)
-
-	publicGroup := router.Group("/p")
-	quotationModule.SetupPublicRoutes(publicGroup)
+	quotationModule := SetupQuotationRoutes(router, db, cfg)
 
 	// Initialize and setup contract module
-	contractModule := contract.Initialize(db)
-	contractModule.SetupRoutes(router)
+	SetupContractRoutes(router, db)
 
 	log.Info("Routes setup completed", zap.Int("routes", len(router.Routes())))
 
@@ -243,4 +237,23 @@ func Setup(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) *quotationW
 		log.Fatal("meeting extraction worker startup dependency missing", zap.Error(workerErr))
 	}
 	return managedWorker
+}
+
+// SetupQuotationRoutes initializes and mounts quotation module routes onto router.
+func SetupQuotationRoutes(router *gin.Engine, db *pgxpool.Pool, cfg *config.Config) *quotation.Module {
+	quotationV1 := router.Group("/quotation/v1")
+	quotationModule := quotation.Initialize(db, cfg)
+	quotationModule.SetupRoutes(quotationV1)
+
+	publicGroup := router.Group("/p")
+	quotationModule.SetupPublicRoutes(publicGroup)
+
+	return quotationModule
+}
+
+// SetupContractRoutes initializes and mounts contract module routes onto router.
+func SetupContractRoutes(router *gin.Engine, db *pgxpool.Pool) *contract.Module {
+	contractModule := contract.Initialize(db)
+	contractModule.SetupRoutes(router)
+	return contractModule
 }
