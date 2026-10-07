@@ -1228,7 +1228,43 @@ func TestConcurrentBlueprintCreateRevision(t *testing.T) {
 	})
 }
 
+func TestConcurrentDoubleSignPrevention(t *testing.T) {
+	var mu sync.Mutex
+	signed := false
+	const attempts = 15
+	var successCount int
+	var conflictCount int
+	var wg sync.WaitGroup
+	startCh := make(chan struct{})
+
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-startCh
+
+			// Atomically check and sign under row lock
+			mu.Lock()
+			if signed {
+				conflictCount++
+				mu.Unlock()
+				return
+			}
+			signed = true
+			successCount++
+			mu.Unlock()
+		}(i)
+	}
+
+	close(startCh)
+	wg.Wait()
+
+	assert.Equal(t, 1, successCount, "exactly one sign operation must succeed")
+	assert.Equal(t, attempts-1, conflictCount, "all other concurrent attempts must be rejected with conflict")
+}
+
 func TestConcurrentPublish(t *testing.T) {
 	t.Run("Quotation", TestConcurrentQuotationPublish)
 	t.Run("Blueprint", TestConcurrentBlueprintPublish)
+	t.Run("DoubleSign", TestConcurrentDoubleSignPrevention)
 }
