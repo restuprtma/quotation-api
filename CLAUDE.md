@@ -78,8 +78,8 @@ Each `main.{module}.go` exports:
 Routes are organized by domain and version:
 
 - **Core:** `/core/v1/...` for auth and client/tenant platform dependencies.
-- **Quotation:** `/quotation/v1/...` for quotation, pricing, AI, revisions, and artifacts.
-- **Public:** `/p/q/...`, `/p/b/...`, and `/p/d/...` for unauthenticated artifacts.
+- **Quotation:** `/quotation/v1/...` for quotation generation, TipTap draft/publish, revisions, blueprints pipeline, and blueprint share links.
+- **Public:** `/p/q/:public_token` (stable link for active published quotation & digital signature) and `/p/blueprint/:token` (secure revision-bound blueprint viewer for programmers). Legacy `/p/b` and `/p/d` are purged.
 
 All modules are initialized in [internal/router/router.go](internal/router/router.go).
 

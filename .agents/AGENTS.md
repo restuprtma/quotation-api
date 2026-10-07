@@ -16,7 +16,7 @@ Read the nearest existing module implementation before creating a new backend mo
 
 ## Project scope
 
-This backend supports the Quotation & Contract Generator. Core auth/client modules remain platform dependencies. Quotation business logic must support product-based pricing, project-based pricing, structured AI bundles, three public artifacts, signatures, and contracts.
+This backend supports the AI-First Quotation & Blueprint Generator. Core auth/client modules remain platform dependencies. Quotation business logic produces sanitized HTML with server-authoritative rate cards for TipTap editing, digital signatures, and secure read-only Blueprint bundle JSON sharing for programmers. Legacy pricing items and three artifacts (/p/b, /p/d) are purged.
 
 ## Commands
 

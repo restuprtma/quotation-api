@@ -1,67 +1,62 @@
-# Backend Product Contract - Quotation & Contract Generator v2
+# Backend Product Contract - Quotation & Blueprint Generator (AI-First)
 
-This is the short backend contract. Read task-specific details from `docs/product/README.md`; do not read every document for a small task.
+**Audience:** Backend Engineers, System Architects, Quality Engineers.  
+**Version:** 2.0 (Phase 13 Canonical)  
+**Status:** Active Canonical Contract  
 
-## Backend Responsibilities
+---
 
-- Multi-tenant quotation CRUD and revisioning.
-- Server-authoritative pricing calculation.
-- Structured AI provider interface and bundle validation.
-- Three public artifact endpoints.
-- Simple quotation/contract signature storage.
-- Contract generation from signed quotation revisions.
+## 1. Core Architecture & Responsibilities
 
-## Core Rules
+The Quotation & Blueprint Generator backend is a multi-tenant modular platform built with Go 1.25, Gin, PostgreSQL (`pgxpool`), and Redis.
 
-- Every internal tenant query filters by `company_id`.
-- Every tenant table uses UUID IDs and UTC timestamps.
-- Money uses integer Rupiah, never float.
-- AI never owns prices or totals.
-- AI returns validated versioned JSON, never executable HTML/CSS.
-- Public tokens are random UUIDs tied to one revision and artifact type.
-- Public DTOs exclude tenant ID, creator ID, raw AI response, internal notes, and signed IP.
-- Signature stores bounded PNG data, server timestamp, and server-observed IP; signed records cannot be overwritten.
+1. **AI-First Skill Architecture:**
+   - `/quotation` SKILL produces clean, sanitized HTML fragments. HTML is the canonical content stored in `quotation_revisions(content_html)`.
+   - `/blueprint` SKILL produces a structured Blueprint Bundle JSON. JSON is the canonical content stored in `blueprint_revisions(content_json)`.
+2. **Rate-Card Authority:**
+   - AI NEVER determines prices, rates, discounts, or totals.
+   - Rates are resolved from official company rate cards (`rate_cards`, `rate_card_items`) based on duration:
+     - Durasi < 3 bulan: **Short Term** rates.
+     - Durasi ≥ 3 bulan: **Long Term** rates.
+   - Client budget is an internal maximum limit; it is NEVER displayed on the quotation document.
+   - The breakdown displayed to the client is **Total Investment**, where `Total Investment <= budget_maximum`.
+3. **Legal Template Authority:**
+   - Legal clauses originate from official versioned templates (`legal_templates`). AI is strictly forbidden from paraphrasing or altering legal terms.
+   - Legal blocks are read-only by default; BA manual unlock is audited via `legal_content_modified`.
+4. **Lifecycle & Immutability:**
+   - Draft revisions are editable via TipTap / Visual Editors (`Save Draft` does not increment revisions).
+   - Publishing locks the revision into an immutable state (`published`).
+   - Subsequent changes require creating a new draft revision (`revisions`).
 
-## Pricing
+---
 
-- `unit`: `unit_price * quantity`.
-- `resource`: `unit_price * employee_count * duration`.
-- `fixed`: `unit_price`.
-- Billing: `one_time`, `monthly`, `yearly`, `custom`.
-- Server recalculates every total.
+## 2. Public API & Sharing Contract
 
-Details: `docs/product/pricing-model.md` and `docs/product/data-model.md`.
-
-## AI Bundle
-
-Response keys:
-
-- `schema_version`
-- `narrative`
-- `product_or_project_detail`
-- `blueprint`
-- `pricing_labels`
-
-Providers may be Mock, Ollama, Gemini, OpenRouter, or Groq. Credentials remain backend-only. Details: `docs/product/ai-contract.md`.
-
-## Public API
+The public surface exposes strictly allowlisted, unauthenticated endpoints guarded by cryptographically secure tokens:
 
 ```text
-GET  /p/q/:artifact_token
-POST /p/q/:artifact_token/sign
-GET  /p/b/:artifact_token
-GET  /p/d/:artifact_token
+GET  /p/q/:public_token
+POST /p/q/:public_token/sign
+GET  /p/blueprint/:token
 ```
 
-Internal sharing creates three artifact tokens:
+### 2.1 Public Quotation (`/p/q/:public_token`)
+- **Stable Link:** Resolves atomically to the active published quotation revision.
+- **DTO Allowlist:** `quotation_number`, `subject`, `client.company_name`, `revision_number`, `content_html`, `published_at`, `signed`, `signer_name`, `signed_at`.
+- **Zero Leakage:** Excludes `company_id`, internal IDs, `budget_maximum`, generation snapshots, AI prompts, and audit IPs.
+- **Digital Signature (`/sign`):** Atomically locks rows (`FOR UPDATE`), validates signer info and PNG data, records SHA-256 `signed_content_hash`, and rejects double-sign attempts with `409 Conflict`.
 
-```text
-POST /quotation/v1/quotations/:id/share
-GET  /quotation/v1/quotations/:id/artifacts
-```
+### 2.2 Secure Blueprint Sharing (`/p/blueprint/:token`)
+- **Token CSPRNG:** Token is generated with ≥32 bytes of CSPRNG entropy (`crypto/rand`).
+- **Database Storage:** Database stores ONLY the lowercase hex SHA-256 hash in `blueprint_share_links(token_hash)`. Raw tokens are NEVER stored in DB or logged.
+- **Revision Binding:** Link is permanently bound to a specific `blueprint_revision_id` and does not float to newer revisions.
+- **Programmer DTO Allowlist:** Excludes quotation numbers, client names, budgets, rates, internal IDs, AI prompts, and revision history.
 
-Details: `docs/product/public-artifacts.md` and `docs/product/security-rules.md`.
+---
 
-## Contract
+## 3. Purged Legacy Contracts (Historical / Superseded)
 
-Only `signed` quotations create contracts. Contract lifecycle is `draft -> shared -> signed`. Details: `docs/product/contract-generator.md`.
+The following legacy concepts are completely superseded and must NOT be used:
+- **Legacy Relational Pricing:** Relational pricing items/sections (`pricing_items`, `line_total = unit_price * quantity`) are purged.
+- **Legacy Three Artifacts:** `/p/b/:token` and `/p/d/:token` are removed.
+- **Legacy Generation Route:** `/quotation/v1/ai/generate` and `POST /quotation/v1/quotations/:id/share` are disabled.
