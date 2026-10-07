@@ -186,9 +186,6 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 			quotations.GET("/:id/revisions", m.Handler.ListRevisions)
 			quotations.GET("/:id/revisions/:revision_id", m.Handler.GetRevisionDetail)
 		}
-		if m.Handler != nil {
-			quotations.POST("/:id/share", m.Handler.ShareQuotation)
-		}
 	}
 
 	ai := router.Group("/ai")
