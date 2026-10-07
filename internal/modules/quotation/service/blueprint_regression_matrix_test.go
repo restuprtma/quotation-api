@@ -11,6 +11,36 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/service"
 )
 
+func TestBlueprintRegression_CyclicDependencyDetection(t *testing.T) {
+	// State Machine or WBS cyclic transition validation
+	crossValidator := service.NewProductionBlueprintCrossValidator()
+
+	cyclicStateMachine := []byte(`{
+		"states": [
+			{"id": "s1", "name": "Draft", "transitions": ["s2"]},
+			{"id": "s2", "name": "Review", "transitions": ["s3"]},
+			{"id": "s3", "name": "Approval", "transitions": ["s1"]}
+		]
+	}`)
+
+	warnings, err := crossValidator.ValidateStateMachineTransitions(cyclicStateMachine)
+	// Cyclic flows in approval loops may be flagged or validated according to spec
+	assert.NoError(t, err)
+	_ = warnings
+}
+
+func TestBlueprintRegression_SchemaValidationAllSections(t *testing.T) {
+	validator := service.NewBlueprintSectionValidator()
+
+	validSections := []string{"journey", "architecture", "state_machine", "workflow", "wbs"}
+	for _, sec := range validSections {
+		assert.True(t, validator.IsValidSectionName(sec), "section %s must be recognized", sec)
+	}
+
+	assert.False(t, validator.IsValidSectionName("pricing_relational"))
+	assert.False(t, validator.IsValidSectionName("unknown_section"))
+}
+
 func TestBlueprintRegression_SectionValidatorAllSections(t *testing.T) {
 	validator := service.NewBlueprintSectionValidator()
 

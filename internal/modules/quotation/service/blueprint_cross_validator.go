@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -610,4 +611,72 @@ func (v *BlueprintCrossValidator) Validate(bundle BlueprintBundle) BlueprintCros
 		Issues:      allIssues,
 		Coverage:    coverage,
 	}
+}
+
+type rawStateMachinePayload struct {
+	States []struct {
+		ID          string   `json:"id"`
+		Name        string   `json:"name"`
+		Transitions []string `json:"transitions"`
+	} `json:"states"`
+	Transitions []struct {
+		ID   string `json:"id"`
+		From string `json:"from"`
+		To   string `json:"to"`
+	} `json:"transitions"`
+}
+
+// ValidateStateMachineTransitions validates raw state machine transitions and detects potential cyclic flows.
+func (c *BlueprintCrossValidator) ValidateStateMachineTransitions(rawStateMachine []byte) ([]string, error) {
+	var payload rawStateMachinePayload
+	if err := json.Unmarshal(rawStateMachine, &payload); err != nil {
+		return nil, fmt.Errorf("invalid state machine json: %w", err)
+	}
+
+	adj := make(map[string][]string)
+	for _, s := range payload.States {
+		if _, exists := adj[s.ID]; !exists {
+			adj[s.ID] = nil
+		}
+		for _, t := range s.Transitions {
+			adj[s.ID] = append(adj[s.ID], t)
+		}
+	}
+	for _, t := range payload.Transitions {
+		if t.From != "" && t.To != "" {
+			adj[t.From] = append(adj[t.From], t.To)
+		}
+	}
+
+	var warnings []string
+	visited := make(map[string]int) // 0: unvisited, 1: visiting, 2: visited
+
+	var dfs func(node string, path []string)
+	dfs = func(node string, path []string) {
+		visited[node] = 1
+		currentPath := append(path, node)
+
+		for _, neighbor := range adj[node] {
+			if visited[neighbor] == 1 {
+				warnings = append(warnings, fmt.Sprintf("cyclic transition flow detected: %s -> %s", strings.Join(currentPath, " -> "), neighbor))
+			} else if visited[neighbor] == 0 {
+				dfs(neighbor, currentPath)
+			}
+		}
+		visited[node] = 2
+	}
+
+	stateIDs := make([]string, 0, len(adj))
+	for id := range adj {
+		stateIDs = append(stateIDs, id)
+	}
+	sort.Strings(stateIDs)
+
+	for _, id := range stateIDs {
+		if visited[id] == 0 {
+			dfs(id, nil)
+		}
+	}
+
+	return warnings, nil
 }

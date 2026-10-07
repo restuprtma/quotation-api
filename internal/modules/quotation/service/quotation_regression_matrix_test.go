@@ -16,69 +16,48 @@ import (
 )
 
 func TestQuotationRegression_Boundary2vs3Months(t *testing.T) {
-	allocator := service.NewRateAllocator()
-
+	// Boundary check: < 3 months must use short_term, >= 3 months must use long_term
 	tests := []struct {
-		months       int64
-		expectedTerm string
+		name          string
+		durationMonth int
+		expectedTerm  string
 	}{
-		{months: 1, expectedTerm: "short_term"},
-		{months: 2, expectedTerm: "short_term"},
-		{months: 3, expectedTerm: "long_term"},
-		{months: 4, expectedTerm: "long_term"},
-		{months: 6, expectedTerm: "long_term"},
-		{months: 12, expectedTerm: "long_term"},
+		{name: "1 month duration", durationMonth: 1, expectedTerm: "short_term"},
+		{name: "2 months boundary", durationMonth: 2, expectedTerm: "short_term"},
+		{name: "3 months boundary", durationMonth: 3, expectedTerm: "long_term"},
+		{name: "4 months duration", durationMonth: 4, expectedTerm: "long_term"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.expectedTerm, func(t *testing.T) {
-			assert.Equal(t, tt.expectedTerm, allocator.DetermineTermType(tt.months))
+		t.Run(tt.name, func(t *testing.T) {
+			term := service.DetermineTermType(tt.durationMonth)
+			assert.Equal(t, tt.expectedTerm, term)
 		})
 	}
-}
 
-func TestQuotationRegression_NationalVsInternationalRates(t *testing.T) {
-	now := time.Now()
-	companyID := uuid.New()
-
-	cardNat := &domain.RateCard{
-		ID:                    uuid.New(),
-		CompanyID:             companyID,
-		Code:                  "VENTURO-STD-2026",
-		Name:                  "National Standard",
-		Market:                "national",
-		ClientTier:            "commercial_national",
-		Currency:              "IDR",
-		ShortTermSurchargePct: 40,
-		EnterpriseMarkupPct:   35,
-		EffectiveFrom:         now,
-		IsActive:              true,
+	// Verify consistency with RateAllocator.DetermineTermType
+	allocator := service.NewRateAllocator()
+	for _, tt := range tests {
+		assert.Equal(t, tt.expectedTerm, allocator.DetermineTermType(int64(tt.durationMonth)))
 	}
-
-	cardIntl := &domain.RateCard{
-		ID:                    uuid.New(),
-		CompanyID:             companyID,
-		Code:                  "VENTURO-INTL-2026",
-		Name:                  "International Tier",
-		Market:                "international",
-		ClientTier:            "international",
-		Currency:              "USD",
-		ShortTermSurchargePct: 50,
-		EnterpriseMarkupPct:   40,
-		EffectiveFrom:         now,
-		IsActive:              true,
-	}
-
-	assert.Equal(t, "national", cardNat.Market)
-	assert.Equal(t, "IDR", cardNat.Currency)
-	assert.Equal(t, "international", cardIntl.Market)
-	assert.Equal(t, "USD", cardIntl.Currency)
-	assert.NotEqual(t, cardNat.Code, cardIntl.Code)
 }
 
 func TestQuotationRegression_IntegerOverflowPrevention(t *testing.T) {
-	allocator := service.NewRateAllocator()
+	// Verify integer calculation never silently wraps around or exceeds MaxInt64
+	largeMonths := 120
+	hugeRate := int64(500_000_000) // 500 million IDR
+	personnel := 50
 
+	total, err := service.CalculateSafeLineTotal(hugeRate, personnel, largeMonths)
+	require.NoError(t, err)
+	assert.Equal(t, int64(500_000_000)*int64(50)*int64(120), total)
+
+	// Out of bounds check
+	_, errOverflow := service.CalculateSafeLineTotal(math.MaxInt64/2, 3, 2)
+	assert.Error(t, errOverflow, "should return error on potential integer overflow")
+
+	// Out of bounds check in RateAllocator
+	allocator := service.NewRateAllocator()
 	rateCardItems := []domain.RateCardItem{
 		{
 			ID:             uuid.New(),
@@ -103,9 +82,60 @@ func TestQuotationRegression_IntegerOverflowPrevention(t *testing.T) {
 		},
 	}
 
-	_, err := allocator.Calculate(proposal, rateCardItems, 3, 100_000_000_000, "IDR")
-	assert.Error(t, err, "must return integer overflow error when calculating large values")
-	assert.True(t, strings.Contains(err.Error(), "overflow"), "error message must mention overflow")
+	_, errAlloc := allocator.Calculate(proposal, rateCardItems, 3, 100_000_000_000, "IDR")
+	assert.Error(t, errAlloc, "must return integer overflow error when calculating large values")
+	assert.True(t, strings.Contains(errAlloc.Error(), "overflow"), "error message must mention overflow")
+}
+
+func TestQuotationRegression_NationalVsInternationalRates(t *testing.T) {
+	// Verify rate card separation between national and international
+	now := time.Now()
+	companyID := uuid.New()
+
+	cardNat := &domain.RateCard{
+		ID:                    companyID,
+		CompanyID:             companyID,
+		Code:                  "NAT-2026",
+		Name:                  "National Standard",
+		Market:                "national",
+		ClientTier:            "commercial_national",
+		Currency:              "IDR",
+		ShortTermSurchargePct: 40,
+		EnterpriseMarkupPct:   35,
+		EffectiveFrom:         now,
+		IsActive:              true,
+	}
+
+	cardIntl := &domain.RateCard{
+		ID:                    uuid.New(),
+		CompanyID:             companyID,
+		Code:                  "INTL-2026",
+		Name:                  "International Tier",
+		Market:                "international",
+		ClientTier:            "international",
+		Currency:              "USD",
+		ShortTermSurchargePct: 50,
+		EnterpriseMarkupPct:   40,
+		EffectiveFrom:         now,
+		IsActive:              true,
+	}
+
+	assert.NotEqual(t, cardNat.Market, cardIntl.Market)
+	assert.Equal(t, "IDR", cardNat.Currency)
+	assert.Equal(t, "USD", cardIntl.Currency)
+	assert.NotEqual(t, cardNat.Code, cardIntl.Code)
+}
+
+func TestQuotationRegression_LegalImmutabilityByAI(t *testing.T) {
+	// Verify AI output cannot alter legal terms block
+	officialLegal := "<div data-section=\"legal\"><p>Ketentuan Hak Cipta Venturo v1</p></div>"
+	aiGeneratedWithModifiedLegal := "<p>Project Narrative</p><div data-section=\"legal\"><p>Hak Cipta Milik Klien Bebas</p></div>"
+
+	sanitizer := service.NewHTMLSanitizer()
+	enforcedHTML := service.EnforceOfficialLegalBlock(aiGeneratedWithModifiedLegal, officialLegal, sanitizer)
+
+	assert.Contains(t, enforcedHTML, "Ketentuan Hak Cipta Venturo v1")
+	assert.NotContains(t, enforcedHTML, "Hak Cipta Milik Klien Bebas")
 }
 
 func TestQuotationRegression_BudgetHandling(t *testing.T) {

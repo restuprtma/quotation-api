@@ -1698,3 +1698,17 @@ func (v *BlueprintSectionValidator) ValidateDraft(
 func rawAny(v any) any {
 	return v
 }
+
+// IsValidSectionName reports whether sectionName is a recognized blueprint section type.
+func (v *BlueprintSectionValidator) IsValidSectionName(sectionName string) bool {
+	switch domain.BlueprintSectionType(sectionName) {
+	case domain.BlueprintSectionJourney,
+		domain.BlueprintSectionArchitecture,
+		domain.BlueprintSectionStateMachine,
+		domain.BlueprintSectionWorkflow,
+		domain.BlueprintSectionWBS:
+		return true
+	default:
+		return false
+	}
+}

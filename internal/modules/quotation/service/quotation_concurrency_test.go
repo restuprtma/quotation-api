@@ -1229,38 +1229,135 @@ func TestConcurrentBlueprintCreateRevision(t *testing.T) {
 }
 
 func TestConcurrentDoubleSignPrevention(t *testing.T) {
-	var mu sync.Mutex
-	signed := false
-	const attempts = 15
-	var successCount int
-	var conflictCount int
-	var wg sync.WaitGroup
-	startCh := make(chan struct{})
+	t.Run("SynchronizedMock", func(t *testing.T) {
+		var mu sync.Mutex
+		signed := false
+		const attempts = 15
+		var successCount int
+		var conflictCount int
+		var wg sync.WaitGroup
+		startCh := make(chan struct{})
 
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			<-startCh
+		for i := 0; i < attempts; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				<-startCh
 
-			// Atomically check and sign under row lock
-			mu.Lock()
-			if signed {
-				conflictCount++
+				// Atomically check and sign under row lock
+				mu.Lock()
+				if signed {
+					conflictCount++
+					mu.Unlock()
+					return
+				}
+				signed = true
+				successCount++
 				mu.Unlock()
-				return
-			}
-			signed = true
-			successCount++
-			mu.Unlock()
-		}(i)
-	}
+			}(i)
+		}
 
-	close(startCh)
-	wg.Wait()
+		close(startCh)
+		wg.Wait()
 
-	assert.Equal(t, 1, successCount, "exactly one sign operation must succeed")
-	assert.Equal(t, attempts-1, conflictCount, "all other concurrent attempts must be rejected with conflict")
+		assert.Equal(t, 1, successCount, "exactly one sign operation must succeed")
+		assert.Equal(t, attempts-1, conflictCount, "all other concurrent attempts must be rejected with conflict")
+	})
+
+	t.Run("PostgreSQL", func(t *testing.T) {
+		pool := concurrencyGetTestPool(t)
+		if pool == nil {
+			return
+		}
+
+		ctx := context.Background()
+		companyID := uuid.New()
+		clientID := uuid.New()
+		quotationID := uuid.New()
+		revID := uuid.New()
+		publicToken := uuid.New()
+		quotNumber := "QUO-" + uuid.New().String()[:8]
+
+		_, err := pool.Exec(ctx, `
+			INSERT INTO quotation_client_organizations (id, company_id, name, normalized_name)
+			VALUES ($1, $2, 'Double Sign Client', 'double sign client')
+		`, clientID, companyID)
+		require.NoError(t, err)
+
+		contentHTML := "<p>Signed Document</p>"
+		contentVer := "1"
+		_, err = pool.Exec(ctx, `
+			INSERT INTO quotation_revisions (
+				id, company_id, quotation_id, revision_number, publication_status, generation_status,
+				content_version, content_html, generation_input, budget_maximum
+			) VALUES ($1, $2, $3, 1, 'published', 'completed', $4, $5, '{}'::jsonb, 100000)
+		`, revID, companyID, quotationID, contentVer, contentHTML)
+		require.NoError(t, err)
+
+		_, err = pool.Exec(ctx, `
+			INSERT INTO quotations (id, company_id, client_id, quotation_number, solution_type, commercial_scheme, status, current_revision, public_token, active_published_revision_id)
+			VALUES ($1, $2, $3, $4, 'custom_software', 'dedicated_squad', 'published', 1, $5, $6)
+		`, quotationID, companyID, clientID, quotNumber, publicToken, revID)
+		require.NoError(t, err)
+
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `DELETE FROM quotation_revisions WHERE quotation_id = $1`, quotationID)
+			_, _ = pool.Exec(ctx, `DELETE FROM quotations WHERE id = $1`, quotationID)
+			_, _ = pool.Exec(ctx, `DELETE FROM quotation_client_organizations WHERE id = $1`, clientID)
+		})
+
+		repo := repository.NewRepository(pool)
+		const attempts = 10
+		startCh := make(chan struct{})
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var successCount int
+		var alreadySignedCount int
+		var errs []error
+
+		const validPNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+		for i := 0; i < attempts; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				<-startCh
+
+				tx, err := repo.Begin(ctx)
+				if err != nil {
+					mu.Lock()
+					errs = append(errs, err)
+					mu.Unlock()
+					return
+				}
+				defer tx.Rollback(ctx)
+
+				_, _, err = repo.LockAndSignQuotationTx(ctx, tx, publicToken, "Signer", "signer@test.com", validPNG, "127.0.0.1", "Test-Agent")
+				if err == nil {
+					if cErr := tx.Commit(ctx); cErr == nil {
+						mu.Lock()
+						successCount++
+						mu.Unlock()
+						return
+					}
+				}
+
+				mu.Lock()
+				if errors.Is(err, repository.ErrAlreadySigned) {
+					alreadySignedCount++
+				} else {
+					errs = append(errs, err)
+				}
+				mu.Unlock()
+			}(i)
+		}
+
+		close(startCh)
+		wg.Wait()
+
+		assert.Equal(t, 1, successCount, "exactly one transaction must successfully sign")
+		assert.Equal(t, attempts-1, alreadySignedCount, "all other concurrent attempts must be rejected with ErrAlreadySigned")
+	})
 }
 
 func TestConcurrentPublish(t *testing.T) {
@@ -1268,3 +1365,5 @@ func TestConcurrentPublish(t *testing.T) {
 	t.Run("Blueprint", TestConcurrentBlueprintPublish)
 	t.Run("DoubleSign", TestConcurrentDoubleSignPrevention)
 }
+
+
