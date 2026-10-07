@@ -18,6 +18,7 @@ help:
 	@echo "Seeding commands:"
 	@echo "  make seed                    - Run all seeders"
 	@echo "  make seed-core               - Run core module seeders only"
+	@echo "  make seed-quotation          - Run quotation module seeders only"
 	@echo ""
 	@echo "Setup commands:"
 	@echo "  make db-setup                - Run migrations + seeders (fresh setup)"
@@ -86,6 +87,8 @@ seed-core:
 			fi; \
 		done; \
 	fi
+	@echo "✅ Core seeders completed!"
+
 seed-quotation:
 	@echo "Running quotation seeders..."
 	@if [ -d "$(SEEDERS_PATH)/quotation" ]; then \
