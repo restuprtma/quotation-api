@@ -1,4 +1,4 @@
-.PHONY: help migrate-up migrate-down migrate-create migrate-force migrate-version seed seed-core db-setup db-reset dev build run
+.PHONY: help migrate-up migrate-down migrate-create migrate-force migrate-version seed seed-core seed-quotation db-setup db-reset dev build run
 
 help:
 	@echo "Available commands:"
@@ -86,9 +86,19 @@ seed-core:
 			fi; \
 		done; \
 	fi
-	@echo "✅ Core seeders completed!"
+seed-quotation:
+	@echo "Running quotation seeders..."
+	@if [ -d "$(SEEDERS_PATH)/quotation" ]; then \
+		for file in $(SEEDERS_PATH)/quotation/*.sql; do \
+			if [ -f "$$file" ]; then \
+				echo "Running seeder: $$(basename $$file)"; \
+				PGPASSWORD=$(DB_PASSWORD) psql -v ON_ERROR_STOP=1 -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME) -f $$file || exit 1; \
+			fi; \
+		done; \
+	fi
+	@echo "✅ Quotation seeders completed!"
 
-seed: seed-core
+seed: seed-core seed-quotation
 	@echo "✅ All seeders completed!"
 
 # Database setup commands
