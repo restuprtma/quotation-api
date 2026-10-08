@@ -35,11 +35,13 @@ type QuotationResponse struct {
 	CompanyID                 uuid.UUID  `json:"company_id"`
 	ClientID                  uuid.UUID  `json:"client_id"`
 	ClientName                *string    `json:"client_name,omitempty"`
+	PICName                   *string    `json:"pic_name,omitempty"`
 	Subject                   *string    `json:"subject,omitempty"`
 	QuotationNumber           string     `json:"quotation_number"`
 	SolutionType              string     `json:"solution_type"`
 	CommercialScheme          string     `json:"commercial_scheme"`
 	BudgetMaximum             *int64     `json:"budget_maximum,omitempty"`
+	TotalInvestment           *int64     `json:"total_investment,omitempty"`
 	Status                    string     `json:"status"`
 	ActivePublishedRevisionID *uuid.UUID `json:"active_published_revision_id,omitempty"`
 	CreatedBy                 *uuid.UUID `json:"created_by,omitempty"`
