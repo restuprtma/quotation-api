@@ -900,6 +900,7 @@ type QuotationGenerationDetail struct {
 	QuotationNumber           string                  `json:"quotation_number"`
 	Subject                   string                  `json:"subject"`
 	Status                    string                  `json:"status"`
+	PublicToken               uuid.UUID               `json:"public_token"`
 	RevisionID                uuid.UUID               `json:"revision_id"`
 	CatalogRoles              []dto.PromptCatalogRole `json:"catalog_roles,omitempty"`
 	RateCardSnapshot          json.RawMessage         `json:"-"`
@@ -922,7 +923,7 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 	var d QuotationGenerationDetail
 	err := r.db.QueryRow(ctx, `
 		SELECT q.id, q.company_id, q.client_id, q.quotation_number,
-		       COALESCE(q.subject, ''), q.status, q.created_at, q.updated_at,
+		       COALESCE(q.subject, ''), q.status, q.public_token, q.created_at, q.updated_at,
 		       r.id, r.generation_status, r.content_version, COALESCE(r.content_html, ''),
 		       COALESCE(r.rate_card_snapshot, '{}'::jsonb), COALESCE(r.legal_template_snapshot, '{}'::jsonb),
 		       r.prompt_state, r.prompt_state_version, r.prompt_section_hashes,
@@ -933,7 +934,7 @@ func (r *GenerationRepository) GetGenerationDetail(ctx context.Context, companyI
 		WHERE q.id = $1 AND q.company_id = $2 AND q.deleted_at IS NULL
 	`, quotationID, companyID).Scan(
 		&d.QuotationID, &d.CompanyID, &d.ClientID, &d.QuotationNumber,
-		&d.Subject, &d.Status, &d.CreatedAt, &d.UpdatedAt,
+		&d.Subject, &d.Status, &d.PublicToken, &d.CreatedAt, &d.UpdatedAt,
 		&d.RevisionID, &d.GenerationStatus, &d.ContentVersion, &d.ContentHTML,
 		&d.RateCardSnapshot, &d.LegalTemplateSnapshot,
 		&d.PromptState, &d.PromptStateVersion, &d.PromptSectionHashes,

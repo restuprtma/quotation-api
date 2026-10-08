@@ -43,6 +43,7 @@ type QuotationResponse struct {
 	BudgetMaximum             *int64     `json:"budget_maximum,omitempty"`
 	TotalInvestment           *int64     `json:"total_investment,omitempty"`
 	Status                    string     `json:"status"`
+	PublicToken               uuid.UUID  `json:"public_token"`
 	ActivePublishedRevisionID *uuid.UUID `json:"active_published_revision_id,omitempty"`
 	CreatedBy                 *uuid.UUID `json:"created_by,omitempty"`
 	CreatedAt                 time.Time  `json:"created_at"`

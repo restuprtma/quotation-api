@@ -357,6 +357,7 @@ func (s *Service) List(
 			BudgetMaximum:             q.BudgetMaximum,
 			TotalInvestment:           q.TotalInvestment,
 			Status:                    q.Status,
+			PublicToken:               q.PublicToken,
 			ActivePublishedRevisionID: q.ActivePublishedRevisionID,
 			CreatedBy:                 q.CreatedBy,
 			CreatedAt:                 q.CreatedAt,

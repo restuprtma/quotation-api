@@ -43,3 +43,23 @@ func TestQuotationResponse_Serialization_IncludesTotalInvestmentAndPIC(t *testin
 	assert.Equal(t, "Bapak Reza Mahardika", raw["pic_name"])
 	assert.Equal(t, "PT Citra Niaga Perkasa", raw["client_name"])
 }
+
+func TestQuotationResponse_ExposesPublicToken(t *testing.T) {
+	testToken := uuid.New()
+	resp := dto.QuotationResponse{
+		ID:              uuid.New(),
+		QuotationNumber: "QUO-001",
+		Status:          "published",
+		PublicToken:     testToken,
+	}
+
+	bytes, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var rawMap map[string]interface{}
+	err = json.Unmarshal(bytes, &rawMap)
+	require.NoError(t, err)
+
+	assert.Equal(t, testToken.String(), rawMap["public_token"])
+}
+
