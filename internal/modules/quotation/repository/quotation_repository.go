@@ -86,7 +86,19 @@ func (r *Repository) GetQuotationByID(ctx context.Context, id, companyID string)
 			q.public_token, q.active_published_revision_id, q.created_by,
 			q.created_at, q.updated_at, q.deleted_at,
 			COALESCE(qco.name, legacy_client.name) as client_name,
-			qr.budget_maximum
+			qr.budget_maximum,
+			COALESCE(
+				(qr.calculation_snapshot->>'total_investment')::bigint,
+				(qr.calculation_snapshot->>'final_total')::bigint,
+				(qr.calculation_snapshot->>'total_contract')::bigint,
+				qr.budget_maximum
+			) as total_investment,
+			COALESCE(
+				qr.prompt_state->'pic_name'->>'value',
+				qr.prompt_state->'client_name'->>'value',
+				qr.generation_input->>'pic_name',
+				qr.generation_input->>'client_name'
+			) as pic_name
 		FROM quotations q
 		LEFT JOIN quotation_client_organizations qco
 		  ON qco.company_id = q.company_id AND qco.id = q.client_id AND qco.deleted_at IS NULL
@@ -138,7 +150,19 @@ func (r *Repository) ListQuotations(
 			q.public_token, q.active_published_revision_id, q.created_by,
 			q.created_at, q.updated_at, q.deleted_at,
 			COALESCE(qco.name, legacy_client.name) as client_name,
-			qr.budget_maximum
+			qr.budget_maximum,
+			COALESCE(
+				(qr.calculation_snapshot->>'total_investment')::bigint,
+				(qr.calculation_snapshot->>'final_total')::bigint,
+				(qr.calculation_snapshot->>'total_contract')::bigint,
+				qr.budget_maximum
+			) as total_investment,
+			COALESCE(
+				qr.prompt_state->'pic_name'->>'value',
+				qr.prompt_state->'client_name'->>'value',
+				qr.generation_input->>'pic_name',
+				qr.generation_input->>'client_name'
+			) as pic_name
 	` + baseQuery + fmt.Sprintf(` ORDER BY q.created_at DESC LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
@@ -197,6 +221,8 @@ func scanQuotationRow(scanner rowScanner) (*domain.Quotation, error) {
 		&q.CreatedAt, &q.UpdatedAt, &q.DeletedAt,
 		&q.ClientName,
 		&q.BudgetMaximum,
+		&q.TotalInvestment,
+		&q.PICName,
 	)
 	if err != nil {
 		return nil, err
