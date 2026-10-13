@@ -65,7 +65,13 @@ func ValidateSignaturePayloadStreamlined(signatureData string, consent bool) err
 	if !consent {
 		return ErrConsentRequired
 	}
-	return ValidatePNGDataURL(signatureData, false)
+	if len(signatureData) > maxSignatureDataUrlLen {
+		return ErrInvalidSignaturePNG
+	}
+	if err := ValidatePNGDataURL(signatureData, false); err != nil {
+		return ErrInvalidSignaturePNG
+	}
+	return nil
 }
 
 func ComputeContentHash(contentHTML string) string {

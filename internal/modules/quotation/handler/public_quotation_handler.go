@@ -72,7 +72,8 @@ func (h *PublicQuotationHandler) SignPublicQuotation(c *gin.Context) {
 		case errors.Is(err, service.ErrConsentRequired),
 			errors.Is(err, service.ErrInvalidSignerName),
 			errors.Is(err, service.ErrInvalidSignerEmail),
-			errors.Is(err, service.ErrInvalidSignaturePNG):
+			errors.Is(err, service.ErrInvalidSignaturePNG),
+			errors.Is(err, service.ErrInvalidPNGFormat):
 			response.Error(c, http.StatusBadRequest, err.Error(), "")
 		default:
 			response.Error(c, http.StatusInternalServerError, "Failed to sign quotation", "")

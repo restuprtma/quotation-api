@@ -107,4 +107,44 @@ func TestPublicQuotationHandler_Sign(t *testing.T) {
 		assert.Equal(t, validDataUrl, receivedReq.SignatureData)
 		assert.True(t, receivedReq.Consent)
 	})
+
+	t.Run("invalid png returns 400 bad request", func(t *testing.T) {
+		mockSvc := &mockPublicQuotationService{
+			signPublicQuotationFunc: func(ctx context.Context, publicToken string, req dto.SignPublicQuotationRequest, ip, userAgent string) (*dto.PublicQuotationResponse, error) {
+				return nil, service.ErrInvalidSignaturePNG
+			},
+		}
+		r := setupPublicTestRouter(mockSvc)
+		w := httptest.NewRecorder()
+
+		body, _ := json.Marshal(dto.SignPublicQuotationRequest{
+			SignatureData: "not-a-png",
+			Consent:       true,
+		})
+		req, _ := http.NewRequest(http.MethodPost, "/p/q/"+token+"/sign", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("invalid png format error returns 400 bad request", func(t *testing.T) {
+		mockSvc := &mockPublicQuotationService{
+			signPublicQuotationFunc: func(ctx context.Context, publicToken string, req dto.SignPublicQuotationRequest, ip, userAgent string) (*dto.PublicQuotationResponse, error) {
+				return nil, service.ErrInvalidPNGFormat
+			},
+		}
+		r := setupPublicTestRouter(mockSvc)
+		w := httptest.NewRecorder()
+
+		body, _ := json.Marshal(dto.SignPublicQuotationRequest{
+			SignatureData: "data:image/jpeg;base64,123",
+			Consent:       true,
+		})
+		req, _ := http.NewRequest(http.MethodPost, "/p/q/"+token+"/sign", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
 }

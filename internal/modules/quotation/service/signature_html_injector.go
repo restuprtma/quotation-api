@@ -21,8 +21,6 @@ var (
 	reDirectorCell  = regexp.MustCompile(`((?:<p>)?Hormat Kami,(?:<\/p>)?)([\s\S]*?)((?:<p>)?<strong>)`)
 	reDirectorName  = regexp.MustCompile(`(<div[^>]*class="signature-stamp-box"[^>]*>[\s\S]*?<p><strong>)([^<]*)(</strong></p>)`)
 	reDirectorTitle = regexp.MustCompile(`(<div[^>]*class="signature-stamp-box"[^>]*>[\s\S]*?</strong></p>\s*<p>)([^<]*)(</p>)`)
-	reClientBox     = regexp.MustCompile(`(<div[^>]*class="client-signature-box"[^>]*>)([\s\S]*?)(<\/div>)`)
-	reClientCell    = regexp.MustCompile(`((?:<p>)?Disetujui Oleh,(?:<\/p>)?)([\s\S]*?)((?:<p>)?<strong>)`)
 )
 
 func FormatIndonesianDate(t time.Time) string {
