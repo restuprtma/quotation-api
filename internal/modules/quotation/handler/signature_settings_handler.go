@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"venturo-skeleton-go/internal/middleware"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/internal/modules/quotation/service"
 	"venturo-skeleton-go/internal/shared/response"
 )
 
@@ -40,7 +42,7 @@ func (h *SignatureSettingsHandler) GetSignatureSettings(c *gin.Context) {
 
 	data, err := h.svc.GetSignatureSettings(c.Request.Context(), companyID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "Failed to retrieve signature settings", err.Error())
+		response.Error(c, http.StatusInternalServerError, "Failed to retrieve signature settings", "")
 		return
 	}
 
@@ -62,7 +64,11 @@ func (h *SignatureSettingsHandler) UpdateSignatureSettings(c *gin.Context) {
 
 	data, err := h.svc.UpdateSignatureSettings(c.Request.Context(), companyID, req)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "Failed to update signature settings", err.Error())
+		if errors.Is(err, service.ErrInvalidPNGFormat) {
+			response.Error(c, http.StatusBadRequest, "Failed to update signature settings", err.Error())
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Failed to update signature settings", "")
 		return
 	}
 

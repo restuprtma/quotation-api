@@ -14,6 +14,7 @@ import (
 
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/handler"
+	"venturo-skeleton-go/internal/modules/quotation/service"
 )
 
 type mockSignatureSettingsService struct {
@@ -203,7 +204,7 @@ func TestSignatureSettingsHandler_Update_ServiceError(t *testing.T) {
 
 	h := handler.NewSignatureSettingsHandler(&mockSignatureSettingsService{
 		updateFunc: func(ctx context.Context, companyID string, req dto.UpdateSignatureSettingsRequest) (*dto.SignatureSettingsResponse, error) {
-			return nil, errors.New("image must be a valid PNG data URL")
+			return nil, service.ErrInvalidPNGFormat
 		},
 	})
 	r.PUT("/quotation/v1/settings/signature", h.UpdateSignatureSettings)
@@ -220,3 +221,32 @@ func TestSignatureSettingsHandler_Update_ServiceError(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestSignatureSettingsHandler_Update_InternalServerError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("company_id", "11111111-1111-1111-1111-111111111111")
+		c.Next()
+	})
+
+	h := handler.NewSignatureSettingsHandler(&mockSignatureSettingsService{
+		updateFunc: func(ctx context.Context, companyID string, req dto.UpdateSignatureSettingsRequest) (*dto.SignatureSettingsResponse, error) {
+			return nil, errors.New("database connection lost")
+		},
+	})
+	r.PUT("/quotation/v1/settings/signature", h.UpdateSignatureSettings)
+
+	payload := dto.UpdateSignatureSettingsRequest{
+		DirectorName: "Yulianto Frandi",
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest(http.MethodPut, "/quotation/v1/settings/signature", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
