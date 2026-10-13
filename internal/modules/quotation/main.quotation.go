@@ -22,6 +22,7 @@ type Module struct {
 	BlueprintHandler          *handler.BlueprintGenerationHandler
 	BlueprintShareLinkHandler *handler.BlueprintShareLinkHandler
 	ClientOrganizationHandler *handler.ClientOrganizationHandler
+	SignatureSettingsHandler  *handler.SignatureSettingsHandler
 	PublicHandler             *handler.PublicQuotationHandler
 	PublicBlueprintHandler    *handler.PublicBlueprintHandler
 	Service                   *service.Service
@@ -132,6 +133,7 @@ func Initialize(db *pgxpool.Pool, cfg *config.Config) *Module {
 		BlueprintHandler:          bpHandler,
 		BlueprintShareLinkHandler: shareLinkHandler,
 		ClientOrganizationHandler: clientOrgHandler,
+		SignatureSettingsHandler:  handler.NewSignatureSettingsHandler(svc),
 		PublicHandler:             handler.NewPublicQuotationHandler(svc),
 		PublicBlueprintHandler:    publicBlueprintHandler,
 		Service:                   svc,
@@ -252,6 +254,15 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 	{
 		clientOrganizations.GET("", m.ClientOrganizationHandler.List)
 		clientOrganizations.POST("", m.ClientOrganizationHandler.Create)
+	}
+
+	if m.SignatureSettingsHandler != nil {
+		settings := router.Group("/settings")
+		settings.Use(middleware.JWTAuth(), middleware.CompanyContext())
+		{
+			settings.GET("/signature", m.SignatureSettingsHandler.GetSignatureSettings)
+			settings.PUT("/signature", m.SignatureSettingsHandler.UpdateSignatureSettings)
+		}
 	}
 }
 

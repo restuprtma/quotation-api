@@ -26,6 +26,7 @@ func TestRouteAudit_CanonicalRoutesPresentAndLegacyPurged(t *testing.T) {
 		BlueprintHandler:          &handler.BlueprintGenerationHandler{},
 		BlueprintShareLinkHandler: &handler.BlueprintShareLinkHandler{},
 		ClientOrganizationHandler: &handler.ClientOrganizationHandler{},
+		SignatureSettingsHandler:  &handler.SignatureSettingsHandler{},
 		PublicHandler:             &handler.PublicQuotationHandler{},
 		PublicBlueprintHandler:    &handler.PublicBlueprintHandler{},
 	}
@@ -62,6 +63,8 @@ func TestRouteAudit_CanonicalRoutesPresentAndLegacyPurged(t *testing.T) {
 		"GET /p/q/:public_token",
 		"POST /p/q/:public_token/sign",
 		"GET /p/blueprint/:token",
+		"GET /quotation/v1/settings/signature",
+		"PUT /quotation/v1/settings/signature",
 	}
 
 	for _, expected := range expectedRoutes {
