@@ -110,7 +110,8 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 
 	var response struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -124,7 +125,10 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		}
 	}
 
-	return GenerateResult{Text: response.Choices[0].Message.Content}, nil
+	return GenerateResult{
+		Text:         response.Choices[0].Message.Content,
+		FinishReason: response.Choices[0].FinishReason,
+	}, nil
 }
 
 func mapOpenAIError(statusCode int) *ProviderError {

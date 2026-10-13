@@ -80,3 +80,73 @@ func TestProviderDefaultOutputModeOmitsJSONFields(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiProviderMultipartAndThought(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"finishReason":"STOP","content":{"parts":[{"thought":true,"text":"internal reasoning"},{"text":"{\"scope\":"},{"text":"[]}"}]}}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewGeminiProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{Prompt: "generate"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"scope":[]}`, result.Text)
+	assert.Equal(t, "STOP", result.FinishReason)
+}
+
+func TestOpenAIProviderFinishReasonLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"length","message":{"content":"{\"partial\":\"data"}}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{Prompt: "generate"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"partial":"data`, result.Text)
+	assert.Equal(t, "length", result.FinishReason)
+}
+
+func TestOpenAIProviderFinishReasonStop(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"{\"complete\":true}"}}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{Prompt: "generate"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"complete":true}`, result.Text)
+	assert.Equal(t, "stop", result.FinishReason)
+}
+
+func TestGeminiProviderMissingFinishReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"hello world"}]}}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewGeminiProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{Prompt: "generate"})
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", result.Text)
+	assert.Empty(t, result.FinishReason)
+}
+
+func TestOpenAIProviderMissingFinishReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hello custom gateway"}}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{Prompt: "generate"})
+	require.NoError(t, err)
+	assert.Equal(t, "hello custom gateway", result.Text)
+	assert.Empty(t, result.FinishReason)
+}

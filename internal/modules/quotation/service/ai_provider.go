@@ -44,7 +44,8 @@ type GenerateRequest struct {
 }
 
 type GenerateResult struct {
-	Text string
+	Text         string
+	FinishReason string
 }
 
 type AIProvider interface {

@@ -16,6 +16,7 @@ import (
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
 	"venturo-skeleton-go/internal/modules/quotation/repository"
+	"venturo-skeleton-go/pkg/logger"
 )
 
 const PromptSolutionType = "custom_software"
@@ -191,7 +192,20 @@ func (s *PromptDraftService) ProcessMeetingDraft(ctx context.Context, companyID,
 
 	var req dto.CreateFromMeetingRequest
 	if err := json.Unmarshal(claim.GenerationInput, &req); err != nil {
-		return fail("invalid_extraction.malformed_json", ErrPromptInvalidRequest)
+		extractionErr := newMeetingExtractionError("malformed_json", "stored_input_decode", err)
+		logger.Warn("meeting extraction stored input invalid",
+			logger.String("quotation_id", claim.QuotationID.String()),
+			logger.String("revision_id", claim.RevisionID.String()),
+			logger.String("provider", ""),
+			logger.String("model", ""),
+			logger.Int("attempt", 0),
+			logger.String("stage", extractionErr.Stage),
+			logger.String("reason", extractionErr.Reason),
+			logger.Int64("offset", extractionErr.Offset),
+			logger.Int("output_bytes", 0),
+			logger.Any("elapsed", time.Duration(0)),
+		)
+		return fail("invalid_extraction.malformed_json", errors.Join(ErrPromptInvalidRequest, extractionErr))
 	}
 	if strings.TrimSpace(req.MeetingNotes) == "" {
 		return fail("invalid_extraction.missing_required_field", ErrPromptInvalidRequest)
@@ -205,9 +219,10 @@ func (s *PromptDraftService) ProcessMeetingDraft(ctx context.Context, companyID,
 	if s.extractor == nil {
 		return fail("generation_failed", ErrPromptInvalidExtraction)
 	}
-	state, err := s.extractor.Extract(ctx, companyID, dto.MeetingExtractionRequest{MeetingNotes: strings.TrimSpace(req.MeetingNotes)}, catalogContext)
+	extractionCtx := withMeetingExtractionLogContext(ctx, claim.QuotationID, claim.RevisionID)
+	state, err := s.extractor.Extract(extractionCtx, companyID, dto.MeetingExtractionRequest{MeetingNotes: strings.TrimSpace(req.MeetingNotes)}, catalogContext)
 	if err != nil {
-		return fail(promptExtractionErrorCode(err), ErrPromptInvalidExtraction)
+		return fail(promptExtractionErrorCode(err), errors.Join(ErrPromptInvalidExtraction, err))
 	}
 	if !hasMeetingBusinessSignal(state) {
 		return fail("meeting_notes_no_business_signal", ErrPromptNoBusinessSignal)
@@ -221,6 +236,20 @@ func (s *PromptDraftService) ProcessMeetingDraft(ctx context.Context, companyID,
 	}
 	if ident.ProjectName != "" {
 		state.ProjectName = userFact(ident.ProjectName)
+	}
+	for i := range state.Team {
+		if state.Team[i].ResolvedRateItemID == nil {
+			resolution := ResolveRole(state.Team[i].RequestedRole, state.Team[i].Seniority, items)
+			if resolution.Status == RoleResolved {
+				id := resolution.Item.ID.String()
+				state.Team[i].ResolvedRateItemID = &id
+			} else if resolution.Status == RoleAmbiguous {
+				if matched := DisambiguateRateCandidates(resolution.Candidates, state.Team[i].Seniority, state.Team[i].PeriodQuarters, state.DurationMonths); matched != nil {
+					id := matched.ID.String()
+					state.Team[i].ResolvedRateItemID = &id
+				}
+			}
+		}
 	}
 	state.Readiness = ""
 	state.Issues = state.ComputeIssues()

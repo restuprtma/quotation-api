@@ -107,7 +107,15 @@ func promptCatalogItem(line domain.PromptTeamLine, catalog []domain.RateCardItem
 		return domain.RateCardItem{}, false
 	}
 	resolution := ResolveRole(line.RequestedRole, line.Seniority, catalog)
-	return valueOrEmpty(resolution.Item), resolution.Status == RoleResolved
+	if resolution.Status == RoleResolved {
+		return valueOrEmpty(resolution.Item), true
+	}
+	if resolution.Status == RoleAmbiguous {
+		if matched := DisambiguateRateCandidates(resolution.Candidates, line.Seniority, line.PeriodQuarters, nil); matched != nil {
+			return *matched, true
+		}
+	}
+	return domain.RateCardItem{}, false
 }
 
 func valueOrEmpty(item *domain.RateCardItem) domain.RateCardItem {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -9,9 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	appLogger "venturo-skeleton-go/pkg/logger"
 )
 
 type meetingProviderFake struct {
@@ -74,6 +79,27 @@ func TestMeetingExtractionCapturesPromptAndResolvesCatalogRole(t *testing.T) {
 	assert.True(t, strings.Index(provider.requests[0].Prompt, "<catalog>") < strings.Index(provider.requests[0].Prompt, "<meeting_notes>"))
 }
 
+func TestMeetingExtractionResolvesCatalogRoleWithBothTermTypes(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika butuh aplikasi inventory bernama Arunika Inventory. Ada stok gudang. Target tiga bulan, dua backend programmer intermediate. Pembayaran 50:50."
+	provider := &meetingProviderFake{result: GenerateResult{Text: meetingOutput(notes, "backend_programmer")}}
+	longTermID := uuid.New()
+	shortTermID := uuid.New()
+	catalog := CatalogContext{
+		RateCardCode: domain.DefaultPromptRateCardCode,
+		Items: []domain.RateCardItem{
+			{ID: longTermID, Role: "backend_programmer", DisplayName: "Back End Programmer", Seniority: "intermediate", TermType: "long_term"},
+			{ID: shortTermID, Role: "backend_programmer", DisplayName: "Back End Programmer", Seniority: "intermediate", TermType: "short_term"},
+		},
+	}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, catalog)
+	require.NoError(t, err)
+	require.NotNil(t, state.Team[0].ResolvedRateItemID)
+	assert.Equal(t, longTermID.String(), *state.Team[0].ResolvedRateItemID)
+	assert.Equal(t, domain.ReadinessPriceable, state.Readiness)
+}
+
 func TestMeetingExtractionRequestsJSONAndRetriesOneInvalidOutput(t *testing.T) {
 	notes := "stok gudang"
 	valid := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"stok gudang","source":"meeting","evidence":"stok gudang","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
@@ -87,6 +113,72 @@ func TestMeetingExtractionRequestsJSONAndRetriesOneInvalidOutput(t *testing.T) {
 	require.Len(t, provider.requests, 2)
 	assert.Equal(t, GenerateOutputJSON, provider.requests[0].OutputMode)
 	assert.Equal(t, GenerateOutputJSON, provider.requests[1].OutputMode)
+}
+
+func TestMeetingExtractionDecodeRetainsTypeFailure(t *testing.T) {
+	raw := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[],"team":"wrong","issues":[],"readiness":"incomplete"}`
+	_, err := decodeMeetingExtraction(raw, "stok gudang")
+	var extractionErr *MeetingExtractionError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "malformed_json", extractionErr.Reason)
+	assert.Equal(t, "struct_decode", extractionErr.Stage)
+	var typeErr *json.UnmarshalTypeError
+	require.ErrorAs(t, extractionErr.Cause, &typeErr)
+	assert.Equal(t, "team", typeErr.Field)
+}
+
+func TestMeetingExtractionDecodeDiagnostics(t *testing.T) {
+	valid := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[],"team":[],"issues":[],"readiness":"incomplete"}`
+	tests := []struct {
+		name   string
+		raw    string
+		stage  string
+		reason string
+	}{
+		{name: "empty", raw: "", stage: "envelope_decode", reason: "malformed_json"},
+		{name: "syntax", raw: "{", stage: "envelope_decode", reason: "malformed_json"},
+		{name: "root array", raw: "[]", stage: "envelope_decode", reason: "malformed_json"},
+		{name: "wrong type", raw: strings.Replace(valid, `"team":[]`, `"team":"wrong"`, 1), stage: "struct_decode", reason: "malformed_json"},
+		{name: "too large", raw: strings.Repeat("x", maxMeetingModelOutput+1), stage: "output_size", reason: "malformed_json"},
+		{name: "unknown field", raw: strings.TrimSuffix(valid, "}") + `,"secret":"CANARY"}`, stage: "struct_decode", reason: "unknown_field"},
+		{name: "trailing content", raw: valid + ` {}`, stage: "envelope_decode", reason: "trailing_content"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := decodeMeetingExtraction(tc.raw, "stok gudang")
+			var extractionErr *MeetingExtractionError
+			require.ErrorAs(t, err, &extractionErr)
+			assert.Equal(t, tc.reason, extractionErr.Reason)
+			assert.Equal(t, tc.stage, extractionErr.Stage)
+		})
+	}
+}
+
+func TestMeetingExtractionFailureLogContainsSafeDiagnostics(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	previousLogger := appLogger.Log
+	appLogger.Log = zap.New(core)
+	defer func() { appLogger.Log = previousLogger }()
+
+	quotationID, revisionID := uuid.New(), uuid.New()
+	raw := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[],"team":[],"issues":[],"readiness":"incomplete","secret":"CANARY-RAW-OUTPUT"}`
+	provider := &meetingProviderFake{result: GenerateResult{Text: raw}}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+	ctx := withMeetingExtractionLogContext(context.Background(), quotationID, revisionID)
+
+	_, err := service.Extract(ctx, uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.Error(t, err)
+	require.NotEmpty(t, logs.All())
+	entry := logs.All()[0]
+	fields := entry.ContextMap()
+	assert.Equal(t, quotationID.String(), fields["quotation_id"])
+	assert.Equal(t, revisionID.String(), fields["revision_id"])
+	assert.Equal(t, "mock", fields["provider"])
+	assert.Equal(t, "test", fields["model"])
+	assert.Equal(t, "struct_decode", fields["stage"])
+	assert.Equal(t, "unknown_field", fields["reason"])
+	assert.NotContains(t, entry.Message, "CANARY-RAW-OUTPUT")
+	assert.NotContains(t, fields, "cause")
 }
 
 func TestMeetingExtractionRetriesUnsupportedEvidenceWithCorrectionPrompt(t *testing.T) {
@@ -114,8 +206,21 @@ func TestMeetingExtractionRetriesMissingRequiredFieldWithSchemaCorrection(t *tes
 	assert.Contains(t, provider.requests[1].Prompt, "schema_version, meeting_notes, scope, team, issues, readiness")
 }
 
-func TestMeetingExtractionStopsAfterSecondInvalidOutput(t *testing.T) {
-	provider := &meetingProviderFake{results: []GenerateResult{{Text: "{"}, {Text: "{"}}}
+type cancellingProviderFake struct {
+	*meetingProviderFake
+	onGenerate func()
+}
+
+func (c *cancellingProviderFake) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+	res, err := c.meetingProviderFake.Generate(ctx, req)
+	if c.onGenerate != nil {
+		c.onGenerate()
+	}
+	return res, err
+}
+
+func TestMeetingExtractionStopsAfterThirdInvalidOutput(t *testing.T) {
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: "{"}, {Text: "{"}, {Text: "{"}}}
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
 
 	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
@@ -123,7 +228,196 @@ func TestMeetingExtractionStopsAfterSecondInvalidOutput(t *testing.T) {
 	var extractionErr *MeetingExtractionError
 	require.ErrorAs(t, err, &extractionErr)
 	assert.Equal(t, "malformed_json", extractionErr.Reason)
-	assert.Len(t, provider.requests, 2)
+	assert.Len(t, provider.requests, 3)
+}
+
+func TestMeetingExtractionSequenceMalformedEvidenceValid(t *testing.T) {
+	notes := "Bu Nadia dari PT Arunika butuh aplikasi inventory bernama Arunika Inventory. Ada stok gudang. Target tiga bulan, dua backend programmer intermediate. Pembayaran 50:50."
+	badEvidence := strings.Replace(meetingOutput(notes, "backend_programmer"), "tiga bulan", "enam bulan", 1)
+	validOutput := meetingOutput(notes, "backend_programmer")
+	provider := &meetingProviderFake{
+		results: []GenerateResult{
+			{Text: "{"},
+			{Text: badEvidence},
+			{Text: validOutput},
+		},
+	}
+	catalog, rateID := testCatalog()
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, catalog)
+	require.NoError(t, err)
+	require.Len(t, provider.requests, 3)
+
+	// Request 1: initial prompt, no correction
+	assert.NotContains(t, provider.requests[0].Prompt, "<validation_correction>")
+
+	// Request 2: correction JSON
+	assert.Contains(t, provider.requests[1].Prompt, "<validation_correction>")
+	assert.Contains(t, provider.requests[1].Prompt, "one complete JSON object")
+	assert.Contains(t, provider.requests[1].Prompt, "OUTPUT_SCHEMA")
+
+	// Request 3: correction evidence on final attempt
+	assert.Contains(t, provider.requests[2].Prompt, "<validation_correction>")
+	assert.Contains(t, provider.requests[2].Prompt, "duration_months")
+	assert.Contains(t, provider.requests[2].Prompt, "literal contiguous substring")
+	assert.Contains(t, provider.requests[2].Prompt, "Preserve only facts supported by a contiguous quotation")
+
+	// Final valid state
+	assert.Equal(t, domain.ReadinessPriceable, state.Readiness)
+	require.NotNil(t, state.Team[0].ResolvedRateItemID)
+	assert.Equal(t, rateID.String(), *state.Team[0].ResolvedRateItemID)
+}
+
+func TestMeetingExtractionMalformedRetryHasCorrection(t *testing.T) {
+	corrected := meetingExtractionRetryPrompt("base", "malformed_json", "")
+	assert.Contains(t, corrected, "one complete JSON object")
+	assert.Contains(t, corrected, "Do not use Markdown")
+	assert.Contains(t, corrected, "JSON types")
+}
+
+func TestMeetingExtractionRetryPromptAllCorrectionBranches(t *testing.T) {
+	t.Run("trailing_content", func(t *testing.T) {
+		corrected := meetingExtractionRetryPrompt("base", "trailing_content", "")
+		assert.Contains(t, corrected, "exactly one JSON object")
+		assert.Contains(t, corrected, "without trailing text")
+	})
+
+	t.Run("unknown_field", func(t *testing.T) {
+		corrected := meetingExtractionRetryPrompt("base", "unknown_field", "extra_prop")
+		assert.Contains(t, corrected, "fields declared in OUTPUT_SCHEMA")
+	})
+
+	t.Run("schema_version", func(t *testing.T) {
+		corrected := meetingExtractionRetryPrompt("base", "schema_version", "")
+		assert.Contains(t, corrected, "prompt_quotation_v1")
+	})
+
+	t.Run("state_validation", func(t *testing.T) {
+		corrected := meetingExtractionRetryPrompt("base", "state_validation", "")
+		assert.Contains(t, corrected, "failed state validation")
+	})
+
+	t.Run("unsupported_evidence earlier vs last attempt", func(t *testing.T) {
+		earlier := meetingExtractionRetryPromptWithAttempt("base", "unsupported_evidence", "scope", 1, 3)
+		assert.Contains(t, earlier, "literal contiguous substring")
+		assert.NotContains(t, earlier, "Preserve only facts supported by a contiguous quotation")
+
+		last := meetingExtractionRetryPromptWithAttempt("base", "unsupported_evidence", "scope", 2, 3)
+		assert.Contains(t, last, "literal contiguous substring")
+		assert.Contains(t, last, "Preserve only facts supported by a contiguous quotation")
+		assert.Contains(t, last, "Omit unsupported optional facts")
+	})
+}
+
+func TestMeetingExtractionScopeOnlyYieldsReadinessIncomplete(t *testing.T) {
+	notes := "Klien membutuhkan modul stok gudang."
+	scopeOnlyOutput := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"modul stok gudang","source":"meeting","evidence":"stok gudang","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+	provider := &meetingProviderFake{result: GenerateResult{Text: scopeOnlyOutput}}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.NoError(t, err)
+	assert.Equal(t, domain.ReadinessIncomplete, state.Readiness)
+	require.Len(t, state.Scope, 1)
+	assert.Equal(t, "modul stok gudang", state.Scope[0].Value)
+	assert.Equal(t, "stok gudang", state.Scope[0].Evidence)
+	assert.Contains(t, state.Issues, domain.DraftIssue{Code: "client_company.missing", Field: "client_company", Message: "client company is required and was not found in the meeting note", Severity: domain.IssueBlocking})
+	assert.Contains(t, state.Issues, domain.DraftIssue{Code: "team.empty", Field: "team", Message: "no team line was extracted from the meeting note", Severity: domain.IssueBlocking})
+}
+
+func TestMeetingExtractionAllEvidenceInvalidFailsAfterThreeAttempts(t *testing.T) {
+	notes := "Klien butuh sistem."
+	badOutput1 := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"sistem","source":"meeting","evidence":"bukan dalam teks 1","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+	badOutput2 := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"sistem","source":"meeting","evidence":"bukan dalam teks 2","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+	badOutput3 := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"sistem","source":"meeting","evidence":"bukan dalam teks 3","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+
+	provider := &meetingProviderFake{results: []GenerateResult{{Text: badOutput1}, {Text: badOutput2}, {Text: badOutput3}}}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.Error(t, err)
+	var extractionErr *MeetingExtractionError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "unsupported_evidence", extractionErr.Reason)
+	assert.Len(t, provider.requests, 3)
+	assert.Empty(t, state.Scope)
+}
+
+func TestMeetingExtractionTruncatedFinishReasonRetries(t *testing.T) {
+	notes := "stok gudang"
+	valid := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"stok gudang","source":"meeting","evidence":"stok gudang","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+	provider := &meetingProviderFake{
+		results: []GenerateResult{
+			{Text: `{"schema_version":`, FinishReason: "MAX_TOKENS"},
+			{Text: valid, FinishReason: "stop"},
+		},
+	}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.NoError(t, err)
+	assert.Len(t, state.Scope, 1)
+	require.Len(t, provider.requests, 2)
+	assert.Contains(t, provider.requests[1].Prompt, "one complete JSON object")
+}
+
+func TestMeetingExtractionEmptyOutputRetries(t *testing.T) {
+	notes := "stok gudang"
+	valid := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[{"value":"stok gudang","source":"meeting","evidence":"stok gudang","confirmed":false}],"team":[],"issues":[],"readiness":"incomplete"}`
+	provider := &meetingProviderFake{
+		results: []GenerateResult{
+			{Text: "   \n\t  ", FinishReason: "stop"},
+			{Text: valid, FinishReason: "stop"},
+		},
+	}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	state, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.NoError(t, err)
+	assert.Len(t, state.Scope, 1)
+	require.Len(t, provider.requests, 2)
+	assert.Contains(t, provider.requests[1].Prompt, "one complete JSON object")
+}
+
+func TestMeetingExtractionSafetyFinishReasonFailsImmediately(t *testing.T) {
+	notes := "stok gudang"
+	provider := &meetingProviderFake{
+		results: []GenerateResult{
+			{Text: "", FinishReason: "SAFETY"},
+		},
+	}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
+
+	_, err := service.Extract(context.Background(), uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: notes}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.Error(t, err)
+	var generationErr *GenerationError
+	require.ErrorAs(t, err, &generationErr)
+	assert.Equal(t, ErrCodeGenerationFailed, generationErr.Code)
+	assert.Len(t, provider.requests, 1)
+}
+
+func TestMeetingExtractionContextCancelledBetweenAttempts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &meetingProviderFake{
+		results: []GenerateResult{
+			{Text: "{"},
+		},
+	}
+	pWrapped := &cancellingProviderFake{
+		meetingProviderFake: provider,
+		onGenerate: func() {
+			cancel()
+		},
+	}
+	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: pWrapped})
+
+	_, err := service.Extract(ctx, uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
+	require.Error(t, err)
+	var generationErr *GenerationError
+	require.ErrorAs(t, err, &generationErr)
+	assert.Equal(t, ErrCodeGenerationFailed, generationErr.Code)
+	assert.Len(t, provider.requests, 1)
 }
 
 func TestMeetingExtractionMakesTargetedThirdAttemptForEvidence(t *testing.T) {

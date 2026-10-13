@@ -91,16 +91,24 @@ func ResolveRole(requested, seniority string, items []domain.RateCardItem) RoleR
 		Seniority: seniority,
 	}
 	requestedKey := catalogKey(requested)
+	normalizedRequested := normalizeRoleAlias(requestedKey)
 	seniorityKey := catalogKey(seniority)
-	if requestedKey == "programmer" {
+	if requestedKey == "programmer" || normalizedRequested == "programmer" {
 		return resolution
 	}
 	for i := range items {
 		item := items[i]
-		if catalogKey(item.Role) == "programmer" || catalogKey(item.DisplayName) == "programmer" {
+		itemRoleKey := catalogKey(item.Role)
+		itemDisplayKey := catalogKey(item.DisplayName)
+		if itemRoleKey == "programmer" || itemDisplayKey == "programmer" {
 			continue
 		}
-		if catalogKey(item.Role) != requestedKey && catalogKey(item.DisplayName) != requestedKey {
+		roleMatches := itemRoleKey == requestedKey ||
+			itemDisplayKey == requestedKey ||
+			normalizeRoleAlias(itemRoleKey) == normalizedRequested ||
+			normalizeRoleAlias(itemDisplayKey) == normalizedRequested
+
+		if !roleMatches {
 			continue
 		}
 		if seniorityKey != "" && catalogKey(item.Seniority) != seniorityKey {
@@ -117,8 +125,74 @@ func ResolveRole(requested, seniority string, items []domain.RateCardItem) RoleR
 	return resolution
 }
 
+func normalizeRoleAlias(key string) string {
+	switch key {
+	case "frontend developer", "front end developer", "fe developer", "fe programmer":
+		return "frontend programmer"
+	case "backend developer", "back end developer", "be developer", "be programmer":
+		return "backend programmer"
+	case "ui ux", "uiux", "ui ux designer", "ui designer", "ux designer", "ui/ux", "ui/ux designer":
+		return "ui ux designer"
+	case "fullstack programmer", "full stack programmer":
+		return "fullstack developer"
+	case "qa", "qa engineer", "tester", "quality assurance":
+		return "functional tester"
+	default:
+		return key
+	}
+}
+
+// DisambiguateRateCandidates resolves multiple candidates for a requested role
+// by matching seniority and term type based on duration/period.
+func DisambiguateRateCandidates(candidates []domain.RateCardItem, requestedSeniority string, periodQuarters int32, durationMonths *domain.Fact[int]) *domain.RateCardItem {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return &candidates[0]
+	}
+
+	// 1. Filter by seniority if specified or multiple seniorities exist in candidates
+	targetSeniority := catalogKey(requestedSeniority)
+	if targetSeniority == "" {
+		targetSeniority = "intermediate"
+	}
+	var seniorityMatches []domain.RateCardItem
+	for _, item := range candidates {
+		if catalogKey(item.Seniority) == targetSeniority {
+			seniorityMatches = append(seniorityMatches, item)
+		}
+	}
+	pool := seniorityMatches
+	if len(pool) == 0 {
+		pool = candidates
+	}
+	if len(pool) == 1 {
+		return &pool[0]
+	}
+
+	// 2. Disambiguate by term_type
+	targetTerm := "long_term"
+	if periodQuarters > 0 && periodQuarters < 12 {
+		targetTerm = "short_term"
+	} else if durationMonths != nil && durationMonths.Value > 0 && durationMonths.Value < 3 {
+		targetTerm = "short_term"
+	}
+
+	var termMatches []domain.RateCardItem
+	for _, item := range pool {
+		if strings.EqualFold(item.TermType, targetTerm) {
+			termMatches = append(termMatches, item)
+		}
+	}
+	if len(termMatches) >= 1 {
+		return &termMatches[0]
+	}
+	return &pool[0]
+}
+
 func catalogKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.NewReplacer("_", " ", "-", " ").Replace(value)
+	value = strings.NewReplacer("_", " ", "-", " ", "/", " ").Replace(value)
 	return strings.Join(strings.Fields(value), " ")
 }

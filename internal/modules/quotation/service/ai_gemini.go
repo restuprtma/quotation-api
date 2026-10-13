@@ -237,9 +237,11 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 
 	var response struct {
 		Candidates []struct {
-			Content struct {
+			FinishReason string `json:"finishReason"`
+			Content      struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
@@ -249,7 +251,17 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "invalid response format"}
 	}
 
-	return GenerateResult{Text: response.Candidates[0].Content.Parts[0].Text}, nil
+	var output strings.Builder
+	for _, part := range response.Candidates[0].Content.Parts {
+		if !part.Thought {
+			output.WriteString(part.Text)
+		}
+	}
+
+	return GenerateResult{
+		Text:         output.String(),
+		FinishReason: response.Candidates[0].FinishReason,
+	}, nil
 }
 
 func mapGeminiError(statusCode int) error {

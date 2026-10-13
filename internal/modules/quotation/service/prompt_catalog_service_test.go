@@ -130,3 +130,39 @@ func TestResolveRoleReportsAmbiguousCatalogMatches(t *testing.T) {
 	assert.Len(t, resolution.Candidates, 2)
 	assert.Nil(t, resolution.Item)
 }
+
+func TestResolveRoleSupportsCommonAliases(t *testing.T) {
+	items := []domain.RateCardItem{
+		{ID: uuid.New(), Role: "frontend_programmer", DisplayName: "Front End Programmer", Seniority: "intermediate"},
+		{ID: uuid.New(), Role: "backend_programmer", DisplayName: "Back End Programmer", Seniority: "senior"},
+		{ID: uuid.New(), Role: "ui_ux_designer", DisplayName: "UI/UX Designer", Seniority: "intermediate"},
+	}
+
+	assert.Equal(t, RoleResolved, ResolveRole("Frontend Developer", "intermediate", items).Status)
+	assert.Equal(t, RoleResolved, ResolveRole("backend developer", "senior", items).Status)
+	assert.Equal(t, RoleResolved, ResolveRole("UI/UX", "intermediate", items).Status)
+}
+
+func TestDisambiguateRateCandidatesByTermAndSeniority(t *testing.T) {
+	longTermID := uuid.New()
+	shortTermID := uuid.New()
+	items := []domain.RateCardItem{
+		{ID: longTermID, Role: "backend_programmer", Seniority: "senior", TermType: "long_term"},
+		{ID: shortTermID, Role: "backend_programmer", Seniority: "senior", TermType: "short_term"},
+	}
+
+	// 12 quarters (3 months) -> long_term
+	resolved := DisambiguateRateCandidates(items, "senior", 12, nil)
+	require.NotNil(t, resolved)
+	assert.Equal(t, longTermID, resolved.ID)
+
+	// 8 quarters (2 months) -> short_term
+	resolvedShort := DisambiguateRateCandidates(items, "senior", 8, nil)
+	require.NotNil(t, resolvedShort)
+	assert.Equal(t, shortTermID, resolvedShort.ID)
+
+	// Unspecified period defaults to long_term
+	resolvedDefault := DisambiguateRateCandidates(items, "senior", 0, nil)
+	require.NotNil(t, resolvedDefault)
+	assert.Equal(t, longTermID, resolvedDefault.ID)
+}

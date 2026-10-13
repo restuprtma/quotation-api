@@ -1,23 +1,25 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
 
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/pkg/logger"
 )
 
 const (
-	maxMeetingModelOutput                = 128 * 1024
-	maxMeetingExtractionAttempts         = 2
-	maxMeetingEvidenceExtractionAttempts = 3
+	maxMeetingModelOutput        = 128 * 1024
+	maxMeetingExtractionAttempts = 3
 )
 
 var (
@@ -30,6 +32,9 @@ var (
 type MeetingExtractionError struct {
 	Reason string
 	Field  string
+	Stage  string
+	Offset int64
+	Cause  error
 }
 
 // EvidenceViolation contains only an allow-listed, coarse field category.
@@ -69,6 +74,19 @@ type MeetingExtractionService struct {
 	providers ProviderSource
 }
 
+type meetingExtractionLogContextKey struct{}
+
+type meetingExtractionLogContext struct {
+	QuotationID string
+	RevisionID  string
+}
+
+func withMeetingExtractionLogContext(ctx context.Context, quotationID, revisionID uuid.UUID) context.Context {
+	return context.WithValue(ctx, meetingExtractionLogContextKey{}, meetingExtractionLogContext{
+		QuotationID: quotationID.String(), RevisionID: revisionID.String(),
+	})
+}
+
 func NewMeetingExtractionService(providers ProviderSource) *MeetingExtractionService {
 	return &MeetingExtractionService{providers: providers}
 }
@@ -88,7 +106,7 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 	if err != nil {
 		return domain.PromptQuotationState{}, ErrMeetingExtractionInvalidInput
 	}
-	provider, _, _, err := s.providers.ProviderForCompany(ctx, companyID)
+	provider, providerName, model, err := s.providers.ProviderForCompany(ctx, companyID)
 	if err != nil {
 		var generationErr *GenerationError
 		if errors.As(err, &generationErr) {
@@ -102,8 +120,12 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 
 	var state *domain.PromptQuotationState
 	attemptPrompt := prompt
-	maxAttempts := maxMeetingExtractionAttempts
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < maxMeetingExtractionAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return domain.PromptQuotationState{}, mapProviderError(err)
+		}
+
+		started := time.Now()
 		result, generateErr := provider.Generate(ctx, GenerateRequest{
 			Prompt: attemptPrompt, OutputMode: GenerateOutputJSON,
 		})
@@ -115,18 +137,37 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 			return domain.PromptQuotationState{}, mapProviderError(generateErr)
 		}
 
-		state, err = decodeMeetingExtraction(result.Text, notes)
+		if isSafetyFinishReason(result.FinishReason) {
+			logger.Warn("meeting extraction provider safety refusal",
+				logger.String("provider", providerName),
+				logger.String("model", model),
+				logger.String("finish_reason", result.FinishReason),
+			)
+			return domain.PromptQuotationState{}, newGenerationError(ErrCodeGenerationFailed, "AI provider rejected the request")
+		}
+
+		if isTruncatedFinishReason(result.FinishReason) {
+			err = newMeetingExtractionError("malformed_json", "envelope_decode", errors.New("output truncated by token limit"))
+		} else if strings.TrimSpace(result.Text) == "" {
+			err = newMeetingExtractionError("malformed_json", "envelope_decode", io.EOF)
+		} else {
+			state, err = decodeMeetingExtraction(result.Text, notes)
+		}
+
 		if err == nil {
 			break
 		}
 		var extractionErr *MeetingExtractionError
-		if !errors.As(err, &extractionErr) || attempt == maxAttempts-1 {
+		if errors.As(err, &extractionErr) {
+			logMeetingExtractionFailure(ctx, providerName, model, attempt+1, extractionErr, len(result.Text), time.Since(started))
+		}
+		if !errors.As(err, &extractionErr) || attempt == maxMeetingExtractionAttempts-1 {
 			return domain.PromptQuotationState{}, err
 		}
-		if extractionErr.Reason == "unsupported_evidence" {
-			maxAttempts = maxMeetingEvidenceExtractionAttempts
-		}
-		attemptPrompt = meetingExtractionRetryPrompt(prompt, extractionErr.Reason, extractionErr.Field)
+		attemptPrompt = meetingExtractionRetryPromptWithAttempt(prompt, extractionErr.Reason, extractionErr.Field, attempt+1, maxMeetingExtractionAttempts)
+	}
+	if state == nil {
+		return domain.PromptQuotationState{}, ErrMeetingExtractionInvalidOutput
 	}
 	resolveCatalog(state, catalog)
 	state.Issues = state.ComputeIssues()
@@ -137,7 +178,9 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 	}
 	state.Readiness = state.ComputeReadiness()
 	if err := state.Validate(); err != nil {
-		return domain.PromptQuotationState{}, &MeetingExtractionError{Reason: "state_validation"}
+		extractionErr := newMeetingExtractionError("state_validation", "schema_validation", err)
+		logMeetingExtractionFailure(ctx, providerName, model, maxMeetingExtractionAttempts, extractionErr, 0, 0)
+		return domain.PromptQuotationState{}, extractionErr
 	}
 	return *state, nil
 }
@@ -169,18 +212,59 @@ func buildMeetingExtractionPrompt(notes string, catalog CatalogContext) (string,
 	return prompt, nil
 }
 
+func isSafetyFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "safety", "safety_violation", "recitation", "blocklist", "prohibited_content", "spii", "content_filter", "refusal":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTruncatedFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "max_tokens", "length":
+		return true
+	default:
+		return false
+	}
+}
+
 func meetingExtractionRetryPrompt(prompt, reason, field string) string {
+	return meetingExtractionRetryPromptWithAttempt(prompt, reason, field, 0, maxMeetingExtractionAttempts)
+}
+
+func meetingExtractionRetryPromptWithAttempt(prompt, reason, field string, attempt, maxAttempts int) string {
 	var correction string
 	switch reason {
+	case "malformed_json":
+		correction = "Return one complete JSON object matching OUTPUT_SCHEMA. " +
+			"Do not use Markdown, prose, or comments. Match the declared JSON types; " +
+			"numbers must not be quoted. Keep evidence short and copied from MEETING_NOTES. " +
+			"Use empty arrays for unavailable collections and omit unavailable optional facts."
+	case "trailing_content":
+		correction = "Return exactly one JSON object matching OUTPUT_SCHEMA without trailing text, commentary, or multiple documents. Stop output immediately after closing the root JSON object."
+	case "unknown_field":
+		correction = "Return only fields declared in OUTPUT_SCHEMA. Do not include unknown or undeclared fields. Strictly adhere to the schema definitions."
+	case "schema_version":
+		correction = "The schema_version field must be set exactly to \"prompt_quotation_v1\". Return one complete JSON object matching OUTPUT_SCHEMA."
+	case "state_validation":
+		correction = "The previous JSON response failed state validation. Regenerate a complete JSON object matching OUTPUT_SCHEMA and domain constraints without inventing unsupported values."
+	case "missing_required_field":
+		correction = "The previous response was rejected because it has missing required fields. " +
+			"Return all of these fields and never use null: schema_version, meeting_notes, scope, team, issues, readiness. " +
+			"Use empty arrays [] for scope, team, or issues when no value is available."
 	case "unsupported_evidence":
 		correction = "The previous JSON response was rejected because the meeting evidence for " + field +
 			" was not a literal substring of MEETING_NOTES. Regenerate the complete JSON object. " +
 			"For every source meeting fact, copy evidence as a non-empty literal contiguous substring (a contiguous literal substring) from MEETING_NOTES; " +
 			"do not paraphrase, summarize, translate, or combine separate bullets. Omit a fact that cannot be supported."
-	case "missing_required_field":
-		correction = "The previous response was rejected because it has missing required fields. " +
-			"Return all of these fields and never use null: schema_version, meeting_notes, scope, team, issues, readiness. " +
-			"Use empty arrays [] for scope, team, or issues when no value is available."
+		if attempt >= maxAttempts-1 {
+			correction += " Preserve only facts supported by a contiguous quotation from MEETING_NOTES. " +
+				"Omit unsupported optional facts. Return empty arrays for unsupported collections. " +
+				"Do not guess missing duration, headcount, role IDs, or monetary values. " +
+				"Return a complete schema-valid object; the application determines readiness."
+		}
 	default:
 		return prompt
 	}
@@ -190,25 +274,28 @@ func meetingExtractionRetryPrompt(prompt, reason, field string) string {
 }
 
 func decodeMeetingExtraction(raw, notes string) (*domain.PromptQuotationState, error) {
-	invalid := func(reason string) (*domain.PromptQuotationState, error) {
-		return nil, &MeetingExtractionError{Reason: reason}
+	invalid := func(reason, stage string, cause error) (*domain.PromptQuotationState, error) {
+		return nil, newMeetingExtractionError(reason, stage, cause)
 	}
 	if len(raw) > maxMeetingModelOutput {
-		return invalid("malformed_json")
+		return invalid("malformed_json", "output_size", nil)
 	}
 	var envelope map[string]json.RawMessage
 	envelopeDecoder := json.NewDecoder(strings.NewReader(raw))
 	if err := envelopeDecoder.Decode(&envelope); err != nil {
-		return invalid("malformed_json")
+		return invalid("malformed_json", "envelope_decode", err)
+	}
+	if envelope == nil {
+		return invalid("malformed_json", "envelope_decode", errors.New("JSON root must be an object"))
 	}
 	var envelopeExtra any
 	if err := envelopeDecoder.Decode(&envelopeExtra); !errors.Is(err, io.EOF) {
-		return invalid("trailing_content")
+		return invalid("trailing_content", "envelope_decode", err)
 	}
 	for _, key := range []string{"schema_version", "meeting_notes", "scope", "team", "issues", "readiness"} {
 		value, ok := envelope[key]
 		if !ok || string(value) == "null" {
-			return invalid("missing_required_field")
+			return invalid("missing_required_field", "schema_validation", nil)
 		}
 	}
 	dec := json.NewDecoder(io.LimitReader(strings.NewReader(raw), maxMeetingModelOutput+1))
@@ -216,26 +303,58 @@ func decodeMeetingExtraction(raw, notes string) (*domain.PromptQuotationState, e
 	var state domain.PromptQuotationState
 	if err := dec.Decode(&state); err != nil {
 		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			return invalid("unknown_field")
+			return invalid("unknown_field", "struct_decode", err)
 		}
-		return invalid("malformed_json")
+		return invalid("malformed_json", "struct_decode", err)
 	}
 	var extra any
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return invalid("trailing_content")
+		return invalid("trailing_content", "struct_decode", err)
 	}
 	state.MeetingNotes = notes
 	normalizeState(&state)
 	if state.SchemaVersion != domain.SchemaPromptQuotationV1 {
-		return invalid("schema_version")
+		return invalid("schema_version", "schema_validation", nil)
+	}
+	if err := validateServiceInputStructure(&state); err != nil {
+		return invalid("state_validation", "schema_validation", err)
 	}
 	if violation := firstEvidenceViolation(&state, notes); violation != nil {
-		return nil, &MeetingExtractionError{Reason: "unsupported_evidence", Field: violation.Field}
+		return nil, &MeetingExtractionError{Reason: "unsupported_evidence", Field: violation.Field, Stage: "evidence_validation"}
 	}
 	if err := state.Validate(); err != nil {
-		return invalid("state_validation")
+		return invalid("state_validation", "schema_validation", err)
 	}
 	return &state, nil
+}
+
+func newMeetingExtractionError(reason, stage string, cause error) *MeetingExtractionError {
+	extractionErr := &MeetingExtractionError{Reason: reason, Stage: stage, Cause: cause}
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	switch {
+	case errors.As(cause, &syntaxErr):
+		extractionErr.Offset = syntaxErr.Offset
+	case errors.As(cause, &typeErr):
+		extractionErr.Offset = typeErr.Offset
+	}
+	return extractionErr
+}
+
+func logMeetingExtractionFailure(ctx context.Context, providerName, model string, attempt int, extractionErr *MeetingExtractionError, outputBytes int, elapsed time.Duration) {
+	metadata, _ := ctx.Value(meetingExtractionLogContextKey{}).(meetingExtractionLogContext)
+	logger.Warn("meeting extraction validation failed",
+		logger.String("quotation_id", metadata.QuotationID),
+		logger.String("revision_id", metadata.RevisionID),
+		logger.String("provider", providerName),
+		logger.String("model", model),
+		logger.Int("attempt", attempt),
+		logger.String("stage", extractionErr.Stage),
+		logger.String("reason", extractionErr.Reason),
+		logger.Int64("offset", extractionErr.Offset),
+		logger.Int("output_bytes", outputBytes),
+		logger.Any("elapsed", elapsed),
+	)
 }
 
 func normalizeState(state *domain.PromptQuotationState) {
@@ -330,54 +449,83 @@ func firstEvidenceViolation(state *domain.PromptQuotationState, notes string) *E
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeSubscriptionSaaS {
-		input, err := DecodePromptSubscriptionSaaSServiceInput(state.ServiceInput)
-		if err != nil || !subscriptionFactsAreInNotes(input, check) {
-			return &EvidenceViolation{Field: "service_input"}
+		if input, err := DecodePromptSubscriptionSaaSServiceInput(state.ServiceInput); err == nil {
+			if !subscriptionFactsAreInNotes(input, check) {
+				return &EvidenceViolation{Field: "service_input"}
+			}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeWhiteLabel {
-		input, err := DecodePromptWhiteLabelServiceInput(state.ServiceInput)
-		if err != nil || !whiteLabelFactsAreInNotes(input, check) {
-			return &EvidenceViolation{Field: "service_input"}
+		if input, err := DecodePromptWhiteLabelServiceInput(state.ServiceInput); err == nil {
+			if !whiteLabelFactsAreInNotes(input, check) {
+				return &EvidenceViolation{Field: "service_input"}
+			}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeStandaloneMaintenance {
-		input, err := DecodePromptStandaloneMaintenanceServiceInput(state.ServiceInput)
-		if err != nil || !standaloneMaintenanceFactsAreInNotes(input, check) {
-			return &EvidenceViolation{Field: "service_input"}
+		if input, err := DecodePromptStandaloneMaintenanceServiceInput(state.ServiceInput); err == nil {
+			if !standaloneMaintenanceFactsAreInNotes(input, check) {
+				return &EvidenceViolation{Field: "service_input"}
+			}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeCustomDevelopment {
-		input, err := DecodePromptCustomDevelopmentServiceInput(state.ServiceInput)
-		if err != nil || !customDevelopmentFactsAreInNotes(input, check) {
-			return &EvidenceViolation{Field: "service_input"}
+		if input, err := DecodePromptCustomDevelopmentServiceInput(state.ServiceInput); err == nil {
+			if !customDevelopmentFactsAreInNotes(input, check) {
+				return &EvidenceViolation{Field: "service_input"}
+			}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeTalentOutsourcing {
-		input, err := DecodePromptTalentOutsourcingServiceInput(state.ServiceInput)
-		if err != nil || !talentOutsourcingFactsAreInNotes(input, check) {
-			return &EvidenceViolation{Field: "service_input"}
+		if input, err := DecodePromptTalentOutsourcingServiceInput(state.ServiceInput); err == nil {
+			if !talentOutsourcingFactsAreInNotes(input, check) {
+				return &EvidenceViolation{Field: "service_input"}
+			}
 		}
 	}
 	if state.CommercialScheme != nil && state.CommercialScheme.Value == domain.CommercialSchemeCloudInfrastructure {
-		input, err := DecodePromptCloudInfrastructureServiceInput(state.ServiceInput)
-		if err != nil || !cloudInfrastructureFactsAreInNotes(input, check) {
-			return &EvidenceViolation{Field: "service_input"}
+		if input, err := DecodePromptCloudInfrastructureServiceInput(state.ServiceInput); err == nil {
+			if !cloudInfrastructureFactsAreInNotes(input, check) {
+				return &EvidenceViolation{Field: "service_input"}
+			}
 		}
 	}
 	return violation
+}
+
+func validateServiceInputStructure(state *domain.PromptQuotationState) error {
+	if state == nil || state.CommercialScheme == nil || len(bytes.TrimSpace(state.ServiceInput)) == 0 || string(bytes.TrimSpace(state.ServiceInput)) == "null" {
+		return nil
+	}
+	switch state.CommercialScheme.Value {
+	case domain.CommercialSchemeSubscriptionSaaS:
+		_, err := DecodePromptSubscriptionSaaSServiceInput(state.ServiceInput)
+		return err
+	case domain.CommercialSchemeWhiteLabel:
+		_, err := DecodePromptWhiteLabelServiceInput(state.ServiceInput)
+		return err
+	case domain.CommercialSchemeStandaloneMaintenance:
+		_, err := DecodePromptStandaloneMaintenanceServiceInput(state.ServiceInput)
+		return err
+	case domain.CommercialSchemeCustomDevelopment:
+		_, err := DecodePromptCustomDevelopmentServiceInput(state.ServiceInput)
+		return err
+	case domain.CommercialSchemeTalentOutsourcing:
+		_, err := DecodePromptTalentOutsourcingServiceInput(state.ServiceInput)
+		return err
+	case domain.CommercialSchemeCloudInfrastructure:
+		_, err := DecodePromptCloudInfrastructureServiceInput(state.ServiceInput)
+		return err
+	default:
+		return nil
+	}
 }
 
 func talentOutsourcingFactsAreInNotes(in PromptTalentOutsourcingServiceInput, evidenceCheck func(string, domain.ValueSource, string) bool) bool {
 	check := func(source domain.ValueSource, evidence string) bool {
 		return evidenceCheck("service_input", source, evidence)
 	}
-	if !check(in.EngagementMode.Source, in.EngagementMode.Evidence) ||
-		!check(in.DocumentNumber.Source, in.DocumentNumber.Evidence) ||
-		!check(in.ServiceName.Source, in.ServiceName.Evidence) ||
-		!check(in.TaxTreatment.Source, in.TaxTreatment.Evidence) ||
-		!check(in.ShowPreparationDiscountRow.Source, in.ShowPreparationDiscountRow.Evidence) ||
-		!check(in.PaymentDueDays.Source, in.PaymentDueDays.Evidence) {
+	if !check(in.ServiceName.Source, in.ServiceName.Evidence) {
 		return false
 	}
 	for _, g := range in.CostGroups {
@@ -436,21 +584,6 @@ func talentOutsourcingFactsAreInNotes(in PromptTalentOutsourcingServiceInput, ev
 			return false
 		}
 	}
-	for _, f := range in.AdditionalLimitations {
-		if !check(f.Source, f.Evidence) {
-			return false
-		}
-	}
-	for _, f := range in.WarrantyStatements {
-		if !check(f.Source, f.Evidence) {
-			return false
-		}
-	}
-	for _, f := range in.RightsStatements {
-		if !check(f.Source, f.Evidence) {
-			return false
-		}
-	}
 	return true
 }
 
@@ -458,10 +591,7 @@ func cloudInfrastructureFactsAreInNotes(in PromptCloudInfrastructureServiceInput
 	check := func(source domain.ValueSource, evidence string) bool {
 		return evidenceCheck("service_input", source, evidence)
 	}
-	if !check(in.DocumentNumber.Source, in.DocumentNumber.Evidence) ||
-		!check(in.ServiceName.Source, in.ServiceName.Evidence) ||
-		!check(in.TaxTreatment.Source, in.TaxTreatment.Evidence) ||
-		!check(in.PaymentDueDays.Source, in.PaymentDueDays.Evidence) {
+	if !check(in.ServiceName.Source, in.ServiceName.Evidence) {
 		return false
 	}
 	for _, item := range in.PackageItems {
@@ -501,16 +631,6 @@ func cloudInfrastructureFactsAreInNotes(in PromptCloudInfrastructureServiceInput
 			return false
 		}
 	}
-	for _, c := range in.LimitationCodes {
-		if !check(c.Source, c.Evidence) {
-			return false
-		}
-	}
-	for _, a := range in.AdditionalLimitations {
-		if !check(a.Source, a.Evidence) {
-			return false
-		}
-	}
 	return true
 }
 
@@ -538,6 +658,11 @@ func resolveCatalog(state *domain.PromptQuotationState, catalog CatalogContext) 
 		if resolution.Status == RoleResolved {
 			id := resolution.Item.ID.String()
 			state.Team[i].ResolvedRateItemID = &id
+		} else if resolution.Status == RoleAmbiguous {
+			if matched := DisambiguateRateCandidates(resolution.Candidates, state.Team[i].Seniority, state.Team[i].PeriodQuarters, state.DurationMonths); matched != nil {
+				id := matched.ID.String()
+				state.Team[i].ResolvedRateItemID = &id
+			}
 		}
 	}
 }
@@ -547,9 +672,7 @@ func subscriptionFactsAreInNotes(input PromptSubscriptionSaaSServiceInput, evide
 		return evidenceCheck("service_input", source, evidence)
 	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
-	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
-	boolean := func(f domain.Fact[bool]) bool { return check(f.Source, f.Evidence) }
-	if !text(input.ProductName) || !text(input.SectionLayout) || !text(input.BillingCycle) || !text(input.TaxTreatment) || !integer(input.InitialTermMonths) || !boolean(input.AutoRenewal) || !text(input.RightsClauseCode) || !boolean(input.IsPartnership) {
+	if !text(input.ProductName) {
 		return false
 	}
 	for _, period := range input.PricePeriods {
@@ -579,7 +702,7 @@ func subscriptionFactsAreInNotes(input PromptSubscriptionSaaSServiceInput, evide
 	}
 	if input.IncomeSharing != nil {
 		sharing := input.IncomeSharing
-		return integer(sharing.VenturoShareBPS) && integer(sharing.PartnerShareBPS) && text(sharing.EligibleRevenueDescription) && integer(sharing.SettlementBusinessDays) && boolean(sharing.ProhibitUnilateralDiscount)
+		return text(sharing.EligibleRevenueDescription)
 	}
 	return true
 }
@@ -590,7 +713,7 @@ func whiteLabelFactsAreInNotes(input PromptWhiteLabelServiceInput, evidenceCheck
 	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
-	if !text(input.ProductName) || !text(input.TaxTreatment) {
+	if !text(input.ProductName) {
 		return false
 	}
 	for _, item := range input.LicenseItems {
@@ -628,16 +751,6 @@ func whiteLabelFactsAreInNotes(input PromptWhiteLabelServiceInput, evidenceCheck
 			return false
 		}
 	}
-	for _, statement := range input.RightsStatements {
-		if !text(statement) {
-			return false
-		}
-	}
-	for _, code := range input.LimitationCodes {
-		if !text(code) {
-			return false
-		}
-	}
 	return true
 }
 
@@ -647,7 +760,7 @@ func standaloneMaintenanceFactsAreInNotes(input PromptStandaloneMaintenanceServi
 	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
-	if !text(input.SystemName) || !text(input.Mode) || !text(input.TaxTreatment) {
+	if !text(input.SystemName) {
 		return false
 	}
 	for _, item := range input.RetainerItems {
@@ -683,11 +796,6 @@ func standaloneMaintenanceFactsAreInNotes(input PromptStandaloneMaintenanceServi
 			return false
 		}
 	}
-	for _, statement := range input.RightsStatements {
-		if !text(statement) {
-			return false
-		}
-	}
 	return true
 }
 
@@ -697,10 +805,7 @@ func customDevelopmentFactsAreInNotes(input PromptCustomDevelopmentServiceInput,
 	}
 	text := func(f domain.Fact[string]) bool { return check(f.Source, f.Evidence) }
 	integer := func(f domain.Fact[int]) bool { return check(f.Source, f.Evidence) }
-	if !text(input.SystemName) || !text(input.DevelopmentTableMode) || !text(input.TaxTreatment) {
-		return false
-	}
-	if input.DiscountLabel != nil && !text(*input.DiscountLabel) {
+	if !text(input.SystemName) {
 		return false
 	}
 	for _, group := range input.DevelopmentGroups {
@@ -743,21 +848,6 @@ func customDevelopmentFactsAreInNotes(input PromptCustomDevelopmentServiceInput,
 	}
 	for _, row := range input.PaymentSchedule {
 		if !text(row.WorkPeriod) || !text(row.Terms) || !text(row.InvoiceDateLabel) || !text(row.DueDateLabel) {
-			return false
-		}
-	}
-	for _, statement := range input.RightsStatements {
-		if !text(statement) {
-			return false
-		}
-	}
-	for _, code := range input.LimitationCodes {
-		if !text(code) {
-			return false
-		}
-	}
-	for _, add := range input.AdditionalLimitations {
-		if !text(add) {
 			return false
 		}
 	}

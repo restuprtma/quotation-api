@@ -201,6 +201,27 @@ func TestProcessMeetingDraft_TimeoutMarksSameDraftFailed(t *testing.T) {
 	assert.Equal(t, pending.QuotationID, repo.claim.QuotationID)
 }
 
+func TestProcessMeetingDraft_InvalidStoredInputDoesNotCallProvider(t *testing.T) {
+	companyID, quotationID, revisionID := uuid.New(), uuid.New(), uuid.New()
+	repo := &promptRepoStub{claim: &repository.PromptDraftClaim{
+		QuotationID: quotationID, RevisionID: revisionID, QuotationNumber: "Q-2026-001",
+		GenerationInput: json.RawMessage(`{"meeting_notes":7}`),
+	}}
+	extractor := &countingPromptExtractor{}
+	svc := NewPromptDraftService(repo, nil, extractor, nil, nil, nil)
+
+	_, err := svc.ProcessMeetingDraft(context.Background(), companyID, quotationID)
+	require.Error(t, err)
+	assert.Zero(t, extractor.calls)
+	assert.Equal(t, "invalid_extraction.malformed_json", repo.failureCode)
+	var extractionErr *MeetingExtractionError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "stored_input_decode", extractionErr.Stage)
+	var typeErr *json.UnmarshalTypeError
+	require.ErrorAs(t, extractionErr.Cause, &typeErr)
+	assert.Equal(t, "meeting_notes", typeErr.Field)
+}
+
 func TestProcessMeetingDraft_RetryCompletesOriginalDraft(t *testing.T) {
 	companyID := uuid.New()
 	repo := &promptRepoStub{clientName: "PT Arunika"}
@@ -320,6 +341,29 @@ func TestPromptDraftService_PriceableDraftIncludesBackendCalculation(t *testing.
 	require.NotEmpty(t, result.Calculation)
 	require.Contains(t, result.ContentHTML, "data-quotation-section=\"commercial\"")
 	require.Equal(t, []dto.PromptCatalogRole{{RateItemID: itemID, Role: item.Role, DisplayName: item.DisplayName, Seniority: item.Seniority, TermType: item.TermType}}, result.CatalogRoles)
+}
+
+func TestPromptDraftService_ResolvesUnresolvedRoleFromCatalogWithMultipleTerms(t *testing.T) {
+	cardID, longID, shortID := uuid.New(), uuid.New(), uuid.New()
+	card := &domain.RateCard{ID: cardID, Code: domain.DefaultPromptRateCardCode, Name: "Venturo Standard", Currency: "IDR"}
+	items := []domain.RateCardItem{
+		{ID: longID, RateCardID: cardID, Role: "frontend_programmer", DisplayName: "Frontend Programmer", Seniority: "intermediate", TermType: "long_term", AmountPerMonth: 10_000_000},
+		{ID: shortID, RateCardID: cardID, Role: "frontend_programmer", DisplayName: "Frontend Programmer", Seniority: "intermediate", TermType: "short_term", AmountPerMonth: 14_000_000},
+	}
+	// State has line with ResolvedRateItemID = nil (as would happen before disambiguation)
+	state := completePromptTestState("")
+	state.Team[0].RequestedRole = "frontend_programmer"
+	state.Team[0].ResolvedRateItemID = nil
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+	svc := NewPromptDraftService(repo, promptCatalogStub{card: card, items: items}, promptExtractorStub{state: state}, promptCalculatorStub{}, promptRendererStub{}, nil)
+
+	result, err := svc.CreateFromMeeting(context.Background(), uuid.New(), nil, dto.CreateFromMeetingRequest{
+		ClientName: stringPtr("PT Arunika"), MeetingNotes: state.MeetingNotes, IdempotencyKey: uuid.New().String(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.ReadinessPriceable, result.Readiness)
+	require.NotEmpty(t, result.Calculation)
+	require.Equal(t, longID.String(), *result.PromptState.Team[0].ResolvedRateItemID)
 }
 
 func TestPromptFirstSanitizerPreservesSectionMarkers(t *testing.T) {
@@ -528,4 +572,35 @@ func TestPromptDraftService_PreservesSafeExtractionReason(t *testing.T) {
 		require.ErrorAs(t, err, &safe)
 		assert.Equal(t, ErrCodeProviderTimeout, safe.SafeCode())
 	})
+}
+
+func TestPromptDraftService_CompleteIncompleteDraftScopeOnly(t *testing.T) {
+	companyID := uuid.New()
+	notes := "Klien membutuhkan modul stok gudang."
+	scopeState := domain.PromptQuotationState{
+		SchemaVersion: domain.SchemaPromptQuotationV1,
+		MeetingNotes:  notes,
+		Scope: []domain.Fact[string]{
+			{Value: "modul stok gudang", Source: domain.SourceMeeting, Evidence: "stok gudang", Confirmed: false},
+		},
+		Team:      []domain.PromptTeamLine{},
+		Issues:    []domain.DraftIssue{},
+		Readiness: domain.ReadinessIncomplete,
+	}
+
+	repo := &promptRepoStub{clientName: "PT Stok Mas"}
+	extractor := promptExtractorStub{state: scopeState}
+	svc := NewPromptDraftService(repo, nil, extractor, promptCalculatorStub{}, promptRendererStub{}, NewHTMLSanitizer())
+
+	resp, err := svc.CreateFromMeeting(context.Background(), companyID, nil, dto.CreateFromMeetingRequest{
+		ClientCompanyName: stringPtr("PT Stok Mas"),
+		MeetingNotes:      notes,
+		IdempotencyKey:    uuid.New().String(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, domain.ReadinessIncomplete, resp.Readiness)
+	assert.Equal(t, repo.draft.QuotationID, resp.QuotationID)
+	assert.Equal(t, 1, repo.completeDraftCalls)
+	assert.Nil(t, repo.record.Calculation)
 }
