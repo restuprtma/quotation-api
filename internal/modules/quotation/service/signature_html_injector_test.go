@@ -72,6 +72,19 @@ func TestSignatureHTMLInjector_InjectClientSignature(t *testing.T) {
 	assert.NotContains(t, resEmpty, `<img`)
 }
 
+func TestSignatureHTMLInjector_InjectClientSignature_SymmetricContainer(t *testing.T) {
+	inputHTML := `<td><p>Disetujui Oleh,</p><br><br><p><strong>Bapak Reza</strong></p></td>`
+	clientSig := "data:image/png;base64,client456"
+
+	result := service.InjectClientSignature(inputHTML, clientSig)
+	assert.Contains(t, result, `class="client-signature-box"`)
+	assert.Contains(t, result, `height: 110px`)
+	assert.Contains(t, result, `align-items: flex-end`)
+	assert.Contains(t, result, `class="client-signature-img"`)
+	assert.Contains(t, result, `max-width: 180px`)
+	assert.Contains(t, result, `src="data:image/png;base64,client456"`)
+}
+
 func TestFormatIndonesianDate(t *testing.T) {
 	d := time.Date(2026, 10, 13, 15, 30, 0, 0, time.UTC)
 	assert.Equal(t, "13 Oktober 2026", service.FormatIndonesianDate(d))
