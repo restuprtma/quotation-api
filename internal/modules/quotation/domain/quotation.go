@@ -93,6 +93,9 @@ type QuotationRevision struct {
 	SignedIP          *string    `json:"signed_ip" db:"signed_ip"`
 	SignedUserAgent   *string    `json:"signed_user_agent" db:"signed_user_agent"`
 
+	DirectorSignatureSnapshot *string `json:"director_signature_snapshot,omitempty" db:"director_signature_snapshot"`
+	DirectorStampSnapshot     *string `json:"director_stamp_snapshot,omitempty" db:"director_stamp_snapshot"`
+
 	CreatedBy *uuid.UUID `json:"created_by" db:"created_by"`
 	CreatedAt time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at" db:"updated_at"`
