@@ -73,4 +73,38 @@ func TestPublicQuotationHandler_Sign(t *testing.T) {
 
 		assert.Equal(t, http.StatusConflict, w.Code)
 	})
+
+	t.Run("streamlined sign without signer name and email returns 200", func(t *testing.T) {
+		signer := "PT Client Corp"
+		now := time.Now().UTC()
+		var receivedReq dto.SignPublicQuotationRequest
+		mockSvc := &mockPublicQuotationService{
+			signPublicQuotationFunc: func(ctx context.Context, publicToken string, req dto.SignPublicQuotationRequest, ip, userAgent string) (*dto.PublicQuotationResponse, error) {
+				receivedReq = req
+				return &dto.PublicQuotationResponse{
+					QuotationNumber: "Q-001",
+					RevisionNumber:  1,
+					Signed:          true,
+					SignerName:      &signer,
+					SignedAt:        &now,
+				}, nil
+			},
+		}
+		r := setupPublicTestRouter(mockSvc)
+		w := httptest.NewRecorder()
+
+		body, _ := json.Marshal(dto.SignPublicQuotationRequest{
+			SignatureData: validDataUrl,
+			Consent:       true,
+		})
+		req, _ := http.NewRequest(http.MethodPost, "/p/q/"+token+"/sign", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, receivedReq.SignerName)
+		assert.Empty(t, receivedReq.SignerEmail)
+		assert.Equal(t, validDataUrl, receivedReq.SignatureData)
+		assert.True(t, receivedReq.Consent)
+	})
 }

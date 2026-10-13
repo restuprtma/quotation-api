@@ -61,6 +61,13 @@ func ValidateSignaturePayload(name, email, signatureData string, consent bool) e
 	return nil
 }
 
+func ValidateSignaturePayloadStreamlined(signatureData string, consent bool) error {
+	if !consent {
+		return ErrConsentRequired
+	}
+	return ValidatePNGDataURL(signatureData, false)
+}
+
 func ComputeContentHash(contentHTML string) string {
 	sum := sha256.Sum256([]byte(contentHTML))
 	return hex.EncodeToString(sum[:])
@@ -125,7 +132,7 @@ func (s *Service) SignPublicQuotation(ctx context.Context, publicToken string, r
 		return nil, ErrPublicQuotationNotFound
 	}
 
-	if err := ValidateSignaturePayload(req.SignerName, req.SignerEmail, req.SignatureData, req.Consent); err != nil {
+	if err := ValidateSignaturePayloadStreamlined(req.SignatureData, req.Consent); err != nil {
 		return nil, err
 	}
 

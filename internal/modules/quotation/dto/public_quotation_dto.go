@@ -19,8 +19,8 @@ type PublicQuotationResponse struct {
 }
 
 type SignPublicQuotationRequest struct {
-	SignerName    string `json:"signer_name"`
-	SignerEmail   string `json:"signer_email"`
+	SignerName    string `json:"signer_name,omitempty"`
+	SignerEmail   string `json:"signer_email,omitempty"`
 	SignatureData string `json:"signature_data"`
 	Consent       bool   `json:"consent"`
 }

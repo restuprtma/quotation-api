@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,14 +115,22 @@ func (r *Repository) LockAndSignQuotationTx(
 	var contentHTML *string
 	var publishedAt *time.Time
 	var existingSignedAt *time.Time
+	var picName string
 
 	queryLockRev := `
-		SELECT id, revision_number, content_html, published_at, signed_at
+		SELECT id, revision_number, content_html, published_at, signed_at,
+		       COALESCE(
+		           prompt_state->'pic_name'->>'value',
+		           prompt_state->'client_name'->>'value',
+		           generation_input->>'pic_name',
+		           generation_input->>'client_name',
+		           ''
+		       )
 		FROM quotation_revisions
 		WHERE id = $1 AND quotation_id = $2 AND publication_status = 'published'
 		FOR UPDATE
 	`
-	err = tx.QueryRow(ctx, queryLockRev, *activeRevID, qID).Scan(&revID, &revNum, &contentHTML, &publishedAt, &existingSignedAt)
+	err = tx.QueryRow(ctx, queryLockRev, *activeRevID, qID).Scan(&revID, &revNum, &contentHTML, &publishedAt, &existingSignedAt, &picName)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrNotFound
@@ -134,30 +143,53 @@ func (r *Repository) LockAndSignQuotationTx(
 		return nil, nil, ErrAlreadySigned
 	}
 
-	// 3. Compute exact SHA-256 hash of content_html
+	// Fetch client display name
+	var clientName string
+	queryClient := `
+		SELECT COALESCE(qco.name, legacy_client.name, '')
+		FROM quotations q
+		LEFT JOIN quotation_client_organizations qco 
+		  ON qco.company_id = q.company_id AND qco.id = q.client_id AND qco.deleted_at IS NULL
+		LEFT JOIN core.clients legacy_client 
+		  ON legacy_client.id = q.client_id
+		WHERE q.id = $1
+	`
+	_ = tx.QueryRow(ctx, queryClient, qID).Scan(&clientName)
+
+	if strings.TrimSpace(signerName) == "" {
+		if strings.TrimSpace(picName) != "" {
+			signerName = strings.TrimSpace(picName)
+		} else if strings.TrimSpace(clientName) != "" {
+			signerName = strings.TrimSpace(clientName)
+		}
+	}
+
+	// 3. Inject client signature and compute exact SHA-256 hash of updated content_html
 	htmlStr := ""
 	if contentHTML != nil {
 		htmlStr = *contentHTML
 	}
-	hashSum := sha256.Sum256([]byte(htmlStr))
+	updatedHTML := domain.InjectClientSignature(htmlStr, signatureData)
+	hashSum := sha256.Sum256([]byte(updatedHTML))
 	contentHash := hex.EncodeToString(hashSum[:])
 
 	now := time.Now().UTC()
 
-	// 4. Update revision with signature metadata
+	// 4. Update revision with signature metadata and mutated content_html
 	updateRevQuery := `
 		UPDATE quotation_revisions
-		SET signer_name = $1,
-		    signer_email = $2,
-		    signature_data = $3,
-		    signed_content_hash = $4,
-		    signed_at = $5,
-		    signed_ip = $6,
-		    signed_user_agent = $7,
-		    updated_at = $5
-		WHERE id = $8 AND signed_at IS NULL
+		SET content_html = $1,
+		    signature_data = $2,
+		    signed_content_hash = $3,
+		    signed_at = $4,
+		    signed_ip = $5,
+		    signed_user_agent = $6,
+		    updated_at = $4,
+		    signer_name = $7,
+		    signer_email = $8
+		WHERE id = $9 AND signed_at IS NULL
 	`
-	res, err := tx.Exec(ctx, updateRevQuery, signerName, signerEmail, signatureData, contentHash, now, ip, userAgent, revID)
+	res, err := tx.Exec(ctx, updateRevQuery, updatedHTML, signatureData, contentHash, now, ip, userAgent, signerName, signerEmail, revID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -175,17 +207,6 @@ func (r *Repository) LockAndSignQuotationTx(
 		return nil, nil, err
 	}
 
-	// 6. Fetch client display name
-	var clientName string
-	queryClient := `
-		SELECT COALESCE(qco.name, legacy_client.name, '')
-		FROM core.clients legacy_client
-		LEFT JOIN quotation_client_organizations qco 
-		  ON qco.company_id = $1 AND qco.id = $2 AND qco.deleted_at IS NULL
-		WHERE legacy_client.id = $2
-	`
-	_ = tx.QueryRow(ctx, queryClient, companyID, clientID).Scan(&clientName)
-
 	return &domain.Quotation{
 			ID:              qID,
 			QuotationNumber: qNumber,
@@ -195,7 +216,7 @@ func (r *Repository) LockAndSignQuotationTx(
 		}, &domain.QuotationRevision{
 			ID:                revID,
 			RevisionNumber:    revNum,
-			ContentHTML:       contentHTML,
+			ContentHTML:       &updatedHTML,
 			PublishedAt:       publishedAt,
 			SignerName:        &signerName,
 			SignerEmail:       &signerEmail,
