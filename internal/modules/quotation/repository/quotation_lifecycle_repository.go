@@ -72,6 +72,38 @@ func (r *Repository) PublishDraftQuotation(ctx context.Context, tx pgx.Tx, quota
 	return nil
 }
 
+// PublishDraftQuotationWithSnapshots marks the draft revision as published, updates content_html with synced dates and director signature, saves signature and stamp snapshots, and updates quotation master active published revision and status.
+func (r *Repository) PublishDraftQuotationWithSnapshots(ctx context.Context, tx pgx.Tx, quotationID, draftID string, updatedHTML, dirSig, stamp string) error {
+	q := r.getExecer(tx)
+
+	res, err := q.Exec(ctx, `
+		UPDATE quotation_revisions 
+		SET publication_status = 'published', published_at = NOW(), updated_at = NOW(),
+		    content_html = $2, director_signature_snapshot = $3, director_stamp_snapshot = $4
+		WHERE id = $1 AND publication_status = 'draft'
+	`, draftID, updatedHTML, dirSig, stamp)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrRevisionNotFound
+	}
+
+	res, err = q.Exec(ctx, `
+		UPDATE quotations 
+		SET active_published_revision_id = $1, status = 'published', updated_at = NOW() 
+		WHERE id = $2
+	`, draftID, quotationID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 // GetMaxRevisionNumber returns the highest revision number for a quotation, defaulting to 0 if none exist.
 func (r *Repository) GetMaxRevisionNumber(ctx context.Context, tx pgx.Tx, quotationID string) (int, error) {
 	q := r.getExecer(tx)

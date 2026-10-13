@@ -148,6 +148,10 @@ func (r *concurrencyQuotationRepo) MarkPublishedRevisionSuperseded(ctx context.C
 }
 
 func (r *concurrencyQuotationRepo) PublishDraftQuotation(ctx context.Context, tx pgx.Tx, quotationID, draftID string) error {
+	return r.PublishDraftQuotationWithSnapshots(ctx, tx, quotationID, draftID, "", "", "")
+}
+
+func (r *concurrencyQuotationRepo) PublishDraftQuotationWithSnapshots(ctx context.Context, tx pgx.Tx, quotationID, draftID string, updatedHTML, dirSig, stamp string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var draftRev *domain.QuotationRevision
@@ -163,6 +167,15 @@ func (r *concurrencyQuotationRepo) PublishDraftQuotation(ctx context.Context, tx
 	draftRev.PublicationStatus = repository.PublicationStatusPublished
 	now := time.Now().UTC()
 	draftRev.PublishedAt = &now
+	if updatedHTML != "" {
+		draftRev.ContentHTML = &updatedHTML
+	}
+	if dirSig != "" {
+		draftRev.DirectorSignatureSnapshot = &dirSig
+	}
+	if stamp != "" {
+		draftRev.DirectorStampSnapshot = &stamp
+	}
 
 	if r.quotation != nil && r.quotation.ID.String() == quotationID {
 		r.quotation.Status = repository.PublicationStatusPublished

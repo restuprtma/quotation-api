@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -33,6 +34,7 @@ type LifecycleRepository interface {
 	GetDraftRevision(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error)
 	MarkPublishedRevisionSuperseded(ctx context.Context, tx pgx.Tx, quotationID string) error
 	PublishDraftQuotation(ctx context.Context, tx pgx.Tx, quotationID, draftID string) error
+	PublishDraftQuotationWithSnapshots(ctx context.Context, tx pgx.Tx, quotationID, draftID string, updatedHTML, dirSig, stamp string) error
 	GetActivePublishedRevision(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error)
 	GetMaxRevisionNumber(ctx context.Context, tx pgx.Tx, quotationID string) (int, error)
 	CreateRevisionTx(ctx context.Context, tx pgx.Tx, rev *domain.QuotationRevision) error
@@ -137,8 +139,45 @@ func (s *Service) PublishQuotation(ctx context.Context, companyID, quotationID s
 		return err
 	}
 
-	// Step g: Publish draft revision and update master active pointer
-	if err := repo.PublishDraftQuotation(ctx, tx, quotationID, draft.ID.String()); err != nil {
+	// Retrieve active quotation_signature_settings for company
+	dirName := "Yulianto Frandi"
+	dirTitle := "Direksi Venturo Pro"
+	dirSig := ""
+	stamp := ""
+
+	if s.repo != nil {
+		settings, err := s.repo.GetSignatureSettings(ctx, companyUUID)
+		if err == nil && settings != nil {
+			if settings.DirectorName != "" {
+				dirName = settings.DirectorName
+			}
+			if settings.DirectorTitle != "" {
+				dirTitle = settings.DirectorTitle
+			}
+			dirSig = settings.DirectorSignatureData
+			stamp = settings.CompanyStampData
+		}
+	} else if getter, ok := repo.(interface {
+		GetSignatureSettings(ctx context.Context, companyID uuid.UUID) (*domain.SignatureSettings, error)
+	}); ok {
+		settings, err := getter.GetSignatureSettings(ctx, companyUUID)
+		if err == nil && settings != nil {
+			if settings.DirectorName != "" {
+				dirName = settings.DirectorName
+			}
+			if settings.DirectorTitle != "" {
+				dirTitle = settings.DirectorTitle
+			}
+			dirSig = settings.DirectorSignatureData
+			stamp = settings.CompanyStampData
+		}
+	}
+
+	now := time.Now().UTC()
+	updatedHTML := SyncDatesAndInjectDirectorSignature(*draft.ContentHTML, now, dirName, dirTitle, dirSig, stamp)
+
+	// Step g: Publish draft revision with snapshots and update master active pointer
+	if err := repo.PublishDraftQuotationWithSnapshots(ctx, tx, quotationID, draft.ID.String(), updatedHTML, dirSig, stamp); err != nil {
 		return mapRepoErr(err)
 	}
 

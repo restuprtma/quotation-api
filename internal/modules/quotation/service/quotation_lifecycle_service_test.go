@@ -39,16 +39,18 @@ func (m *mockTx) Rollback(ctx context.Context) error {
 }
 
 type mockLifecycleRepo struct {
-	beginFunc                           func(ctx context.Context) (pgx.Tx, error)
-	lockQuotationMasterFunc             func(ctx context.Context, tx pgx.Tx, quotationID string) error
-	getQuotationByIDFunc                func(ctx context.Context, id, companyID string) (*domain.Quotation, error)
-	getDraftRevisionFunc                func(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error)
-	markPublishedRevisionSupersededFunc func(ctx context.Context, tx pgx.Tx, quotationID string) error
-	publishDraftQuotationFunc           func(ctx context.Context, tx pgx.Tx, quotationID, draftID string) error
-	getActivePublishedRevisionFunc      func(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error)
-	getMaxRevisionNumberFunc            func(ctx context.Context, tx pgx.Tx, quotationID string) (int, error)
-	createRevisionTxFunc                func(ctx context.Context, tx pgx.Tx, rev *domain.QuotationRevision) error
-	updateQuotationCurrentRevisionFunc  func(ctx context.Context, tx pgx.Tx, quotationID string, currentRevision int) error
+	beginFunc                              func(ctx context.Context) (pgx.Tx, error)
+	lockQuotationMasterFunc                func(ctx context.Context, tx pgx.Tx, quotationID string) error
+	getQuotationByIDFunc                   func(ctx context.Context, id, companyID string) (*domain.Quotation, error)
+	getDraftRevisionFunc                   func(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error)
+	markPublishedRevisionSupersededFunc    func(ctx context.Context, tx pgx.Tx, quotationID string) error
+	publishDraftQuotationFunc              func(ctx context.Context, tx pgx.Tx, quotationID, draftID string) error
+	publishDraftQuotationWithSnapshotsFunc func(ctx context.Context, tx pgx.Tx, quotationID, draftID string, updatedHTML, dirSig, stamp string) error
+	getActivePublishedRevisionFunc         func(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error)
+	getMaxRevisionNumberFunc               func(ctx context.Context, tx pgx.Tx, quotationID string) (int, error)
+	createRevisionTxFunc                   func(ctx context.Context, tx pgx.Tx, rev *domain.QuotationRevision) error
+	updateQuotationCurrentRevisionFunc     func(ctx context.Context, tx pgx.Tx, quotationID string, currentRevision int) error
+	getSignatureSettingsFunc               func(ctx context.Context, companyID uuid.UUID) (*domain.SignatureSettings, error)
 }
 
 func (m *mockLifecycleRepo) Begin(ctx context.Context) (pgx.Tx, error) {
@@ -94,6 +96,23 @@ func (m *mockLifecycleRepo) PublishDraftQuotation(ctx context.Context, tx pgx.Tx
 		return m.publishDraftQuotationFunc(ctx, tx, quotationID, draftID)
 	}
 	return nil
+}
+
+func (m *mockLifecycleRepo) PublishDraftQuotationWithSnapshots(ctx context.Context, tx pgx.Tx, quotationID, draftID string, updatedHTML, dirSig, stamp string) error {
+	if m.publishDraftQuotationWithSnapshotsFunc != nil {
+		return m.publishDraftQuotationWithSnapshotsFunc(ctx, tx, quotationID, draftID, updatedHTML, dirSig, stamp)
+	}
+	if m.publishDraftQuotationFunc != nil {
+		return m.publishDraftQuotationFunc(ctx, tx, quotationID, draftID)
+	}
+	return nil
+}
+
+func (m *mockLifecycleRepo) GetSignatureSettings(ctx context.Context, companyID uuid.UUID) (*domain.SignatureSettings, error) {
+	if m.getSignatureSettingsFunc != nil {
+		return m.getSignatureSettingsFunc(ctx, companyID)
+	}
+	return nil, repository.ErrNotFound
 }
 
 func (m *mockLifecycleRepo) GetActivePublishedRevision(ctx context.Context, tx pgx.Tx, quotationID, companyID string) (*domain.QuotationRevision, error) {
@@ -486,6 +505,124 @@ func TestPublishQuotation_HappyPath(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.True(t, tx.commitCalled)
+	})
+
+	t.Run("PublishWithSignatureSettings_InjectsDirectorAndSnapshots", func(t *testing.T) {
+		contentVer := "1"
+		rawHTML := `<section data-block-type="metadata">
+<div data-role="metadata-row" data-field="issue_date_header"><span data-role="metadata-label">Tanggal</span><span data-role="metadata-separator">:</span><span data-role="metadata-value">1 Januari 2026</span></div>
+</section>
+<section data-block-type="signature">
+<p>Malang, <span data-field="issue_date">1 Januari 2026</span></p>
+<table class="signature-table"><tbody><tr><td><p>Hormat Kami,</p><br><br><p><strong>Yulianto Frandi</strong></p><p>Direksi Venturo Pro</p></td><td><p>Disetujui Oleh,</p><br><br><p><strong>Bapak Reza</strong></p></td></tr></tbody></table>
+</section>`
+
+		tx := &mockTx{}
+		var capturedUpdatedHTML, capturedDirSig, capturedStamp string
+
+		mockRepo := &mockLifecycleRepo{
+			beginFunc: func(ctx context.Context) (pgx.Tx, error) {
+				return tx, nil
+			},
+			getDraftRevisionFunc: func(ctx context.Context, tx pgx.Tx, qid, cid string) (*domain.QuotationRevision, error) {
+				return &domain.QuotationRevision{
+					ID:               uuid.MustParse(draftRevisionID),
+					ContentVersion:   &contentVer,
+					GenerationStatus: "completed",
+					ContentHTML:      &rawHTML,
+				}, nil
+			},
+			getSignatureSettingsFunc: func(ctx context.Context, companyID uuid.UUID) (*domain.SignatureSettings, error) {
+				return &domain.SignatureSettings{
+					CompanyID:             companyID,
+					DirectorName:          "Budi Pratama",
+					DirectorTitle:         "Direktur Operasional",
+					DirectorSignatureData: "data:image/png;base64,custom_sig",
+					CompanyStampData:      "data:image/png;base64,custom_stamp",
+				}, nil
+			},
+			publishDraftQuotationWithSnapshotsFunc: func(ctx context.Context, tx pgx.Tx, qid, did string, updatedHTML, dirSig, stamp string) error {
+				capturedUpdatedHTML = updatedHTML
+				capturedDirSig = dirSig
+				capturedStamp = stamp
+				return nil
+			},
+		}
+
+		s := service.NewService(nil, nil, nil, nil, nil, nil, nil, nil).
+			WithLifecycleRepository(mockRepo)
+
+		err := s.PublishQuotation(ctx, companyID, quotationID, dto.PublishQuotationRequest{
+			RevisionID:     draftRevisionID,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.True(t, tx.commitCalled)
+
+		// Check snapshots captured
+		assert.Equal(t, "data:image/png;base64,custom_sig", capturedDirSig)
+		assert.Equal(t, "data:image/png;base64,custom_stamp", capturedStamp)
+
+		// Check HTML contains injected director signature and stamp images
+		assert.Contains(t, capturedUpdatedHTML, `src="data:image/png;base64,custom_sig"`)
+		assert.Contains(t, capturedUpdatedHTML, `src="data:image/png;base64,custom_stamp"`)
+		assert.Contains(t, capturedUpdatedHTML, `<strong>Budi Pratama</strong>`)
+		assert.Contains(t, capturedUpdatedHTML, `Direktur Operasional`)
+	})
+
+	t.Run("PublishWithoutSignatureSettings_UsesDefaultsWithoutError", func(t *testing.T) {
+		contentVer := "1"
+		rawHTML := `<section data-block-type="metadata">
+<div data-role="metadata-row" data-field="issue_date_header"><span data-role="metadata-label">Tanggal</span><span data-role="metadata-separator">:</span><span data-role="metadata-value">1 Januari 2026</span></div>
+</section>
+<section data-block-type="signature">
+<p>Malang, <span data-field="issue_date">1 Januari 2026</span></p>
+<table class="signature-table"><tbody><tr><td><p>Hormat Kami,</p><br><br><p><strong>Yulianto Frandi</strong></p><p>Direksi Venturo Pro</p></td><td><p>Disetujui Oleh,</p><br><br><p><strong>Bapak Reza</strong></p></td></tr></tbody></table>
+</section>`
+
+		tx := &mockTx{}
+		var capturedUpdatedHTML, capturedDirSig, capturedStamp string
+
+		mockRepo := &mockLifecycleRepo{
+			beginFunc: func(ctx context.Context) (pgx.Tx, error) {
+				return tx, nil
+			},
+			getDraftRevisionFunc: func(ctx context.Context, tx pgx.Tx, qid, cid string) (*domain.QuotationRevision, error) {
+				return &domain.QuotationRevision{
+					ID:               uuid.MustParse(draftRevisionID),
+					ContentVersion:   &contentVer,
+					GenerationStatus: "completed",
+					ContentHTML:      &rawHTML,
+				}, nil
+			},
+			getSignatureSettingsFunc: func(ctx context.Context, companyID uuid.UUID) (*domain.SignatureSettings, error) {
+				return nil, repository.ErrNotFound
+			},
+			publishDraftQuotationWithSnapshotsFunc: func(ctx context.Context, tx pgx.Tx, qid, did string, updatedHTML, dirSig, stamp string) error {
+				capturedUpdatedHTML = updatedHTML
+				capturedDirSig = dirSig
+				capturedStamp = stamp
+				return nil
+			},
+		}
+
+		s := service.NewService(nil, nil, nil, nil, nil, nil, nil, nil).
+			WithLifecycleRepository(mockRepo)
+
+		err := s.PublishQuotation(ctx, companyID, quotationID, dto.PublishQuotationRequest{
+			RevisionID:     draftRevisionID,
+			ContentVersion: 1,
+		})
+		require.NoError(t, err)
+		assert.True(t, tx.commitCalled)
+
+		// Check snapshots are empty strings
+		assert.Equal(t, "", capturedDirSig)
+		assert.Equal(t, "", capturedStamp)
+
+		// Check default director name and title preserved
+		assert.Contains(t, capturedUpdatedHTML, `<strong>Yulianto Frandi</strong>`)
+		assert.Contains(t, capturedUpdatedHTML, `Direksi Venturo Pro`)
 	})
 }
 
