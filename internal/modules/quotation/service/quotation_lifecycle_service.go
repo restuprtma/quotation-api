@@ -173,7 +173,8 @@ func (s *Service) PublishQuotation(ctx context.Context, companyID, quotationID s
 		}
 	}
 
-	now := time.Now().UTC()
+	wib := time.FixedZone("WIB", 7*3600)
+	now := time.Now().In(wib)
 	updatedHTML := SyncDatesAndInjectDirectorSignature(*draft.ContentHTML, now, dirName, dirTitle, dirSig, stamp)
 
 	// Step g: Publish draft revision with snapshots and update master active pointer
