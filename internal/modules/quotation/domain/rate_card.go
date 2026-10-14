@@ -30,6 +30,7 @@ type RateCard struct {
 	EffectiveFrom         time.Time  `json:"effective_from" db:"effective_from"`
 	EffectiveUntil        *time.Time `json:"effective_until" db:"effective_until"`
 	IsActive              bool       `json:"is_active" db:"is_active"`
+	IsDefault             bool       `json:"is_default" db:"is_default"`
 	CreatedBy             *uuid.UUID `json:"created_by" db:"created_by"`
 	CreatedAt             time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at" db:"updated_at"`

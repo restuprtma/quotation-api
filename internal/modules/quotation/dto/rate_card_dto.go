@@ -19,7 +19,7 @@ type CreateRateCardRequest struct {
 	EnterpriseMarkupPct   *int                        `json:"enterprise_markup_pct"`
 	EffectiveFrom         string                      `json:"effective_from" binding:"required"`
 	EffectiveUntil        *string                     `json:"effective_until"`
-	Items                 []CreateRateCardItemRequest `json:"items" binding:"required,min=1,dive"`
+	Items                 []CreateRateCardItemRequest `json:"items"`
 }
 
 type UpdateRateCardRequest struct {
@@ -80,6 +80,7 @@ type RateCardSummaryResponse struct {
 	ClientTier string    `json:"client_tier"`
 	Currency   string    `json:"currency"`
 	IsActive   bool      `json:"is_active"`
+	IsDefault  bool      `json:"is_default"`
 	ItemCount  int       `json:"item_count"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -96,6 +97,7 @@ type RateCardDetailResponse struct {
 	ShortTermSurchargePct int                             `json:"short_term_surcharge_pct"`
 	EnterpriseMarkupPct   int                             `json:"enterprise_markup_pct"`
 	IsActive              bool                            `json:"is_active"`
+	IsDefault             bool                            `json:"is_default"`
 	EffectiveFrom         time.Time                       `json:"effective_from"`
 	EffectiveUntil        *time.Time                      `json:"effective_until"`
 	Items                 []RateCardItemResponse          `json:"items"`

@@ -33,9 +33,11 @@ func TestRateCardHasClientTier(t *testing.T) {
 		ClientTier:            "commercial_national",
 		ShortTermSurchargePct: 40,
 		EnterpriseMarkupPct:   35,
+		IsDefault:             true,
 	}
 	assert.Equal(t, "commercial_national", rc.ClientTier)
 	assert.Equal(t, 40, rc.ShortTermSurchargePct)
+	assert.True(t, rc.IsDefault)
 }
 
 func TestRateCardItemDailyRate(t *testing.T) {
