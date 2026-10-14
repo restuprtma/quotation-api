@@ -211,6 +211,10 @@ func (m *Module) SetupRoutes(router *gin.RouterGroup) {
 		rateCards.GET("/:id/details", m.Handler.GetRateCardDetail)
 		rateCards.POST("", m.Handler.CreateRateCard)
 		rateCards.DELETE("/:id", m.Handler.DeleteRateCard)
+		rateCards.POST("/:id/set-default", m.Handler.SetDefaultRateCard)
+		rateCards.POST("/:id/items", m.Handler.CreateRateCardItem)
+		rateCards.PUT("/:id/items/:item_id", m.Handler.UpdateRateCardItem)
+		rateCards.DELETE("/:id/items/:item_id", m.Handler.DeleteRateCardItem)
 	}
 
 	legalTemplates := router.Group("/legal-templates")

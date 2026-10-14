@@ -9,6 +9,7 @@ import (
 
 	"venturo-skeleton-go/internal/middleware"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/internal/modules/quotation/repository"
 	"venturo-skeleton-go/internal/modules/quotation/service"
 	"venturo-skeleton-go/internal/shared/response"
 )
@@ -177,6 +178,10 @@ func (h *Handler) ShareQuotation(c *gin.Context) {
 
 func (h *Handler) handleError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, repository.ErrRateCardNotFound):
+		response.Error(c, http.StatusNotFound, "Rate card not found", "")
+	case errors.Is(err, repository.ErrRateCardItemNotFound):
+		response.Error(c, http.StatusNotFound, "Rate card item not found", "")
 	case errors.Is(err, service.ErrNotFound):
 		response.Error(c, http.StatusNotFound, "Quotation not found", "")
 	case errors.Is(err, service.ErrInvalidClient):
