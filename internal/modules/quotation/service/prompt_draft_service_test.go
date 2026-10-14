@@ -139,6 +139,10 @@ func (c promptCatalogStub) ResolveByCode(context.Context, string, string, time.T
 	return c.card, c.items, nil
 }
 
+func (c promptCatalogStub) ResolveDefaultCard(context.Context, string, time.Time) (*domain.RateCard, []domain.RateCardItem, error) {
+	return c.card, c.items, nil
+}
+
 func TestPromptDraftService_UsesCompanyScopedClientLookup(t *testing.T) {
 	companyID := uuid.New()
 	repo := &promptRepoStub{clientName: "PT Arunika"}
@@ -183,6 +187,36 @@ func TestCreateMeetingDraft_PersistsWithoutCallingExtractor(t *testing.T) {
 	assert.Equal(t, 1, repo.createDraftCalls)
 	assert.Zero(t, extractor.calls)
 	assert.Equal(t, repository.GenerationStatusPending, pending.GenerationStatus)
+}
+
+func TestCreateMeetingDraft_ResolvesDynamicDefaultCard(t *testing.T) {
+	companyID := uuid.New()
+	repo := &promptRepoStub{clientName: "PT Arunika"}
+	customCard := &domain.RateCard{
+		ID:        uuid.New(),
+		CompanyID: companyID,
+		Code:      "CUSTOM-STD-2026",
+		Name:      "Custom Tenant Default",
+		Currency:  "IDR",
+		IsDefault: true,
+		IsActive:  true,
+	}
+	customItems := []domain.RateCardItem{
+		{ID: uuid.New(), CompanyID: companyID, RateCardID: customCard.ID, Role: "frontend_programmer", Seniority: "intermediate", TermType: "long_term"},
+	}
+	catalog := promptCatalogStub{card: customCard, items: customItems}
+	svc := NewPromptDraftService(repo, catalog, nil, nil, nil, nil)
+	req := dto.CreateFromMeetingRequest{
+		ClientName:     stringPtr("PT Arunika"),
+		MeetingNotes:   "Aplikasi mobile inventory.",
+		IdempotencyKey: uuid.New().String(),
+	}
+
+	pending, err := svc.CreateMeetingDraft(context.Background(), companyID, nil, req)
+	require.NoError(t, err)
+	require.NotNil(t, pending)
+	require.NotNil(t, repo.createParams.RateCardSnapshot)
+	assert.Contains(t, string(repo.createParams.RateCardSnapshot), "CUSTOM-STD-2026")
 }
 
 func TestProcessMeetingDraft_TimeoutMarksSameDraftFailed(t *testing.T) {

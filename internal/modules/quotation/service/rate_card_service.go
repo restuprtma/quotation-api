@@ -233,7 +233,8 @@ func (s *RateCardService) SetDefaultRateCard(ctx context.Context, companyID, id 
 }
 
 func (s *RateCardService) GetDefaultRateCard(ctx context.Context, companyID string) (*domain.RateCard, error) {
-	return s.repo.GetDefaultRateCard(ctx, companyID)
+	card, _, err := s.repo.GetDefaultRateCard(ctx, companyID)
+	return card, err
 }
 
 func (s *RateCardService) CreateItem(ctx context.Context, companyID, rateCardID string, req *dto.CreateRateCardItemRequest) (*dto.RateCardItemResponse, error) {

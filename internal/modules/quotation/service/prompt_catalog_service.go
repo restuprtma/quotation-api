@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 	"venturo-skeleton-go/internal/modules/quotation/dto"
+	"venturo-skeleton-go/internal/modules/quotation/repository"
 )
 
 const DefaultPromptRateCardCode = "VENTURO-STD-2026"
@@ -44,6 +46,7 @@ func PromptCatalogRolesFromSnapshot(raw json.RawMessage) []dto.PromptCatalogRole
 
 type PromptCatalogRepository interface {
 	GetActiveRateCardByCode(context.Context, string, string, time.Time) (*domain.RateCard, []domain.RateCardItem, error)
+	GetDefaultRateCard(context.Context, string) (*domain.RateCard, []domain.RateCardItem, error)
 }
 
 type PromptCatalogService struct {
@@ -63,6 +66,21 @@ func (s *PromptCatalogService) ResolveByCode(ctx context.Context, companyID, cod
 		return nil, nil, ErrPromptCatalogEmpty
 	}
 	return card, items, nil
+}
+
+// ResolveDefaultCard resolves the tenant's default rate card.
+// If the default card exists and contains rate items, it is returned.
+// Otherwise, it falls back to DefaultPromptRateCardCode ("VENTURO-STD-2026").
+func (s *PromptCatalogService) ResolveDefaultCard(ctx context.Context, companyID string, at time.Time) (*domain.RateCard, []domain.RateCardItem, error) {
+	card, items, err := s.repo.GetDefaultRateCard(ctx, companyID)
+	if err == nil && card != nil && len(items) > 0 {
+		return card, items, nil
+	}
+	if err != nil && !errors.Is(err, repository.ErrRateCardNotFound) && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, err
+	}
+
+	return s.ResolveByCode(ctx, companyID, DefaultPromptRateCardCode, at)
 }
 
 type RoleResolutionStatus string

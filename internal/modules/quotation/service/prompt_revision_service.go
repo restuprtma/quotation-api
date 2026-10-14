@@ -296,7 +296,7 @@ func promptRateCardSnapshot(raw json.RawMessage) (domain.RateCard, []domain.Rate
 	if len(raw) == 0 || json.Unmarshal(raw, &snapshot) != nil || snapshot.Card.ID == uuid.Nil || len(snapshot.Items) == 0 {
 		return domain.RateCard{}, nil, errors.New("rate card snapshot is unavailable")
 	}
-	if snapshot.Card.Code != domain.DefaultPromptRateCardCode {
+	if snapshot.Card.Code != domain.DefaultPromptRateCardCode && !snapshot.Card.IsDefault {
 		return domain.RateCard{}, nil, errors.New("rate card snapshot is not the default card")
 	}
 	return snapshot.Card, snapshot.Items, nil

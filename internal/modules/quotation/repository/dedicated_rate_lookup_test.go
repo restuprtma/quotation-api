@@ -117,14 +117,14 @@ func TestDedicatedRateLookup(t *testing.T) {
 		assert.ErrorIs(t, lookupErr, repository.ErrRateCardNotFound)
 	})
 
-	t.Run("lists only official generator cards", func(t *testing.T) {
+	t.Run("lists all active generator cards ordered by default", func(t *testing.T) {
 		cards, listErr := repo.ListGeneratorCards(ctx, companyID.String())
 		require.NoError(t, listErr)
-		require.Len(t, cards, 4)
+		require.Len(t, cards, 5)
 		codes := make([]string, 0, len(cards))
 		for _, card := range cards {
 			codes = append(codes, card.Code)
 		}
-		assert.ElementsMatch(t, officialCodes, codes)
+		assert.ElementsMatch(t, allCodes, codes)
 	})
 }

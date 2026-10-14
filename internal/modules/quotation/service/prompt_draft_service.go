@@ -58,6 +58,7 @@ type promptDraftRepository interface {
 
 type promptCatalogResolver interface {
 	ResolveByCode(context.Context, string, string, time.Time) (*domain.RateCard, []domain.RateCardItem, error)
+	ResolveDefaultCard(context.Context, string, time.Time) (*domain.RateCard, []domain.RateCardItem, error)
 }
 
 type promptMeetingExtractor interface {
@@ -366,7 +367,7 @@ func (s *PromptDraftService) resolveCatalog(ctx context.Context, companyID uuid.
 	if s.catalog == nil {
 		return CatalogContext{}, nil, nil, ErrPromptCatalogEmpty
 	}
-	card, items, err := s.catalog.ResolveByCode(ctx, companyID.String(), domain.DefaultPromptRateCardCode, time.Now().UTC())
+	card, items, err := s.catalog.ResolveDefaultCard(ctx, companyID.String(), time.Now().UTC())
 	if err != nil {
 		return CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode}, nil, nil, err
 	}
