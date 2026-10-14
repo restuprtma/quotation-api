@@ -661,6 +661,22 @@ func (s *Service) GetRateCard(ctx context.Context, companyID, id string) (interf
 	return s.rateCardSvc.GetRateCard(ctx, companyID, id)
 }
 
+func (s *Service) SetDefaultRateCard(ctx context.Context, companyID, id string) (*dto.RateCardDetailResponse, error) {
+	return s.rateCardSvc.SetDefault(ctx, companyID, id)
+}
+
+func (s *Service) CreateRateCardItem(ctx context.Context, companyID, rateCardID string, req *dto.CreateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	return s.rateCardSvc.CreateItem(ctx, companyID, rateCardID, req)
+}
+
+func (s *Service) UpdateRateCardItem(ctx context.Context, companyID, rateCardID, itemID string, req *dto.UpdateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	return s.rateCardSvc.UpdateItem(ctx, companyID, rateCardID, itemID, req)
+}
+
+func (s *Service) DeleteRateCardItem(ctx context.Context, companyID, rateCardID, itemID string) error {
+	return s.rateCardSvc.DeleteItem(ctx, companyID, rateCardID, itemID)
+}
+
 func (s *Service) ListLegalTemplates(ctx context.Context, companyID string) (interface{}, error) {
 	return s.legalTemplateSvc.ListActiveTemplates(ctx, companyID)
 }

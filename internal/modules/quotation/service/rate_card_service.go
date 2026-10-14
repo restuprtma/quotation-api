@@ -76,6 +76,19 @@ func (s *RateCardService) Create(ctx context.Context, companyID string, userID *
 
 	items := make([]*domain.RateCardItem, len(req.Items))
 	for i, itemReq := range req.Items {
+		baseSalary := itemReq.BaseSalary
+		if baseSalary == 0 {
+			baseSalary = itemReq.AmountPerMonth
+		}
+		publishedRate := itemReq.PublishedRate
+		if publishedRate == 0 {
+			publishedRate = itemReq.AmountPerMonth
+		}
+		floorRate := itemReq.FloorRate
+		if floorRate == 0 {
+			floorRate = itemReq.AmountPerMonth
+		}
+
 		item := &domain.RateCardItem{
 			ID:                    uuid.New(),
 			CompanyID:             companyUUID,
@@ -86,16 +99,16 @@ func (s *RateCardService) Create(ctx context.Context, companyID string, userID *
 			Discipline:            itemReq.Discipline,
 			TermType:              itemReq.TermType,
 			AmountPerMonth:        itemReq.AmountPerMonth,
-			BaseSalary:            itemReq.BaseSalary,
+			BaseSalary:            baseSalary,
 			TechLeadFee:           itemReq.TechLeadFee,
 			AiRndFee:              itemReq.AiRndFee,
 			WorkspaceFee:          itemReq.WorkspaceFee,
 			ManagementFee:         itemReq.ManagementFee,
 			EducationRequirement:  itemReq.EducationRequirement,
 			ExperienceRequirement: itemReq.ExperienceRequirement,
-			PublishedRate:         itemReq.PublishedRate,
+			PublishedRate:         publishedRate,
 			MaxDiscountPct:        itemReq.MaxDiscountPct,
-			FloorRate:             itemReq.FloorRate,
+			FloorRate:             floorRate,
 			KickoffFee:            itemReq.KickoffFee,
 			RecruitmentFee:        itemReq.RecruitmentFee,
 			OnboardingFee:         itemReq.OnboardingFee,
@@ -160,6 +173,7 @@ func (s *RateCardService) ListAll(ctx context.Context, companyID string, activeO
 			ClientTier: c.ClientTier,
 			Currency:   c.Currency,
 			IsActive:   c.IsActive,
+			IsDefault:  c.IsDefault,
 			ItemCount:  counts[c.ID],
 			CreatedAt:  c.CreatedAt,
 		}
@@ -207,6 +221,147 @@ func (s *RateCardService) GetRateCard(ctx context.Context, companyID, id string)
 	return s.repo.Get(ctx, id, companyID)
 }
 
+func (s *RateCardService) SetDefault(ctx context.Context, companyID, id string) (*dto.RateCardDetailResponse, error) {
+	if err := s.repo.SetDefault(ctx, companyID, id); err != nil {
+		return nil, err
+	}
+	return s.GetDetail(ctx, companyID, id)
+}
+
+func (s *RateCardService) SetDefaultRateCard(ctx context.Context, companyID, id string) (*dto.RateCardDetailResponse, error) {
+	return s.SetDefault(ctx, companyID, id)
+}
+
+func (s *RateCardService) GetDefaultRateCard(ctx context.Context, companyID string) (*domain.RateCard, error) {
+	return s.repo.GetDefaultRateCard(ctx, companyID)
+}
+
+func (s *RateCardService) CreateItem(ctx context.Context, companyID, rateCardID string, req *dto.CreateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	companyUUID, err := uuid.Parse(companyID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid company id: %w", err)
+	}
+	rcUUID, err := uuid.Parse(rateCardID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid rate card id: %w", err)
+	}
+
+	// Verify rate card exists and belongs to this tenant
+	if _, err := s.repo.Get(ctx, rateCardID, companyID); err != nil {
+		return nil, err
+	}
+
+	baseSalary := req.BaseSalary
+	if baseSalary == 0 {
+		baseSalary = req.AmountPerMonth
+	}
+	publishedRate := req.PublishedRate
+	if publishedRate == 0 {
+		publishedRate = req.AmountPerMonth
+	}
+	floorRate := req.FloorRate
+	if floorRate == 0 {
+		floorRate = req.AmountPerMonth
+	}
+
+	discipline := req.Discipline
+	if discipline == "" {
+		discipline = domain.DisciplineEngineering
+	}
+
+	item := &domain.RateCardItem{
+		ID:                    uuid.New(),
+		CompanyID:             companyUUID,
+		RateCardID:            rcUUID,
+		Role:                  resolveRole(req.Role),
+		DisplayName:           req.DisplayName,
+		Seniority:             req.Seniority,
+		Discipline:            discipline,
+		TermType:              req.TermType,
+		AmountPerMonth:        req.AmountPerMonth,
+		BaseSalary:            baseSalary,
+		TechLeadFee:           req.TechLeadFee,
+		AiRndFee:              req.AiRndFee,
+		WorkspaceFee:          req.WorkspaceFee,
+		ManagementFee:         req.ManagementFee,
+		EducationRequirement:  req.EducationRequirement,
+		ExperienceRequirement: req.ExperienceRequirement,
+		PublishedRate:         publishedRate,
+		MaxDiscountPct:        req.MaxDiscountPct,
+		FloorRate:             floorRate,
+		KickoffFee:            req.KickoffFee,
+		RecruitmentFee:        req.RecruitmentFee,
+		OnboardingFee:         req.OnboardingFee,
+	}
+
+	if err := s.repo.CreateItemSingle(ctx, item); err != nil {
+		return nil, err
+	}
+
+	res := mapItemToResponse(item)
+	return &res, nil
+}
+
+func (s *RateCardService) CreateRateCardItem(ctx context.Context, companyID, rateCardID string, req *dto.CreateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	return s.CreateItem(ctx, companyID, rateCardID, req)
+}
+
+func (s *RateCardService) UpdateItem(ctx context.Context, companyID, rateCardID, itemID string, req *dto.UpdateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	if req.Role != nil {
+		resolved := resolveRole(*req.Role)
+		req.Role = &resolved
+	}
+	item, err := s.repo.UpdateItem(ctx, companyID, rateCardID, itemID, req)
+	if err != nil {
+		return nil, err
+	}
+	res := mapItemToResponse(item)
+	return &res, nil
+}
+
+func (s *RateCardService) UpdateRateCardItem(ctx context.Context, companyID, rateCardID, itemID string, req *dto.UpdateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	return s.UpdateItem(ctx, companyID, rateCardID, itemID, req)
+}
+
+func (s *RateCardService) DeleteItem(ctx context.Context, companyID, rateCardID, itemID string) error {
+	return s.repo.DeleteItem(ctx, companyID, rateCardID, itemID)
+}
+
+func (s *RateCardService) DeleteRateCardItem(ctx context.Context, companyID, rateCardID, itemID string) error {
+	return s.DeleteItem(ctx, companyID, rateCardID, itemID)
+}
+
+func mapItemToResponse(item *domain.RateCardItem) dto.RateCardItemResponse {
+	return dto.RateCardItemResponse{
+		ID:                    item.ID,
+		RateCardID:            item.RateCardID,
+		Role:                  item.Role,
+		DisplayName:           item.DisplayName,
+		Seniority:             item.Seniority,
+		Discipline:            item.Discipline,
+		TermType:              item.TermType,
+		AmountPerMonth:        item.AmountPerMonth,
+		BaseSalary:            item.BaseSalary,
+		TechLeadFee:           item.TechLeadFee,
+		AiRndFee:              item.AiRndFee,
+		WorkspaceFee:          item.WorkspaceFee,
+		ManagementFee:         item.ManagementFee,
+		DailyRate:             item.DailyRate(item.AmountPerMonth),
+		HourlyRate:            item.HourlyRate(),
+		EducationRequirement:  item.EducationRequirement,
+		ExperienceRequirement: item.ExperienceRequirement,
+		PublishedRate:         item.PublishedRate,
+		MaxDiscountPct:        item.MaxDiscountPct,
+		FloorRate:             item.FloorRate,
+		KickoffFee:            item.KickoffFee,
+		RecruitmentFee:        item.RecruitmentFee,
+		OnboardingFee:         item.OnboardingFee,
+		TotalHiringFee:        item.TotalHiringFee(),
+		CreatedAt:             item.CreatedAt,
+		UpdatedAt:             item.UpdatedAt,
+	}
+}
+
 func mapToDetailResponse(rc *domain.RateCard, items []*domain.RateCardItem) *dto.RateCardDetailResponse {
 	return mapToDetailResponseWithExtras(rc, items, nil, nil)
 }
@@ -219,34 +374,7 @@ func mapToDetailResponseWithExtras(
 ) *dto.RateCardDetailResponse {
 	itemResponses := make([]dto.RateCardItemResponse, len(items))
 	for i, item := range items {
-		itemResponses[i] = dto.RateCardItemResponse{
-			ID:                    item.ID,
-			RateCardID:            item.RateCardID,
-			Role:                  item.Role,
-			DisplayName:           item.DisplayName,
-			Seniority:             item.Seniority,
-			Discipline:            item.Discipline,
-			TermType:              item.TermType,
-			AmountPerMonth:        item.AmountPerMonth,
-			BaseSalary:            item.BaseSalary,
-			TechLeadFee:           item.TechLeadFee,
-			AiRndFee:              item.AiRndFee,
-			WorkspaceFee:          item.WorkspaceFee,
-			ManagementFee:         item.ManagementFee,
-			DailyRate:             item.DailyRate(item.AmountPerMonth),
-			HourlyRate:            item.HourlyRate(),
-			EducationRequirement:  item.EducationRequirement,
-			ExperienceRequirement: item.ExperienceRequirement,
-			PublishedRate:         item.PublishedRate,
-			MaxDiscountPct:        item.MaxDiscountPct,
-			FloorRate:             item.FloorRate,
-			KickoffFee:            item.KickoffFee,
-			RecruitmentFee:        item.RecruitmentFee,
-			OnboardingFee:         item.OnboardingFee,
-			TotalHiringFee:        item.TotalHiringFee(),
-			CreatedAt:             item.CreatedAt,
-			UpdatedAt:             item.UpdatedAt,
-		}
+		itemResponses[i] = mapItemToResponse(item)
 	}
 
 	var otResponses []dto.OvertimeConfigResponse
@@ -286,24 +414,50 @@ func mapToDetailResponseWithExtras(
 		}
 	}
 
+	var rcID, companyID uuid.UUID
+	var code, name, market, clientTier, currency, description string
+	var shortTermSurchargePct, enterpriseMarkupPct int
+	var isActive, isDefault bool
+	var effectiveFrom, createdAt, updatedAt time.Time
+	var effectiveUntil *time.Time
+	if rc != nil {
+		rcID = rc.ID
+		companyID = rc.CompanyID
+		code = rc.Code
+		name = rc.Name
+		market = rc.Market
+		clientTier = rc.ClientTier
+		currency = rc.Currency
+		description = rc.Description
+		shortTermSurchargePct = rc.ShortTermSurchargePct
+		enterpriseMarkupPct = rc.EnterpriseMarkupPct
+		isActive = rc.IsActive
+		isDefault = rc.IsDefault
+		effectiveFrom = rc.EffectiveFrom
+		effectiveUntil = rc.EffectiveUntil
+		createdAt = rc.CreatedAt
+		updatedAt = rc.UpdatedAt
+	}
+
 	return &dto.RateCardDetailResponse{
-		ID:                    rc.ID,
-		CompanyID:             rc.CompanyID,
-		Code:                  rc.Code,
-		Name:                  rc.Name,
-		Market:                rc.Market,
-		ClientTier:            rc.ClientTier,
-		Currency:              rc.Currency,
-		Description:           rc.Description,
-		ShortTermSurchargePct: rc.ShortTermSurchargePct,
-		EnterpriseMarkupPct:   rc.EnterpriseMarkupPct,
-		IsActive:              rc.IsActive,
-		EffectiveFrom:         rc.EffectiveFrom,
-		EffectiveUntil:        rc.EffectiveUntil,
+		ID:                    rcID,
+		CompanyID:             companyID,
+		Code:                  code,
+		Name:                  name,
+		Market:                market,
+		ClientTier:            clientTier,
+		Currency:              currency,
+		Description:           description,
+		ShortTermSurchargePct: shortTermSurchargePct,
+		EnterpriseMarkupPct:   enterpriseMarkupPct,
+		IsActive:              isActive,
+		IsDefault:             isDefault,
+		EffectiveFrom:         effectiveFrom,
+		EffectiveUntil:        effectiveUntil,
 		Items:                 itemResponses,
 		OvertimeConfigs:       otResponses,
 		InfraPackages:         infraResponses,
-		CreatedAt:             rc.CreatedAt,
-		UpdatedAt:             rc.UpdatedAt,
+		CreatedAt:             createdAt,
+		UpdatedAt:             updatedAt,
 	}
 }

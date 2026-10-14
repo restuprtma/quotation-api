@@ -13,6 +13,7 @@ import (
 )
 
 var ErrRateCardNotFound = errors.New("rate card not found")
+var ErrRateCardItemNotFound = errors.New("rate card item not found")
 
 var generatorRateCardCodes = []string{
 	"DEFAULT",
@@ -42,13 +43,13 @@ func (r *RateCardRepository) Create(ctx context.Context, q Execer, rc *domain.Ra
 	query := `
 		INSERT INTO rate_cards (
 			id, company_id, code, name, market, client_tier, currency, description,
-			short_term_surcharge_pct, enterprise_markup_pct, effective_from, effective_until, is_active, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			short_term_surcharge_pct, enterprise_markup_pct, effective_from, effective_until, is_active, is_default, created_by
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING created_at, updated_at
 	`
 	return q.QueryRow(ctx, query,
 		rc.ID, rc.CompanyID, rc.Code, rc.Name, rc.Market, rc.ClientTier, rc.Currency, rc.Description,
-		rc.ShortTermSurchargePct, rc.EnterpriseMarkupPct, rc.EffectiveFrom, rc.EffectiveUntil, rc.IsActive, rc.CreatedBy,
+		rc.ShortTermSurchargePct, rc.EnterpriseMarkupPct, rc.EffectiveFrom, rc.EffectiveUntil, rc.IsActive, rc.IsDefault, rc.CreatedBy,
 	).Scan(&rc.CreatedAt, &rc.UpdatedAt)
 }
 
@@ -113,7 +114,7 @@ func (r *RateCardRepository) Get(ctx context.Context, id, companyID string) (*do
 	query := `
 		SELECT id, company_id, code, name, market, client_tier, currency, description,
 			short_term_surcharge_pct, enterprise_markup_pct,
-			effective_from, effective_until, is_active, created_by, created_at, updated_at
+			effective_from, effective_until, is_active, is_default, created_by, created_at, updated_at
 		FROM rate_cards
 		WHERE id = $1 AND company_id = $2
 	`
@@ -121,7 +122,7 @@ func (r *RateCardRepository) Get(ctx context.Context, id, companyID string) (*do
 	err := r.db.QueryRow(ctx, query, id, companyID).Scan(
 		&rc.ID, &rc.CompanyID, &rc.Code, &rc.Name, &rc.Market, &rc.ClientTier, &rc.Currency, &rc.Description,
 		&rc.ShortTermSurchargePct, &rc.EnterpriseMarkupPct,
-		&rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt,
+		&rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.IsDefault, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRateCardNotFound
@@ -177,7 +178,7 @@ func (r *RateCardRepository) ListAll(ctx context.Context, companyID string, acti
 	query := `
 		SELECT id, company_id, code, name, market, client_tier, currency, description,
 			short_term_surcharge_pct, enterprise_markup_pct,
-			effective_from, effective_until, is_active, created_by, created_at, updated_at
+			effective_from, effective_until, is_active, is_default, created_by, created_at, updated_at
 		FROM rate_cards
 		WHERE company_id = $1
 	`
@@ -198,7 +199,7 @@ func (r *RateCardRepository) ListAll(ctx context.Context, companyID string, acti
 		if err := rows.Scan(
 			&rc.ID, &rc.CompanyID, &rc.Code, &rc.Name, &rc.Market, &rc.ClientTier,
 			&rc.Currency, &rc.Description, &rc.ShortTermSurchargePct, &rc.EnterpriseMarkupPct,
-			&rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.CreatedBy,
+			&rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.IsDefault, &rc.CreatedBy,
 			&rc.CreatedAt, &rc.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -247,7 +248,7 @@ func (r *RateCardRepository) GetActiveRateCard(ctx context.Context, companyID, m
 	query := `
 		SELECT id, company_id, code, name, market, client_tier, currency, description,
 			short_term_surcharge_pct, enterprise_markup_pct,
-			effective_from, effective_until, is_active, created_by, created_at, updated_at
+			effective_from, effective_until, is_active, is_default, created_by, created_at, updated_at
 		FROM rate_cards
 		WHERE company_id = $1 AND market = $2 AND is_active = true
 		ORDER BY effective_from DESC LIMIT 1
@@ -256,7 +257,7 @@ func (r *RateCardRepository) GetActiveRateCard(ctx context.Context, companyID, m
 	err := r.db.QueryRow(ctx, query, companyID, market).Scan(
 		&rc.ID, &rc.CompanyID, &rc.Code, &rc.Name, &rc.Market, &rc.ClientTier, &rc.Currency, &rc.Description,
 		&rc.ShortTermSurchargePct, &rc.EnterpriseMarkupPct,
-		&rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt,
+		&rc.EffectiveFrom, &rc.EffectiveUntil, &rc.IsActive, &rc.IsDefault, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRateCardNotFound
@@ -270,7 +271,7 @@ func (r *RateCardRepository) GetActiveRateCardByCode(ctx context.Context, compan
 	cardQuery := `
 		SELECT id, company_id, code, name, market, client_tier, currency, description,
 			short_term_surcharge_pct, enterprise_markup_pct,
-			effective_from, effective_until, is_active, created_by, created_at, updated_at
+			effective_from, effective_until, is_active, is_default, created_by, created_at, updated_at
 		FROM rate_cards
 		WHERE company_id = $1 AND code = $2 AND is_active = true
 			AND effective_from <= $3
@@ -281,7 +282,7 @@ func (r *RateCardRepository) GetActiveRateCardByCode(ctx context.Context, compan
 	if err := r.db.QueryRow(ctx, cardQuery, companyID, code, at).Scan(
 		&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.ClientTier, &card.Currency, &card.Description,
 		&card.ShortTermSurchargePct, &card.EnterpriseMarkupPct,
-		&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.CreatedBy, &card.CreatedAt, &card.UpdatedAt,
+		&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.IsDefault, &card.CreatedBy, &card.CreatedAt, &card.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrRateCardNotFound
@@ -399,7 +400,7 @@ func (r *RateCardRepository) ListGeneratorCards(ctx context.Context, companyID s
 	query := `
 		SELECT id, company_id, code, name, market, client_tier, currency, description,
 			short_term_surcharge_pct, enterprise_markup_pct,
-			effective_from, effective_until, is_active, created_by, created_at, updated_at
+			effective_from, effective_until, is_active, is_default, created_by, created_at, updated_at
 		FROM rate_cards
 		WHERE company_id = $1 AND is_active = true AND code = ANY($2)
 		ORDER BY CASE code
@@ -421,7 +422,7 @@ func (r *RateCardRepository) ListGeneratorCards(ctx context.Context, companyID s
 		if err := rows.Scan(
 			&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.ClientTier,
 			&card.Currency, &card.Description, &card.ShortTermSurchargePct, &card.EnterpriseMarkupPct,
-			&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.CreatedBy,
+			&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.IsDefault, &card.CreatedBy,
 			&card.CreatedAt, &card.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -492,4 +493,164 @@ func (r *RateCardRepository) GetInfrastructurePackages(ctx context.Context, rate
 		list = append(list, pkg)
 	}
 	return list, rows.Err()
+}
+
+func (r *RateCardRepository) SetDefault(ctx context.Context, companyID, rateCardID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Reset existing default for this company
+	_, err = tx.Exec(ctx, `UPDATE rate_cards SET is_default = FALSE, updated_at = NOW() WHERE company_id = $1 AND is_default = TRUE`, companyID)
+	if err != nil {
+		return fmt.Errorf("reset default rate cards: %w", err)
+	}
+
+	// Set target as default
+	cmd, err := tx.Exec(ctx, `UPDATE rate_cards SET is_default = TRUE, updated_at = NOW() WHERE company_id = $1 AND id = $2`, companyID, rateCardID)
+	if err != nil {
+		return fmt.Errorf("set target default rate card: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrRateCardNotFound
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *RateCardRepository) GetDefaultRateCard(ctx context.Context, companyID string) (*domain.RateCard, error) {
+	query := `
+		SELECT id, company_id, code, name, market, client_tier, currency, description,
+			short_term_surcharge_pct, enterprise_markup_pct, effective_from, effective_until,
+			is_active, is_default, created_by, created_at, updated_at
+		FROM rate_cards
+		WHERE company_id = $1 AND is_active = TRUE AND is_default = TRUE
+		LIMIT 1
+	`
+	card := &domain.RateCard{}
+	err := r.db.QueryRow(ctx, query, companyID).Scan(
+		&card.ID, &card.CompanyID, &card.Code, &card.Name, &card.Market, &card.ClientTier,
+		&card.Currency, &card.Description, &card.ShortTermSurchargePct, &card.EnterpriseMarkupPct,
+		&card.EffectiveFrom, &card.EffectiveUntil, &card.IsActive, &card.IsDefault, &card.CreatedBy,
+		&card.CreatedAt, &card.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRateCardNotFound
+		}
+		return nil, err
+	}
+	return card, nil
+}
+
+func (r *RateCardRepository) CreateItemSingle(ctx context.Context, item *domain.RateCardItem) error {
+	return r.CreateItemExpanded(ctx, r.db, item)
+}
+
+func (r *RateCardRepository) CreateItemStandalone(ctx context.Context, item *domain.RateCardItem) error {
+	return r.CreateItemSingle(ctx, item)
+}
+
+func (r *RateCardRepository) UpdateItem(ctx context.Context, companyID, rateCardID, itemID string, req *dto.UpdateRateCardItemRequest) (*domain.RateCardItem, error) {
+	if req == nil {
+		return nil, errors.New("update request cannot be nil")
+	}
+	query := `
+		UPDATE rate_card_items
+		SET
+			role = COALESCE($1, role),
+			display_name = COALESCE($2, display_name),
+			seniority = COALESCE($3, seniority),
+			discipline = COALESCE($4, discipline),
+			term_type = COALESCE($5, term_type),
+			amount_per_month = COALESCE($6, amount_per_month),
+			base_salary = COALESCE($7, base_salary),
+			tech_lead_fee = COALESCE($8, tech_lead_fee),
+			ai_rnd_fee = COALESCE($9, ai_rnd_fee),
+			workspace_fee = COALESCE($10, workspace_fee),
+			management_fee = COALESCE($11, management_fee),
+			education_requirement = COALESCE($12, education_requirement),
+			experience_requirement = COALESCE($13, experience_requirement),
+			published_rate = COALESCE($14, published_rate),
+			max_discount_pct = COALESCE($15, max_discount_pct),
+			floor_rate = COALESCE($16, floor_rate),
+			kickoff_fee = COALESCE($17, kickoff_fee),
+			recruitment_fee = COALESCE($18, recruitment_fee),
+			onboarding_fee = COALESCE($19, onboarding_fee),
+			updated_at = NOW()
+		WHERE company_id = $20 AND rate_card_id = $21 AND id = $22
+		RETURNING id, company_id, rate_card_id, role, display_name,
+			seniority, discipline, term_type, amount_per_month,
+			base_salary, tech_lead_fee, ai_rnd_fee, workspace_fee, management_fee,
+			education_requirement, experience_requirement,
+			published_rate, max_discount_pct, floor_rate,
+			kickoff_fee, recruitment_fee, onboarding_fee,
+			created_at, updated_at
+	`
+	item := &domain.RateCardItem{}
+	err := r.db.QueryRow(ctx, query,
+		req.Role, req.DisplayName, req.Seniority, req.Discipline, req.TermType,
+		req.AmountPerMonth, req.BaseSalary, req.TechLeadFee, req.AiRndFee, req.WorkspaceFee,
+		req.ManagementFee, req.EducationRequirement, req.ExperienceRequirement,
+		req.PublishedRate, req.MaxDiscountPct, req.FloorRate,
+		req.KickoffFee, req.RecruitmentFee, req.OnboardingFee,
+		companyID, rateCardID, itemID,
+	).Scan(
+		&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.DisplayName,
+		&item.Seniority, &item.Discipline, &item.TermType, &item.AmountPerMonth,
+		&item.BaseSalary, &item.TechLeadFee, &item.AiRndFee, &item.WorkspaceFee, &item.ManagementFee,
+		&item.EducationRequirement, &item.ExperienceRequirement,
+		&item.PublishedRate, &item.MaxDiscountPct, &item.FloorRate,
+		&item.KickoffFee, &item.RecruitmentFee, &item.OnboardingFee,
+		&item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRateCardItemNotFound
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func (r *RateCardRepository) DeleteItem(ctx context.Context, companyID, rateCardID, itemID string) error {
+	query := `DELETE FROM rate_card_items WHERE company_id = $1 AND rate_card_id = $2 AND id = $3`
+	cmd, err := r.db.Exec(ctx, query, companyID, rateCardID, itemID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrRateCardItemNotFound
+	}
+	return nil
+}
+
+func (r *RateCardRepository) GetItem(ctx context.Context, companyID, rateCardID, itemID string) (*domain.RateCardItem, error) {
+	query := `
+		SELECT id, company_id, rate_card_id, role, display_name,
+			seniority, discipline, term_type, amount_per_month,
+			base_salary, tech_lead_fee, ai_rnd_fee, workspace_fee, management_fee,
+			education_requirement, experience_requirement,
+			published_rate, max_discount_pct, floor_rate,
+			kickoff_fee, recruitment_fee, onboarding_fee,
+			created_at, updated_at
+		FROM rate_card_items
+		WHERE company_id = $1 AND rate_card_id = $2 AND id = $3
+	`
+	item := &domain.RateCardItem{}
+	err := r.db.QueryRow(ctx, query, companyID, rateCardID, itemID).Scan(
+		&item.ID, &item.CompanyID, &item.RateCardID, &item.Role, &item.DisplayName,
+		&item.Seniority, &item.Discipline, &item.TermType, &item.AmountPerMonth,
+		&item.BaseSalary, &item.TechLeadFee, &item.AiRndFee, &item.WorkspaceFee, &item.ManagementFee,
+		&item.EducationRequirement, &item.ExperienceRequirement,
+		&item.PublishedRate, &item.MaxDiscountPct, &item.FloorRate,
+		&item.KickoffFee, &item.RecruitmentFee, &item.OnboardingFee,
+		&item.CreatedAt, &item.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrRateCardItemNotFound
+	}
+	return item, err
 }
