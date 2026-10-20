@@ -150,3 +150,141 @@ func TestOpenAIProviderMissingFinishReason(t *testing.T) {
 	assert.Equal(t, "hello custom gateway", result.Text)
 	assert.Empty(t, result.FinishReason)
 }
+
+func TestOpenAIProvider_StructuredOutputPayload(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"scope\":[]}"}}]}`))
+	}))
+	defer server.Close()
+
+	schema := json.RawMessage(`{"type":"object","properties":{"scope":{"type":"array"}}}`)
+	provider := NewOpenAIProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{
+		Prompt:     "extract",
+		OutputMode: GenerateOutputJSONSchema,
+		JSONSchema: schema,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, `{"scope":[]}`, result.Text)
+
+	rf, ok := body["response_format"].(map[string]any)
+	require.True(t, ok, "expected response_format map")
+	assert.Equal(t, "json_schema", rf["type"])
+	js, ok := rf["json_schema"].(map[string]any)
+	require.True(t, ok, "expected json_schema object")
+	assert.Equal(t, "meeting_extraction", js["name"])
+	assert.Equal(t, true, js["strict"])
+	assert.NotNil(t, js["schema"])
+}
+
+func TestGeminiProvider_StructuredOutputPayload(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"scope\":[]}"}]}}]}`))
+	}))
+	defer server.Close()
+
+	schema := json.RawMessage(`{"type":"object","properties":{"scope":{"type":"array"}}}`)
+	provider := NewGeminiProvider(ProviderConfig{BaseURL: server.URL})
+	result, err := provider.Generate(context.Background(), GenerateRequest{
+		Prompt:     "extract",
+		OutputMode: GenerateOutputJSON,
+		JSONSchema: schema,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, `{"scope":[]}`, result.Text)
+
+	gc, ok := body["generationConfig"].(map[string]any)
+	require.True(t, ok, "expected generationConfig map")
+	assert.Equal(t, "application/json", gc["responseMimeType"])
+	assert.NotNil(t, gc["responseJsonSchema"])
+}
+
+func TestProvider_FallbackToJSONObjectOnSchemaError(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+
+	t.Run("openai fallback", func(t *testing.T) {
+		callCount := 0
+		var requests []map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			var reqBody map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			requests = append(requests, reqBody)
+
+			if callCount == 1 {
+				// Simulate upstream 400 rejection for structured output
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"message":"Invalid schema parameter json_schema"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"fallback\":true}"}}]}`))
+		}))
+		defer server.Close()
+
+		provider := NewOpenAIProvider(ProviderConfig{BaseURL: server.URL})
+		result, err := provider.Generate(context.Background(), GenerateRequest{
+			Prompt:     "extract",
+			OutputMode: GenerateOutputJSONSchema,
+			JSONSchema: schema,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, `{"fallback":true}`, result.Text)
+		assert.Equal(t, 2, callCount)
+
+		// First request attempted json_schema
+		rf1 := requests[0]["response_format"].(map[string]any)
+		assert.Equal(t, "json_schema", rf1["type"])
+
+		// Fallback request used json_object
+		rf2 := requests[1]["response_format"].(map[string]any)
+		assert.Equal(t, "json_object", rf2["type"])
+	})
+
+	t.Run("gemini fallback", func(t *testing.T) {
+		callCount := 0
+		var requests []map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			var reqBody map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			requests = append(requests, reqBody)
+
+			if callCount == 1 {
+				// Simulate upstream 400 rejection for responseJsonSchema
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"message":"responseJsonSchema not supported on this model"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"fallback\":true}"}]}}]}`))
+		}))
+		defer server.Close()
+
+		provider := NewGeminiProvider(ProviderConfig{BaseURL: server.URL})
+		result, err := provider.Generate(context.Background(), GenerateRequest{
+			Prompt:     "extract",
+			OutputMode: GenerateOutputJSON,
+			JSONSchema: schema,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, `{"fallback":true}`, result.Text)
+		assert.Equal(t, 2, callCount)
+
+		// First request had responseJsonSchema
+		gc1 := requests[0]["generationConfig"].(map[string]any)
+		assert.NotNil(t, gc1["responseJsonSchema"])
+		assert.Equal(t, "application/json", gc1["responseMimeType"])
+
+		// Fallback request omitted responseJsonSchema
+		gc2 := requests[1]["generationConfig"].(map[string]any)
+		assert.Nil(t, gc2["responseJsonSchema"])
+		assert.Equal(t, "application/json", gc2["responseMimeType"])
+	})
+}

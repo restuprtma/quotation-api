@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -637,4 +638,159 @@ func TestPromptDraftService_CompleteIncompleteDraftScopeOnly(t *testing.T) {
 	assert.Equal(t, repo.draft.QuotationID, resp.QuotationID)
 	assert.Equal(t, 1, repo.completeDraftCalls)
 	assert.Nil(t, repo.record.Calculation)
+}
+
+func TestRenderPromptPriceableHTML_NoNestedArticle(t *testing.T) {
+	renderer := NewDedicatedSquadHTMLRenderer()
+	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	meta := QuotationMetadata{
+		QuotationNumber:   "QUO-2026-0001",
+		Subject:           "Penawaran Dedicated Squad",
+		ClientName:        "Budi",
+		ClientCompanyName: "PT Arunika",
+		IssueDate:         "23 September 2026",
+	}
+	calc := domain.DedicatedSquadCalculation{
+		Model: domain.ModelSOWSmall,
+		Development: []domain.SquadLineCalculation{
+			{SquadLineInput: domain.SquadLineInput{Role: "backend_programmer", Seniority: "senior", HeadcountQuarters: 4, PeriodQuarters: 12}, AmountPerUnit: 15_000_000, LineTotal: 45_000_000},
+		},
+		Payments: []domain.PaymentRow{
+			{WorkPeriod: "Termin 1", Terms: "DP 50%", InvoiceDate: now, DueDate: now.AddDate(0, 0, 14), Nominal: 22_500_000},
+			{WorkPeriod: "Termin 2", Terms: "Pelunasan 50%", InvoiceDate: now.AddDate(0, 1, 0), DueDate: now.AddDate(0, 1, 14), Nominal: 22_500_000},
+		},
+		Total:           45_000_000,
+		TotalInvestment: 45_000_000,
+	}
+	profile := ResolvedQuotationProfile{
+		DocumentOptions: ResolvedDocumentOptions{LetterPrefix: "VTR"},
+	}
+	rules := DedicatedSquadRules{}
+	timeline := []domain.TimelineRow{
+		{Description: "Fase 1", Timeline: "Bulan 1", Deliverables: []string{"Setup backend"}},
+	}
+
+	rendered, err := renderer.Render(DedicatedSquadDocumentInput{
+		Metadata:    meta,
+		Calculation: calc,
+		Profile:     profile,
+		Rules:       rules,
+		Timeline:    timeline,
+	})
+	require.NoError(t, err)
+
+	state := &domain.PromptQuotationState{
+		Scope: []domain.Fact[string]{
+			{Value: "Setup database dan API", Source: domain.SourceMeeting, Confirmed: true},
+		},
+	}
+
+	html := renderPromptPriceableHTML(rendered, state)
+
+	// Verify exactly one article tag exists in document
+	require.Equal(t, 1, strings.Count(html, "<article"), "expected exactly 1 <article> tag")
+	require.Equal(t, 1, strings.Count(html, "</article>"), "expected exactly 1 </article> tag")
+	require.Contains(t, html, `class="quotation-document prompt-first"`)
+	require.Contains(t, html, `data-quotation-section="commercial"`)
+	require.Contains(t, html, `data-quotation-section="payment"`)
+	require.Contains(t, html, `data-quotation-section="scope"`)
+
+	// Verify commercial section does NOT contain an inner <article>
+	commIdx := strings.Index(html, `data-quotation-section="commercial"`)
+	require.True(t, commIdx != -1)
+	commEndIdx := strings.Index(html[commIdx:], "</section>")
+	require.True(t, commEndIdx != -1)
+	commercialSection := html[commIdx : commIdx+commEndIdx]
+	require.NotContains(t, commercialSection, "<article", "commercial section must not contain nested <article>")
+
+	// Verify sanitizer preserves the prompt-first class
+	sanitized, err := NewHTMLSanitizer().Sanitize(html)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(sanitized, "<article"))
+	require.Contains(t, sanitized, `class="quotation-document prompt-first"`)
+}
+
+func TestHTMLSanitizer_AllowsPromptFirstClass(t *testing.T) {
+	input := `<article class="quotation-document prompt-first"><section data-quotation-section="scope" data-section-version="1"><p>Scope item</p></section></article>`
+	sanitized, err := NewHTMLSanitizer().Sanitize(input)
+	require.NoError(t, err)
+	require.Contains(t, sanitized, `class="quotation-document prompt-first"`)
+}
+
+func TestRenderIncompletePromptDraft_ContainsOfficialShell(t *testing.T) {
+	state := domain.PromptQuotationState{
+		ProjectName:   &domain.Fact[string]{Value: "Sistem HR Terintegrasi", Source: domain.SourceMeeting},
+		ClientCompany: &domain.Fact[string]{Value: "PT Solusi Digital", Source: domain.SourceMeeting},
+		ClientName:    &domain.Fact[string]{Value: "Bpk. Rahmat", Source: domain.SourceMeeting},
+		Scope: []domain.Fact[string]{
+			{Value: "Modul Kepegawaian", Source: domain.SourceMeeting},
+			{Value: "Modul Payroll", Source: domain.SourceMeeting},
+		},
+		Issues: []domain.DraftIssue{
+			{Code: "team.rate_unresolved", Message: "Role PM belum terdaftar di katalog", Severity: domain.IssueBlocking},
+		},
+	}
+	meta := QuotationMetadata{
+		QuotationNumber:   "QUO-2026-9999",
+		Subject:           "Penawaran Sistem HR Terintegrasi",
+		ClientName:        "Bpk. Rahmat",
+		ClientCompanyName: "PT Solusi Digital",
+		IssueDate:         "20 Oktober 2026",
+	}
+
+	html := renderIncompletePromptDraft(state, meta)
+
+	// Article root
+	require.Equal(t, 1, strings.Count(html, "<article"))
+	require.Equal(t, 1, strings.Count(html, "</article>"))
+	require.Contains(t, html, `class="quotation-document prompt-first"`)
+
+	// Header / Kop
+	require.Contains(t, html, `data-block-type="metadata"`)
+	require.Contains(t, html, `data-role="quotation-brand"`)
+	require.Contains(t, html, `/logo/venturo-logo.png`)
+	require.Contains(t, html, "PENAWARAN LAYANAN DEDICATED PROGRAMMER SQUAD")
+	require.Contains(t, html, "QUO-2026-9999")
+	require.Contains(t, html, "PT Solusi Digital")
+
+	// Opening
+	require.Contains(t, html, `data-block-type="opening"`)
+	require.Contains(t, html, DedicatedSquadOpeningParagraph)
+
+	// Scope
+	require.Contains(t, html, `data-quotation-section="scope"`)
+	require.Contains(t, html, "Modul Kepegawaian")
+	require.Contains(t, html, "Modul Payroll")
+
+	// Commercial placeholder
+	require.Contains(t, html, `data-quotation-section="commercial"`)
+	require.Contains(t, html, `data-managed="true"`)
+	require.Contains(t, html, "Rincian biaya sedang menunggu konfirmasi data tim dan durasi final di panel samping.")
+
+	// Payment placeholder
+	require.Contains(t, html, `data-quotation-section="payment"`)
+	require.Contains(t, html, `data-managed="true"`)
+	require.Contains(t, html, "Jadwal termin pembayaran akan dihitung otomatis setelah nilai investasi terkonfirmasi.")
+
+	// Missing information / issues
+	require.Contains(t, html, `data-quotation-section="information-missing"`)
+	require.Contains(t, html, "team.rate_unresolved")
+
+	// Legal
+	require.Contains(t, html, `data-block-type="legal"`)
+	require.Contains(t, html, DedicatedBindingClause)
+
+	// Signatures
+	require.Contains(t, html, `data-block-type="signature"`)
+	require.Contains(t, html, "Yulianto Frandi")
+	require.Contains(t, html, "Bpk. Rahmat")
+
+	// Sanitizer verification
+	sanitized, err := NewHTMLSanitizer().Sanitize(html)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(sanitized, "<article"))
+	require.Contains(t, sanitized, `class="quotation-document prompt-first"`)
+	require.Contains(t, sanitized, `data-block-type="metadata"`)
+	require.Contains(t, sanitized, `data-block-type="legal"`)
+	require.Contains(t, sanitized, `data-block-type="signature"`)
 }

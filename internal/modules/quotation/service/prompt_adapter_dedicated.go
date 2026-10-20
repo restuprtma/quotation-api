@@ -41,7 +41,11 @@ func BuildDedicatedInput(state *domain.PromptQuotationState, catalog []domain.Ra
 		input.PaymentCount = int32(state.DurationMonths.Value)
 	}
 	if state.PaymentPattern != nil {
-		rows, err := paymentPatternRows(PaymentPattern(state.PaymentPattern.Value), state.DurationMonths)
+		pattern := PaymentPattern(state.PaymentPattern.Value)
+		if parsed, err := ParsePaymentPatternFromText(state.PaymentPattern.Value); err == nil {
+			pattern = parsed
+		}
+		rows, err := paymentPatternRows(pattern, state.DurationMonths)
 		if err != nil {
 			issues = append(issues, domain.DraftIssue{Code: "payment_pattern.unsupported", Field: "payment_pattern", Message: err.Error(), Severity: domain.IssueBlocking})
 		} else {
@@ -49,13 +53,49 @@ func BuildDedicatedInput(state *domain.PromptQuotationState, catalog []domain.Ra
 			input.PaymentCount = int32(len(rows))
 		}
 	}
+	hasMaintenanceScope := false
+	for _, sc := range state.Scope {
+		lower := strings.ToLower(sc.Value)
+		if strings.Contains(lower, "maintenance") || strings.Contains(lower, "pemeliharaan") {
+			hasMaintenanceScope = true
+			break
+		}
+	}
+	if state.MaintenanceDurationMonths != nil && state.MaintenanceDurationMonths.Value > 0 {
+		issues = append(issues, domain.DraftIssue{
+			Code:     "maintenance.detected_unconfigured",
+			Field:    "maintenance_duration_months",
+			Message:  fmt.Sprintf("maintenance duration of %d month(s) was detected but is not configured in the dedicated squad calculation", state.MaintenanceDurationMonths.Value),
+			Severity: domain.IssueWarning,
+		})
+	} else if hasMaintenanceScope {
+		issues = append(issues, domain.DraftIssue{
+			Code:     "maintenance.detected_unconfigured",
+			Field:    "scope",
+			Message:  "maintenance scope was detected but is not configured in the dedicated squad calculation",
+			Severity: domain.IssueWarning,
+		})
+	}
+
 	for i, line := range state.Team {
 		item, ok := promptCatalogItem(line, catalog)
 		if !ok {
 			issues = append(issues, domain.DraftIssue{Code: "team.rate_unresolved", Field: fmt.Sprintf("team[%d].resolved_rate_item_id", i), Message: fmt.Sprintf("requested role %q has no matching catalog item", line.RequestedRole), Severity: domain.IssueBlocking})
 			continue
 		}
-		input.DevelopmentSquad = append(input.DevelopmentSquad, domain.SquadLineInput{Role: item.Role, Seniority: item.Seniority, HeadcountQuarters: line.HeadcountQuarters, PeriodQuarters: line.PeriodQuarters})
+		periodQuarters := line.PeriodQuarters
+		if state.DurationMonths != nil && state.DurationMonths.Value > 0 {
+			maxDevQuarters := int32(state.DurationMonths.Value * 4)
+			if periodQuarters > maxDevQuarters {
+				periodQuarters = maxDevQuarters
+			}
+		}
+		input.DevelopmentSquad = append(input.DevelopmentSquad, domain.SquadLineInput{
+			Role:              item.Role,
+			Seniority:         item.Seniority,
+			HeadcountQuarters: line.HeadcountQuarters,
+			PeriodQuarters:    periodQuarters,
+		})
 	}
 	if len(input.DevelopmentSquad) == 0 {
 		issues = append(issues, domain.DraftIssue{Code: "team.empty_priceable", Field: "team", Message: "no resolved team line is available for calculation", Severity: domain.IssueBlocking})

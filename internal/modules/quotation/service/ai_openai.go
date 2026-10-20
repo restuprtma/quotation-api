@@ -29,62 +29,98 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	}
 	endpoint := baseURL + "/chat/completions"
 
-	bodyMap := map[string]any{
-		"model": p.cfg.Model,
-		"messages": []map[string]any{
-			{
-				"role":    "user",
-				"content": req.Prompt,
-			},
-		},
-	}
-	if req.OutputMode == GenerateOutputJSON {
-		bodyMap["response_format"] = map[string]any{"type": "json_object"}
-	}
-	body, err := json.Marshal(bodyMap)
-	if err != nil {
-		return GenerateResult{}, &ProviderError{
-			Code:      ErrProviderUnavailable,
-			Message:   "failed to marshal request",
-			Retryable: false,
-		}
-	}
-
 	timeout := p.cfg.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-
 	client := &http.Client{Timeout: timeout}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return GenerateResult{}, &ProviderError{
-			Code:      ErrProviderUnavailable,
-			Message:   "failed to create request",
-			Retryable: false,
+
+	useJSONSchema := (req.OutputMode == GenerateOutputJSONSchema || len(req.JSONSchema) > 0) && len(req.JSONSchema) > 0
+
+	makeRequest := func(withSchema bool) (*http.Response, error) {
+		bodyMap := map[string]any{
+			"model": p.cfg.Model,
+			"messages": []map[string]any{
+				{
+					"role":    "user",
+					"content": req.Prompt,
+				},
+			},
 		}
-	}
+		if withSchema {
+			var schemaObj any
+			if err := json.Unmarshal(req.JSONSchema, &schemaObj); err == nil {
+				bodyMap["response_format"] = map[string]any{
+					"type": "json_schema",
+					"json_schema": map[string]any{
+						"name":   "meeting_extraction",
+						"strict": true,
+						"schema": schemaObj,
+					},
+				}
+			} else {
+				bodyMap["response_format"] = map[string]any{"type": "json_object"}
+			}
+		} else if req.OutputMode == GenerateOutputJSON || req.OutputMode == GenerateOutputJSONSchema || len(req.JSONSchema) > 0 {
+			bodyMap["response_format"] = map[string]any{"type": "json_object"}
+		}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.DecryptedAPIKey)
-	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
-	httpReq.Header.Set("Origin", "https://opencode.ai")
-	httpReq.Header.Set("Referer", "https://opencode.ai/")
+		body, err := json.Marshal(bodyMap)
+		if err != nil {
+			return nil, &ProviderError{
+				Code:      ErrProviderUnavailable,
+				Message:   "failed to marshal request",
+				Retryable: false,
+			}
+		}
 
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return GenerateResult{}, &ProviderError{
-				Code:      ErrTimeout,
-				Message:   "request timed out",
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, &ProviderError{
+				Code:      ErrProviderUnavailable,
+				Message:   "failed to create request",
+				Retryable: false,
+			}
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+p.cfg.DecryptedAPIKey)
+		httpReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+		httpReq.Header.Set("Origin", "https://opencode.ai")
+		httpReq.Header.Set("Referer", "https://opencode.ai/")
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				return nil, &ProviderError{
+					Code:      ErrTimeout,
+					Message:   "request timed out",
+					Retryable: true,
+				}
+			}
+			return nil, &ProviderError{
+				Code:      ErrProviderUnavailable,
+				Message:   "provider request failed",
 				Retryable: true,
 			}
 		}
-		return GenerateResult{}, &ProviderError{
-			Code:      ErrProviderUnavailable,
-			Message:   "provider request failed",
-			Retryable: true,
+		return resp, nil
+	}
+
+	var resp *http.Response
+	var err error
+	if useJSONSchema {
+		resp, err = makeRequest(true)
+		if err == nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity) {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			resp, err = makeRequest(false)
 		}
+	} else {
+		resp, err = makeRequest(false)
+	}
+	if err != nil {
+		return GenerateResult{}, err
 	}
 	defer resp.Body.Close()
 

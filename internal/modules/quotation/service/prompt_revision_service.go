@@ -340,11 +340,47 @@ func recalculatePromptPayments(calculation *domain.DedicatedSquadCalculation, pa
 }
 
 func renderPromptCommercialSection(calc domain.DedicatedSquadCalculation) string {
-	return `<section data-quotation-section="commercial" data-section-version="1" data-managed="true"><table><tbody>` +
-		promptMoneyRow("total_before_discount", "TOTAL BEFORE ADDITIONAL DISCOUNT", calc.TotalBeforeDiscount) +
-		promptMoneyRow("preparation_discount", "PREPARATION DISCOUNT", calc.Discount) +
-		promptMoneyRow("additional_discount", "ADDITIONAL DISCOUNT", calc.AdditionalDiscount) +
-		promptMoneyRow("total_investment", "TOTAL INVESTMENT", calc.TotalInvestment) + `</tbody></table></section>`
+	var b strings.Builder
+	b.WriteString(`<section data-quotation-section="commercial" data-section-version="1" data-managed="true">`)
+	b.WriteString(`<h2>Nilai Investasi (Development Squad)</h2>`)
+	unit, period := "Rate (Monthly)", "Period (Month)"
+	daily := calc.Model == domain.ModelSprint
+	if daily {
+		unit, period = "Rate (Hari)", "Period (Hari)"
+	}
+	if len(calc.Development) > 0 {
+		b.WriteString(`<table><thead><tr><th>Development Squad</th><th>` + unit + `</th><th>Employee</th><th>` + period + `</th><th>Total</th></tr></thead><tbody>`)
+		renderDedicatedLines(&b, calc.Development, daily)
+		if len(calc.Maintenance) > 0 {
+			renderDedicatedLines(&b, calc.Maintenance, false)
+		}
+		if calc.Preparation.Gross > 0 {
+			fmt.Fprintf(&b, `<tr data-field="preparation"><td>%s</td><td>-</td><td>-</td><td>-</td><td>Rp %s</td></tr>`, htmlEscape(preparationLabel(calc.Preparation.Kind)), formatNumber(calc.Preparation.Gross))
+		}
+		if calc.AdditionalDiscount > 0 {
+			writeMoneyRow(&b, "total_before_discount", "TOTAL BEFORE ADDITIONAL DISCOUNT", calc.TotalBeforeDiscount)
+			if calc.Discount > 0 {
+				writeMoneyRow(&b, "preparation_discount", "PREPARATION DISCOUNT", calc.Discount)
+			}
+			writeMoneyRow(&b, "additional_discount", "ADDITIONAL DISCOUNT", calc.AdditionalDiscount)
+			writeMoneyRow(&b, "total_investment", "TOTAL INVESTMENT", calc.TotalInvestment)
+		} else {
+			writeMoneyRow(&b, "total", "TOTAL", calc.Total)
+			if calc.Discount > 0 {
+				writeMoneyRow(&b, "discount", "DISCOUNT", calc.Discount)
+			}
+			writeMoneyRow(&b, "total_investment", "TOTAL INVESTMENT", calc.TotalInvestment)
+		}
+		b.WriteString(`</tbody></table>`)
+	} else {
+		b.WriteString(`<table><tbody>` +
+			promptMoneyRow("total_before_discount", "TOTAL BEFORE ADDITIONAL DISCOUNT", calc.TotalBeforeDiscount) +
+			promptMoneyRow("preparation_discount", "PREPARATION DISCOUNT", calc.Discount) +
+			promptMoneyRow("additional_discount", "ADDITIONAL DISCOUNT", calc.AdditionalDiscount) +
+			promptMoneyRow("total_investment", "TOTAL INVESTMENT", calc.TotalInvestment) + `</tbody></table>`)
+	}
+	b.WriteString(`</section>`)
+	return b.String()
 }
 func promptMoneyRow(field, label string, amount int64) string {
 	return `<tr data-field="` + field + `"><td><strong>` + html.EscapeString(label) + `</strong></td><td>Rp ` + formatNumber(amount) + `</td></tr>`

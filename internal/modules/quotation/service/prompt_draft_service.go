@@ -256,7 +256,13 @@ func (s *PromptDraftService) ProcessMeetingDraft(ctx context.Context, companyID,
 	state.Issues = state.ComputeIssues()
 	state.Readiness = readinessForIssues(state.Issues)
 
-	contentHTML := renderIncompletePromptDraft(state)
+	contentHTML := renderIncompletePromptDraft(state, QuotationMetadata{
+		QuotationNumber:   claim.QuotationNumber,
+		Subject:           promptSubject(state),
+		ClientName:        promptPICName(state),
+		ClientCompanyName: valueOfFact(state.ClientCompany),
+		IssueDate:         time.Now().Format("2 January 2006"),
+	})
 	var calculation json.RawMessage
 	var readinessCalculation *domain.DedicatedSquadCalculation
 	var profileSnapshot, moduleSnapshot, timelineSnapshot json.RawMessage = []byte("null"), []byte("[]"), []byte("[]")
@@ -546,26 +552,108 @@ func promptModules(state *domain.PromptQuotationState) []domain.Module {
 	return modules
 }
 
-func renderIncompletePromptDraft(state domain.PromptQuotationState) string {
+func renderIncompletePromptDraft(state domain.PromptQuotationState, meta ...QuotationMetadata) string {
+	m := QuotationMetadata{
+		QuotationNumber:   "QUO-DRAFT",
+		Subject:           promptSubject(state),
+		ClientName:        promptPICName(state),
+		ClientCompanyName: valueOfFact(state.ClientCompany),
+		IssueDate:         time.Now().Format("2 January 2006"),
+	}
+	if len(meta) > 0 {
+		if meta[0].QuotationNumber != "" {
+			m.QuotationNumber = meta[0].QuotationNumber
+		}
+		if meta[0].Subject != "" {
+			m.Subject = meta[0].Subject
+		}
+		if meta[0].ClientName != "" {
+			m.ClientName = meta[0].ClientName
+		}
+		if meta[0].ClientCompanyName != "" {
+			m.ClientCompanyName = meta[0].ClientCompanyName
+		}
+		if meta[0].IssueDate != "" {
+			m.IssueDate = meta[0].IssueDate
+		}
+	}
+	options, err := ResolveDedicatedSquadDocumentOptions(domain.DocumentOptionsInput{})
+	if err != nil {
+		options = ResolvedDocumentOptions{
+			LetterPrefix: "CTH",
+			TaxTreatment: domain.TaxExclusivePPN,
+			ClauseCodes:  append([]string(nil), defaultDocumentClauseCodes...),
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString(`<article class="quotation-document prompt-first">`)
-	b.WriteString(`<section data-quotation-section="scope" data-section-version="1"><h2>Lingkup Pekerjaan</h2><ul>`)
-	for _, item := range state.Scope {
-		b.WriteString(`<li>` + html.EscapeString(item.Value) + `</li>`)
+	b.WriteString(renderDedicatedHeader(m, options.LetterPrefix))
+	b.WriteString(`<section data-block-type="opening"><p>` + DedicatedSquadOpeningParagraph + `</p></section>`)
+	b.WriteString(`<section data-quotation-section="scope" data-section-version="1"><h2>Lingkup Pekerjaan</h2><ul>` + scopeHTML(state.Scope) + `</ul></section>`)
+	b.WriteString(`<section data-quotation-section="commercial" data-section-version="1" data-managed="true" data-block-type="commercial"><p>Rincian biaya sedang menunggu konfirmasi data tim dan durasi final di panel samping.</p></section>`)
+	b.WriteString(`<section data-quotation-section="payment" data-section-version="1" data-managed="true" data-block-type="payment"><p>Jadwal termin pembayaran akan dihitung otomatis setelah nilai investasi terkonfirmasi.</p></section>`)
+	if len(state.Issues) > 0 {
+		b.WriteString(`<section data-quotation-section="information-missing" data-section-version="1"><ul>`)
+		for _, issue := range state.Issues {
+			b.WriteString(`<li data-issue-code="` + html.EscapeString(issue.Code) + `">` + html.EscapeString(issue.Message) + `</li>`)
+		}
+		b.WriteString(`</ul></section>`)
 	}
-	b.WriteString(`</ul></section>`)
-	b.WriteString(`<section data-quotation-section="commercial" data-section-version="1" data-managed="true"><p>Informasi biaya belum lengkap dan belum dihitung.</p></section>`)
-	b.WriteString(`<section data-quotation-section="payment" data-section-version="1" data-managed="true"><p>Termin pembayaran menunggu informasi yang belum dikonfirmasi.</p></section>`)
-	b.WriteString(`<section data-quotation-section="information-missing" data-section-version="1"><ul>`)
-	for _, issue := range state.Issues {
-		b.WriteString(`<li data-issue-code="` + html.EscapeString(issue.Code) + `">` + html.EscapeString(issue.Message) + `</li>`)
-	}
-	b.WriteString(`</ul></section></article>`)
+	b.WriteString(renderDedicatedLegal(domain.DocumentSection{Number: 4, Title: "Batasan dan Pengecualian"}, options))
+	b.WriteString(renderDedicatedSignatures(m))
+	b.WriteString(`</article>`)
 	return b.String()
 }
 
+func stripOuterArticle(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if strings.HasPrefix(trimmed, "<article") {
+		if idx := strings.Index(trimmed, ">"); idx != -1 {
+			trimmed = strings.TrimSpace(trimmed[idx+1:])
+		}
+	}
+	if strings.HasSuffix(trimmed, "</article>") {
+		trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, "</article>"))
+	}
+	return trimmed
+}
+
 func renderPromptPriceableHTML(rendered string, state *domain.PromptQuotationState) string {
-	return `<article class="quotation-document prompt-first"><section data-quotation-section="scope" data-section-version="1"><h2>Lingkup Pekerjaan</h2><ul>` + scopeHTML(state.Scope) + `</ul></section><section data-quotation-section="commercial" data-section-version="1" data-managed="true">` + rendered + `</section><section data-quotation-section="payment" data-section-version="1" data-managed="true"><p>Rincian termin mengikuti hasil kalkulasi backend.</p></section></article>`
+	inner := stripOuterArticle(rendered)
+
+	// If rendered contains standard sections from dedicatedSquadHTMLRenderer
+	if strings.Contains(inner, `data-block-type="commercial"`) {
+		scopeSection := `<section data-quotation-section="scope" data-section-version="1"><h2>Lingkup Pekerjaan</h2><ul>` + scopeHTML(state.Scope) + `</ul></section>`
+
+		// Insert scope section after opening block if opening exists
+		if strings.Contains(inner, `data-block-type="opening"`) {
+			openingIdx := strings.Index(inner, `data-block-type="opening"`)
+			if endIdx := strings.Index(inner[openingIdx:], "</section>"); endIdx != -1 {
+				insertPos := openingIdx + endIdx + len("</section>")
+				inner = inner[:insertPos] + scopeSection + inner[insertPos:]
+			} else {
+				inner = scopeSection + inner
+			}
+		} else {
+			inner = scopeSection + inner
+		}
+
+		// Ensure commercial section has data-quotation-section="commercial" data-section-version="1" data-managed="true"
+		if !strings.Contains(inner, `data-quotation-section="commercial"`) {
+			inner = strings.Replace(inner, `<section data-block-type="commercial"`, `<section data-quotation-section="commercial" data-section-version="1" data-managed="true" data-block-type="commercial"`, 1)
+		}
+
+		// Ensure payment section has data-quotation-section="payment" data-section-version="1" data-managed="true"
+		if !strings.Contains(inner, `data-quotation-section="payment"`) {
+			inner = strings.Replace(inner, `<section data-block-type="payment"`, `<section data-quotation-section="payment" data-section-version="1" data-managed="true" data-block-type="payment"`, 1)
+		}
+
+		return `<article class="quotation-document prompt-first">` + inner + `</article>`
+	}
+
+	// Fallback for stubs or custom content lacking standard commercial section
+	return `<article class="quotation-document prompt-first"><section data-quotation-section="scope" data-section-version="1"><h2>Lingkup Pekerjaan</h2><ul>` + scopeHTML(state.Scope) + `</ul></section><section data-quotation-section="commercial" data-section-version="1" data-managed="true">` + inner + `</section><section data-quotation-section="payment" data-section-version="1" data-managed="true"><p>Rincian termin mengikuti hasil kalkulasi backend.</p></section></article>`
 }
 
 func scopeHTML(scope []domain.Fact[string]) string {

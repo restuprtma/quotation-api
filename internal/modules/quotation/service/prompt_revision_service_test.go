@@ -134,3 +134,24 @@ func confirmedPromptFact(value string) *domain.Fact[string] {
 	return &domain.Fact[string]{Value: value, Source: domain.SourceUser, Confirmed: true}
 }
 func int32Ptr(value int32) *int32 { return &value }
+
+func TestPromptRevision_PreservesDetailedSquadTable(t *testing.T) {
+	repo := promptRevisionTestRepo(t)
+	svc := NewPromptRevisionService(repo, NewHTMLSanitizer(), FixedDiscountPolicy{MaxBPS: 1_000, Floor: 1})
+
+	result, err := svc.ApplyCommercialPatch(context.Background(), repo.record.CompanyID, repo.record.QuotationID, nil, dto.PromptPatchRequest{
+		RevisionID: repo.record.RevisionID, ContentVersion: repo.record.ContentVersion, StateVersion: repo.record.StateVersion,
+		Operations: []dto.PromptPatchOperation{{Type: dto.PromptPatchSetDiscountBPS, DiscountBPS: int32Ptr(500)}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Validate commercial section retains programmer squad table rows
+	content := repo.params.ContentHTML
+	require.Contains(t, content, `data-quotation-section="commercial"`)
+	require.Contains(t, content, `data-role="frontend_programmer_intermediate"`)
+	require.Contains(t, content, `Development Squad`)
+	require.Contains(t, content, `data-field="line_total"`)
+	require.Contains(t, content, `data-field="additional_discount"`)
+	require.Contains(t, content, `TOTAL INVESTMENT`)
+}

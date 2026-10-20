@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"venturo-skeleton-go/internal/modules/quotation/domain"
 )
 
@@ -36,11 +37,15 @@ func (e *ProviderError) Error() string {
 
 type GenerateOutputMode string
 
-const GenerateOutputJSON GenerateOutputMode = "json_object"
+const (
+	GenerateOutputJSON       GenerateOutputMode = "json_object"
+	GenerateOutputJSONSchema GenerateOutputMode = "json_schema"
+)
 
 type GenerateRequest struct {
 	Prompt     string
 	OutputMode GenerateOutputMode
+	JSONSchema json.RawMessage
 }
 
 type GenerateResult struct {

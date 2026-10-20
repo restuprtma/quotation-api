@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,45 +76,9 @@ func (s *RateCardService) Create(ctx context.Context, companyID string, userID *
 	}
 
 	items := make([]*domain.RateCardItem, len(req.Items))
-	for i, itemReq := range req.Items {
-		baseSalary := itemReq.BaseSalary
-		if baseSalary == 0 {
-			baseSalary = itemReq.AmountPerMonth
-		}
-		publishedRate := itemReq.PublishedRate
-		if publishedRate == 0 {
-			publishedRate = itemReq.AmountPerMonth
-		}
-		floorRate := itemReq.FloorRate
-		if floorRate == 0 {
-			floorRate = itemReq.AmountPerMonth
-		}
-
-		item := &domain.RateCardItem{
-			ID:                    uuid.New(),
-			CompanyID:             companyUUID,
-			RateCardID:            rc.ID,
-			Role:                  resolveRole(itemReq.Role),
-			DisplayName:           itemReq.DisplayName,
-			Seniority:             itemReq.Seniority,
-			Discipline:            itemReq.Discipline,
-			TermType:              itemReq.TermType,
-			AmountPerMonth:        itemReq.AmountPerMonth,
-			BaseSalary:            baseSalary,
-			TechLeadFee:           itemReq.TechLeadFee,
-			AiRndFee:              itemReq.AiRndFee,
-			WorkspaceFee:          itemReq.WorkspaceFee,
-			ManagementFee:         itemReq.ManagementFee,
-			EducationRequirement:  itemReq.EducationRequirement,
-			ExperienceRequirement: itemReq.ExperienceRequirement,
-			PublishedRate:         publishedRate,
-			MaxDiscountPct:        itemReq.MaxDiscountPct,
-			FloorRate:             floorRate,
-			KickoffFee:            itemReq.KickoffFee,
-			RecruitmentFee:        itemReq.RecruitmentFee,
-			OnboardingFee:         itemReq.OnboardingFee,
-		}
-		items[i] = item
+	for i := range req.Items {
+		itemReq := req.Items[i]
+		items[i] = BuildRateCardItem(companyUUID, rc.ID, &itemReq)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -237,21 +202,9 @@ func (s *RateCardService) GetDefaultRateCard(ctx context.Context, companyID stri
 	return card, err
 }
 
-func (s *RateCardService) CreateItem(ctx context.Context, companyID, rateCardID string, req *dto.CreateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
-	companyUUID, err := uuid.Parse(companyID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid company id: %w", err)
-	}
-	rcUUID, err := uuid.Parse(rateCardID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid rate card id: %w", err)
-	}
-
-	// Verify rate card exists and belongs to this tenant
-	if _, err := s.repo.Get(ctx, rateCardID, companyID); err != nil {
-		return nil, err
-	}
-
+// BuildRateCardItem constructs a domain.RateCardItem from a CreateRateCardItemRequest,
+// preserving custom role slugs and defaulting standard financial/discipline fields.
+func BuildRateCardItem(companyUUID, rcUUID uuid.UUID, req *dto.CreateRateCardItemRequest) *domain.RateCardItem {
 	baseSalary := req.BaseSalary
 	if baseSalary == 0 {
 		baseSalary = req.AmountPerMonth
@@ -270,11 +223,16 @@ func (s *RateCardService) CreateItem(ctx context.Context, companyID, rateCardID 
 		discipline = domain.DisciplineEngineering
 	}
 
-	item := &domain.RateCardItem{
+	role := strings.TrimSpace(req.Role)
+	if role == "" {
+		role = strings.TrimSpace(req.DisplayName)
+	}
+
+	return &domain.RateCardItem{
 		ID:                    uuid.New(),
 		CompanyID:             companyUUID,
 		RateCardID:            rcUUID,
-		Role:                  resolveRole(req.Role),
+		Role:                  role,
 		DisplayName:           req.DisplayName,
 		Seniority:             req.Seniority,
 		Discipline:            discipline,
@@ -294,6 +252,24 @@ func (s *RateCardService) CreateItem(ctx context.Context, companyID, rateCardID 
 		RecruitmentFee:        req.RecruitmentFee,
 		OnboardingFee:         req.OnboardingFee,
 	}
+}
+
+func (s *RateCardService) CreateItem(ctx context.Context, companyID, rateCardID string, req *dto.CreateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
+	companyUUID, err := uuid.Parse(companyID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid company id: %w", err)
+	}
+	rcUUID, err := uuid.Parse(rateCardID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid rate card id: %w", err)
+	}
+
+	// Verify rate card exists and belongs to this tenant
+	if _, err := s.repo.Get(ctx, rateCardID, companyID); err != nil {
+		return nil, err
+	}
+
+	item := BuildRateCardItem(companyUUID, rcUUID, req)
 
 	if err := s.repo.CreateItemSingle(ctx, item); err != nil {
 		return nil, err
@@ -309,8 +285,8 @@ func (s *RateCardService) CreateRateCardItem(ctx context.Context, companyID, rat
 
 func (s *RateCardService) UpdateItem(ctx context.Context, companyID, rateCardID, itemID string, req *dto.UpdateRateCardItemRequest) (*dto.RateCardItemResponse, error) {
 	if req.Role != nil {
-		resolved := resolveRole(*req.Role)
-		req.Role = &resolved
+		role := strings.TrimSpace(*req.Role)
+		req.Role = &role
 	}
 	item, err := s.repo.UpdateItem(ctx, companyID, rateCardID, itemID, req)
 	if err != nil {

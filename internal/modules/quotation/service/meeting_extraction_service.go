@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -118,6 +119,11 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 		return domain.PromptQuotationState{}, newGenerationError(ErrCodeGenerationFailed, "AI provider is unavailable")
 	}
 
+	var schemaRaw json.RawMessage
+	if schemaStr := GetMeetingExtractionSchema(); strings.TrimSpace(schemaStr) != "" {
+		schemaRaw = json.RawMessage(schemaStr)
+	}
+
 	var state *domain.PromptQuotationState
 	attemptPrompt := prompt
 	for attempt := 0; attempt < maxMeetingExtractionAttempts; attempt++ {
@@ -127,7 +133,9 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 
 		started := time.Now()
 		result, generateErr := provider.Generate(ctx, GenerateRequest{
-			Prompt: attemptPrompt, OutputMode: GenerateOutputJSON,
+			Prompt:     attemptPrompt,
+			OutputMode: GenerateOutputJSON,
+			JSONSchema: schemaRaw,
 		})
 		if generateErr != nil {
 			var generationErr *GenerationError
@@ -136,6 +144,14 @@ func (s *MeetingExtractionService) Extract(ctx context.Context, companyID uuid.U
 			}
 			return domain.PromptQuotationState{}, mapProviderError(generateErr)
 		}
+
+		logger.Debug("meeting extraction raw AI response",
+			logger.String("provider", providerName),
+			logger.String("model", model),
+			logger.Int("attempt", attempt+1),
+			logger.Int("output_bytes", len(result.Text)),
+			logger.String("raw_response", result.Text),
+		)
 
 		if isSafetyFinishReason(result.FinishReason) {
 			logger.Warn("meeting extraction provider safety refusal",
@@ -298,13 +314,41 @@ func decodeMeetingExtraction(raw, notes string) (*domain.PromptQuotationState, e
 			return invalid("missing_required_field", "schema_validation", nil)
 		}
 	}
+
+	knownKeys := map[string]struct{}{
+		"schema_version":              {},
+		"meeting_notes":               {},
+		"client_name":                 {},
+		"client_company":              {},
+		"pic_name":                    {},
+		"project_name":                {},
+		"commercial_scheme":           {},
+		"scope":                       {},
+		"duration_months":             {},
+		"maintenance_duration_months": {},
+		"team":                        {},
+		"payment_pattern":             {},
+		"additional_discount_bps":     {},
+		"service_input":               {},
+		"issues":                      {},
+		"readiness":                   {},
+	}
+	var unknownKeys []string
+	for k := range envelope {
+		if _, ok := knownKeys[k]; !ok {
+			unknownKeys = append(unknownKeys, k)
+		}
+	}
+	if len(unknownKeys) > 0 {
+		sort.Strings(unknownKeys)
+		logger.Warn("meeting extraction encountered unknown fields in JSON envelope",
+			logger.Any("unknown_fields", unknownKeys),
+		)
+	}
+
 	dec := json.NewDecoder(io.LimitReader(strings.NewReader(raw), maxMeetingModelOutput+1))
-	dec.DisallowUnknownFields()
 	var state domain.PromptQuotationState
 	if err := dec.Decode(&state); err != nil {
-		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			return invalid("unknown_field", "struct_decode", err)
-		}
 		return invalid("malformed_json", "struct_decode", err)
 	}
 	var extra any
@@ -376,6 +420,9 @@ func normalizeState(state *domain.PromptQuotationState) {
 	if state.DurationMonths != nil {
 		state.DurationMonths.Evidence = strings.TrimSpace(state.DurationMonths.Evidence)
 	}
+	if state.MaintenanceDurationMonths != nil {
+		state.MaintenanceDurationMonths.Evidence = strings.TrimSpace(state.MaintenanceDurationMonths.Evidence)
+	}
 	for i := range state.Team {
 		// Catalog references are backend-owned provenance and must not affect
 		// validation or readiness before the resolver runs.
@@ -441,6 +488,9 @@ func firstEvidenceViolation(state *domain.PromptQuotationState, notes string) *E
 		}
 	}
 	if state.DurationMonths != nil && !check("duration_months", state.DurationMonths.Source, state.DurationMonths.Evidence) {
+		return violation
+	}
+	if state.MaintenanceDurationMonths != nil && !check("maintenance_duration_months", state.MaintenanceDurationMonths.Source, state.MaintenanceDurationMonths.Evidence) {
 		return violation
 	}
 	for _, line := range state.Team {

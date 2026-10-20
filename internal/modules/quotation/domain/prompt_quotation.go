@@ -163,8 +163,9 @@ type PromptQuotationState struct {
 	ProjectName           *Fact[string]    `json:"project_name,omitempty"`
 	CommercialScheme      *Fact[string]    `json:"commercial_scheme,omitempty"`
 	Scope                 []Fact[string]   `json:"scope"`
-	DurationMonths        *Fact[int]       `json:"duration_months,omitempty"`
-	Team                  []PromptTeamLine `json:"team"`
+	DurationMonths            *Fact[int]       `json:"duration_months,omitempty"`
+	MaintenanceDurationMonths *Fact[int]       `json:"maintenance_duration_months,omitempty"`
+	Team                      []PromptTeamLine `json:"team"`
 	PaymentPattern        *Fact[string]    `json:"payment_pattern,omitempty"`
 	AdditionalDiscountBPS *int32           `json:"additional_discount_bps,omitempty"`
 	ServiceInput          json.RawMessage  `json:"service_input,omitempty"`
@@ -231,6 +232,14 @@ func (state *PromptQuotationState) Validate() error {
 			return fmt.Errorf("duration_months.value: must be greater than zero")
 		}
 	}
+	if state.MaintenanceDurationMonths != nil {
+		if err := validateFactSource("maintenance_duration_months", state.MaintenanceDurationMonths.Source, state.MaintenanceDurationMonths.Evidence); err != nil {
+			return err
+		}
+		if state.MaintenanceDurationMonths.Value <= 0 {
+			return fmt.Errorf("maintenance_duration_months.value: must be greater than zero")
+		}
+	}
 	if state.AdditionalDiscountBPS != nil && (*state.AdditionalDiscountBPS < 0 || *state.AdditionalDiscountBPS > 10_000) {
 		return fmt.Errorf("additional_discount_bps: must be between 0 and 10000")
 	}
@@ -287,6 +296,9 @@ func (state *PromptQuotationState) ComputeIssues() []DraftIssue {
 			issues = append(issues, missingFact("duration_months", "duration", true))
 		} else if !fact.Confirmed {
 			issues = append(issues, unconfirmedFact("duration_months"))
+		}
+		if fact := state.MaintenanceDurationMonths; fact != nil && !fact.Confirmed {
+			issues = append(issues, unconfirmedFact("maintenance_duration_months"))
 		}
 		if len(state.Team) == 0 {
 			issues = append(issues, DraftIssue{

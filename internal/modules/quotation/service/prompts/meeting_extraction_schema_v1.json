@@ -14,6 +14,7 @@
     "commercial_scheme": {"$ref": "#/$defs/factString"},
     "scope": {"type": "array", "items": {"$ref": "#/$defs/factString"}, "maxItems": 64},
     "duration_months": {"$ref": "#/$defs/factInt"},
+    "maintenance_duration_months": {"$ref": "#/$defs/factInt"},
     "team": {"type": "array", "maxItems": 32, "items": {"type": "object", "additionalProperties": false, "required": ["requested_role", "seniority", "headcount_quarters", "period_quarters", "source", "confirmed"], "properties": {
       "requested_role": {"type": "string", "minLength": 1}, "resolved_rate_item_id": {"type": "string"}, "seniority": {"type": "string", "minLength": 1}, "headcount_quarters": {"type": "integer", "minimum": 1}, "period_quarters": {"type": "integer", "minimum": 1}, "source": {"enum": ["meeting", "catalog", "suggestion", "user"]}, "evidence": {"type": "string"}, "confirmed": {"type": "boolean"}
     }}},

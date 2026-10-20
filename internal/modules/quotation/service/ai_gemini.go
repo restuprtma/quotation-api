@@ -186,43 +186,75 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	}
 	endpoint := baseURL + "/models/" + url.PathEscape(p.cfg.Model) + ":generateContent"
 
-	bodyMap := map[string]any{
-		"contents": []map[string]any{
-			{
-				"parts": []map[string]any{
-					{"text": req.Prompt},
-				},
-			},
-		},
-	}
-	if req.OutputMode == GenerateOutputJSON {
-		bodyMap["generationConfig"] = map[string]any{"responseMimeType": "application/json"}
-	}
-	body, err := json.Marshal(bodyMap)
-	if err != nil {
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to marshal request"}
-	}
-
 	timeout := p.cfg.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-
 	client := &http.Client{Timeout: timeout}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to create request"}
+
+	useJSONSchema := (req.OutputMode == GenerateOutputJSONSchema || len(req.JSONSchema) > 0) && len(req.JSONSchema) > 0
+
+	makeRequest := func(withSchema bool) (*http.Response, error) {
+		bodyMap := map[string]any{
+			"contents": []map[string]any{
+				{
+					"parts": []map[string]any{
+						{"text": req.Prompt},
+					},
+				},
+			},
+		}
+		if withSchema {
+			var schemaObj any
+			if err := json.Unmarshal(req.JSONSchema, &schemaObj); err == nil {
+				bodyMap["generationConfig"] = map[string]any{
+					"responseMimeType":   "application/json",
+					"responseJsonSchema": schemaObj,
+				}
+			} else {
+				bodyMap["generationConfig"] = map[string]any{"responseMimeType": "application/json"}
+			}
+		} else if req.OutputMode == GenerateOutputJSON || req.OutputMode == GenerateOutputJSONSchema || len(req.JSONSchema) > 0 {
+			bodyMap["generationConfig"] = map[string]any{"responseMimeType": "application/json"}
+		}
+
+		body, err := json.Marshal(bodyMap)
+		if err != nil {
+			return nil, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to marshal request"}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, &ProviderError{Code: ErrProviderUnavailable, Message: "failed to create request"}
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("x-goog-api-key", p.cfg.DecryptedAPIKey)
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				return nil, &ProviderError{Code: ErrTimeout, Message: "request timed out"}
+			}
+			return nil, &ProviderError{Code: ErrProviderUnavailable, Message: "provider request failed"}
+		}
+		return resp, nil
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-goog-api-key", p.cfg.DecryptedAPIKey)
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return GenerateResult{}, &ProviderError{Code: ErrTimeout, Message: "request timed out"}
+	var resp *http.Response
+	var err error
+	if useJSONSchema {
+		resp, err = makeRequest(true)
+		if err == nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity) {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			resp, err = makeRequest(false)
 		}
-		return GenerateResult{}, &ProviderError{Code: ErrProviderUnavailable, Message: "provider request failed"}
+	} else {
+		resp, err = makeRequest(false)
+	}
+	if err != nil {
+		return GenerateResult{}, err
 	}
 	defer resp.Body.Close()
 

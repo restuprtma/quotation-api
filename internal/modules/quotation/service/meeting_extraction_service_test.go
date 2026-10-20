@@ -140,7 +140,6 @@ func TestMeetingExtractionDecodeDiagnostics(t *testing.T) {
 		{name: "root array", raw: "[]", stage: "envelope_decode", reason: "malformed_json"},
 		{name: "wrong type", raw: strings.Replace(valid, `"team":[]`, `"team":"wrong"`, 1), stage: "struct_decode", reason: "malformed_json"},
 		{name: "too large", raw: strings.Repeat("x", maxMeetingModelOutput+1), stage: "output_size", reason: "malformed_json"},
-		{name: "unknown field", raw: strings.TrimSuffix(valid, "}") + `,"secret":"CANARY"}`, stage: "struct_decode", reason: "unknown_field"},
 		{name: "trailing content", raw: valid + ` {}`, stage: "envelope_decode", reason: "trailing_content"},
 	}
 	for _, tc := range tests {
@@ -161,7 +160,7 @@ func TestMeetingExtractionFailureLogContainsSafeDiagnostics(t *testing.T) {
 	defer func() { appLogger.Log = previousLogger }()
 
 	quotationID, revisionID := uuid.New(), uuid.New()
-	raw := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[],"team":[],"issues":[],"readiness":"incomplete","secret":"CANARY-RAW-OUTPUT"}`
+	raw := `{"schema_version":"prompt_quotation_v1","meeting_notes":"ignored","scope":[],"team":"wrong","issues":[],"readiness":"incomplete","secret":"CANARY-RAW-OUTPUT"}`
 	provider := &meetingProviderFake{result: GenerateResult{Text: raw}}
 	service := NewMeetingExtractionService(meetingProviderSourceFake{provider: provider})
 	ctx := withMeetingExtractionLogContext(context.Background(), quotationID, revisionID)
@@ -169,14 +168,21 @@ func TestMeetingExtractionFailureLogContainsSafeDiagnostics(t *testing.T) {
 	_, err := service.Extract(ctx, uuid.New(), dto.MeetingExtractionRequest{MeetingNotes: "stok gudang"}, CatalogContext{RateCardCode: domain.DefaultPromptRateCardCode})
 	require.Error(t, err)
 	require.NotEmpty(t, logs.All())
-	entry := logs.All()[0]
+	var entry observer.LoggedEntry
+	for _, l := range logs.All() {
+		if l.Message == "meeting extraction validation failed" {
+			entry = l
+			break
+		}
+	}
+	require.NotEmpty(t, entry.Message)
 	fields := entry.ContextMap()
 	assert.Equal(t, quotationID.String(), fields["quotation_id"])
 	assert.Equal(t, revisionID.String(), fields["revision_id"])
 	assert.Equal(t, "mock", fields["provider"])
 	assert.Equal(t, "test", fields["model"])
 	assert.Equal(t, "struct_decode", fields["stage"])
-	assert.Equal(t, "unknown_field", fields["reason"])
+	assert.Equal(t, "malformed_json", fields["reason"])
 	assert.NotContains(t, entry.Message, "CANARY-RAW-OUTPUT")
 	assert.NotContains(t, fields, "cause")
 }
@@ -617,7 +623,7 @@ func TestDecodeMeetingExtractionClassifiesFailuresWithoutLeakingRawOutput(t *tes
 		want string
 	}{
 		{"malformed", "{", "malformed_json"},
-		{"unknown field", `{"schema_version":"prompt_quotation_v1","meeting_notes":"x","scope":[],"team":[],"issues":[],"readiness":"incomplete","total":1}`, "unknown_field"},
+		{"type mismatch", `{"schema_version":"prompt_quotation_v1","meeting_notes":"x","scope":[],"team":"wrong","issues":[],"readiness":"incomplete"}`, "malformed_json"},
 		{"trailing content", `{"schema_version":"prompt_quotation_v1","meeting_notes":"x","scope":[],"team":[],"issues":[],"readiness":"incomplete"} trailing`, "trailing_content"},
 	}
 	for _, tc := range cases {
@@ -726,4 +732,49 @@ func TestMeetingExtractionValidatesCloudInfrastructureFacts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.CommercialSchemeCloudInfrastructure, state.CommercialScheme.Value)
 	assert.NotNil(t, state.ServiceInput)
+}
+
+func TestMeetingExtraction_DecodesSeparateMaintenanceDuration(t *testing.T) {
+	notes := "Pengembangan modul selama 6 bulan development dan 3 bulan maintenance untuk PT Arunika."
+	jsonPayload := `{
+		"schema_version": "prompt_quotation_v1",
+		"meeting_notes": "ignored",
+		"client_company": {"value": "PT Arunika", "source": "meeting", "evidence": "PT Arunika", "confirmed": false},
+		"commercial_scheme": {"value": "dedicated_squad", "source": "suggestion", "confirmed": false},
+		"scope": [{"value": "Pengembangan modul", "source": "meeting", "evidence": "Pengembangan modul", "confirmed": false}],
+		"duration_months": {"value": 6, "source": "meeting", "evidence": "6 bulan development", "confirmed": false},
+		"maintenance_duration_months": {"value": 3, "source": "meeting", "evidence": "3 bulan maintenance", "confirmed": false},
+		"team": [],
+		"issues": [],
+		"readiness": "incomplete"
+	}`
+
+	state, err := decodeMeetingExtraction(jsonPayload, notes)
+	require.NoError(t, err)
+	require.NotNil(t, state.DurationMonths)
+	assert.Equal(t, 6, state.DurationMonths.Value)
+	require.NotNil(t, state.MaintenanceDurationMonths)
+	assert.Equal(t, 3, state.MaintenanceDurationMonths.Value)
+	assert.Equal(t, "3 bulan maintenance", state.MaintenanceDurationMonths.Evidence)
+}
+
+func TestMeetingExtraction_ToleratesUnknownFields(t *testing.T) {
+	notes := "stok gudang"
+	jsonPayload := `{
+		"schema_version": "prompt_quotation_v1",
+		"meeting_notes": "ignored",
+		"scope": [{"value": "stok gudang", "source": "meeting", "evidence": "stok gudang", "confirmed": false}],
+		"team": [],
+		"issues": [],
+		"readiness": "incomplete",
+		"rationale": "Model provided thinking summary",
+		"confidence": 0.99,
+		"extra_metadata": {"tokens": 120}
+	}`
+
+	state, err := decodeMeetingExtraction(jsonPayload, notes)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	assert.Len(t, state.Scope, 1)
+	assert.Equal(t, "stok gudang", state.Scope[0].Value)
 }

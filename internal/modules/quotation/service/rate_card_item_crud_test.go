@@ -179,3 +179,21 @@ func TestRateCardDetail_IsDefaultField(t *testing.T) {
 
 	assert.True(t, card.IsDefault)
 }
+
+func TestBuildRateCardItem_PreservesCustomRoleWithoutAliasing(t *testing.T) {
+	companyID := uuid.New()
+	rcID := uuid.New()
+	req := &dto.CreateRateCardItemRequest{
+		Role:           "programmer",
+		DisplayName:    "programmer",
+		Seniority:      "senior",
+		Discipline:     "ENGINEERING",
+		TermType:       "short_term",
+		AmountPerMonth: 10000000,
+	}
+
+	item := service.BuildRateCardItem(companyID, rcID, req)
+	assert.Equal(t, "programmer", item.Role)
+	assert.Equal(t, "programmer", item.DisplayName)
+}
+
